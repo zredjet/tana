@@ -5,6 +5,9 @@ type dirEntry struct {
 	name string
 	info EntryInfo // Size は TypeFile のときだけ
 	id   fileID
+	// dirAttr は、OS がフォルダとして扱うエントリか（削除の方法を決める。§13.2）。
+	// Unix では TypeDir と同じ。Windows では FILE_ATTRIBUTE_DIRECTORY（フォルダ用のリンク・ジャンクションを含む）。
+	dirAttr bool
 }
 
 // readDir は、フォルダ dir をリンクを辿らずに列挙し、名前のバイト順で返す（§13.1）。

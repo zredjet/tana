@@ -759,7 +759,7 @@ const (
 - 種類に合わない方法での削除は、何も消さずに失敗する（V3）。判定の後にエントリが置き換えられた場合に誤った分類にしないため、
   削除が `ERROR_ACCESS_DENIED`・`ERROR_DIRECTORY`（Unix では `EISDIR`・`ENOTDIR`・`EPERM`）で失敗したら `Lstat` し直し、種類が変わっていれば `KindSourceChanged` とする。
 - 1 件失敗しても残りは続け、トップレベルの結果を `OutcomePartial` にする。
-- Windows の読み取り専用ファイルは削除に失敗する（`DeleteFileW` は `ERROR_ACCESS_DENIED` を返すと想定している。V15 で確認する）。属性を勝手に外さず `KindReadOnly` として報告する。
+- Windows の読み取り専用ファイルは削除に失敗する（`DeleteFileW` は `ERROR_ACCESS_DENIED` を返し、ファイルと属性は残る。V15 で確認済み）。属性を勝手に外さず `KindReadOnly` として報告する。
 - Windows のフォルダの読み取り専用属性は保護を意味しないため、フォルダに限り属性を外してから削除する（読み取り専用属性の付いたフォルダは、空でも `RemoveDirectoryW` が `ERROR_ACCESS_DENIED` で失敗する。V15）。削除に失敗したら属性を元に戻す。
 
 ### 13.3 記録した項目だけの削除（移動元の削除）

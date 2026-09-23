@@ -44,6 +44,15 @@ func readDirSys(s string) ([]dirEntry, error) {
 	if entryTypeFromAttrs(bi.FileAttributes, tag) != TypeDir {
 		return nil, &os.PathError{Op: "readdir", Path: s, Err: windows.ERROR_DIRECTORY}
 	}
+	return listHandle(h, s)
+}
+
+// listHandle は、開いたフォルダのハンドル h の中身を名前のバイト順で列挙する。s はエラーに使うパス。
+func listHandle(h windows.Handle, s string) ([]dirEntry, error) {
+	var bi windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(h, &bi); err != nil {
+		return nil, &os.PathError{Op: "GetFileInformationByHandle", Path: s, Err: err}
+	}
 	dirID, err := statIDHandle(h)
 	if err != nil {
 		return nil, &os.PathError{Op: "GetFileInformationByHandleEx", Path: s, Err: err}
@@ -103,7 +112,7 @@ func enumerateDir(h windows.Handle, restartClass, class uint32, extd bool, vol u
 				if t == TypeFile {
 					info.Size = size
 				}
-				entries = append(entries, dirEntry{name: name, info: info, id: id})
+				entries = append(entries, dirEntry{name: name, info: info, id: id, dirAttr: attrs&windows.FILE_ATTRIBUTE_DIRECTORY != 0})
 			}
 			if next == 0 {
 				break

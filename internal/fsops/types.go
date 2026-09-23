@@ -1,8 +1,6 @@
 package fsops
 
 import (
-	"context"
-	"errors"
 	"strconv"
 	"sync"
 	"time"
@@ -275,12 +273,6 @@ func (s SyncMode) String() string {
 		return "SyncAlways"
 	}
 	return "SyncMode(" + strconv.Itoa(int(s)) + ")"
-}
-
-// Execute は計画を実行する。開始時に決定を固定する。
-// error を返すのは、何も実行しなかった場合だけ（SPEC §7.1）。
-func (p *Plan) Execute(ctx context.Context, opt ExecOptions) (*Result, error) {
-	return nil, &OpError{Op: "execute", Kind: KindUnknown, Err: errors.ErrUnsupported}
 }
 
 // Result は実行結果。
