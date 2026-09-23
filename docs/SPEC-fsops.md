@@ -680,7 +680,8 @@ const (
     - 設定を読めない場合（キーや値がない、ボリューム GUID が取れない）は、分からないものとして `KindTrashUnavailable` にする。
     - 最大サイズを超えるフォルダでは、Windows はフォルダ自体を「入れられる」と通知したあと中身を 1 つずつ完全削除しようとし、その中身の `PreDeleteItem` にはフラグ `0x80` がない（V19）。
       手順 4 の中止により、中身は 1 つも消えずに残る。事前確認の見落としに対する二つ目の防御として扱う。
-  - パスに Win32 の正規化で変わる名前（末尾の `.` や空白、予約名）が含まれる場合、つまり `GetFullPathNameW` の結果が元のパスと一致しない場合は `KindTrashUnavailable`。
+  - パスに Win32 の正規化で変わる名前（末尾の `.` や空白、予約名）が含まれる場合は `KindTrashUnavailable`。パスの各部分を §11.3 の名前の規則で調べ、さらに `GetFullPathNameW` の結果が元のパスと一致することを確かめる。
+    （Windows 11 の `GetFullPathNameW` は、パスの途中の予約名（`CON` など）を変換しないため、`GetFullPathNameW` の比較だけでは見つからない。2026-09-23 の CI で確認。）
     `SHFileOperationW` では `foo.` を指定すると隣の別ファイル `foo` がごみ箱に入った（V4）。`\\?\` 付きのパスは受け付けられなかった。
 - 実装: `IFileOperation`（COM）を使う（V13 の結果により、`SHFileOperationW` から移行した）。
   `SHFileOperationW` は、ごみ箱が「すぐに削除する」設定のボリュームと、ごみ箱の最大サイズを超える項目を、成功を返したまま確認なしに完全削除したため（V13）。

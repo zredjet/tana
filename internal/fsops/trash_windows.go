@@ -23,6 +23,10 @@ func trashAvailable(ctx context.Context, src string, info EntryInfo) (bool, erro
 		return false, nil
 	}
 	// Win32 の正規化で変わる名前（末尾の . や空白、予約名）を含むパスは、別のファイルをごみ箱に入れてしまう（V4、V18）。
+	// Windows 11 の GetFullPathNameW はパスの途中の予約名（CON など）を変換しないので、各部分も §11.3 の規則で調べる。
+	if hasWin32UnsafeComponent(src) {
+		return false, nil
+	}
 	full, err := fullPathName(src)
 	if err != nil || full != src {
 		return false, err
@@ -48,6 +52,17 @@ func trashAvailable(ctx context.Context, src string, info EntryInfo) (bool, erro
 		return false, err
 	}
 	return size <= capacity, nil // 最大サイズちょうどは入る（V19）
+}
+
+// hasWin32UnsafeComponent は、p のボリューム名より後の部分に、Win32 の正規化で変わる名前
+// （末尾の . や空白、予約名。§11.3 で新しい名前として拒否するもの）があるかを返す。
+func hasWin32UnsafeComponent(p string) bool {
+	for _, c := range strings.Split(p[len(filepath.VolumeName(p)):], `\`) {
+		if c != "" && !validNameOS(c) {
+			return true
+		}
+	}
+	return false
 }
 
 // fullPathName は GetFullPathNameW の結果を返す。
