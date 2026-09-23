@@ -677,10 +677,10 @@ const (
   1. `runtime.LockOSThread` した goroutine で `CoInitializeEx(COINIT_APARTMENTTHREADED)` を呼ぶ。
   2. `CoCreateInstance(CLSID_FileOperation)` で `IFileOperation` を作り、`SetOperationFlags` に `FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI`（と、V18 で必要と分かったもの）を設定する。
   3. `SHCreateItemFromParsingName` でパスから `IShellItem` を作り、自前の `IFileOperationProgressSink` を付けて `DeleteItem` する。1 回の操作で 1 項目だけ渡す。
-  4. 進捗通知の `PreDeleteItem` で、フラグに `TSF_DELETE_RECYCLE_IF_POSSIBLE` がなければ（ごみ箱に入らず完全削除になる場合）、失敗の `HRESULT` を返して中止させ、その項目を `KindTrashUnavailable` にする（I5）。
+  4. 進捗通知の `PreDeleteItem` で、フラグに `TSF_DELETE_RECYCLE_IF_POSSIBLE`（`0x80`）がなければ（ごみ箱に入らず完全削除になる場合）、`E_ABORT` を返して中止させ、その項目を `KindTrashUnavailable` にする（I5。V18 で、中止した項目が残ることを確認済み）。
   5. `PerformOperations` の後、`GetAnyOperationsAborted` と `PostDeleteItem` の結果で成否を決める。`PostDeleteItem` で渡されるごみ箱内の項目からパスが取れれば `TrashedPath` に入れる。
   - COM の vtable の呼び出しと進捗通知の実装は、cgo を使わず `syscall.SyscallN` と `syscall.NewCallback`（または x/sys/windows の同等のもの）で行う。
-  - `PreDeleteItem` のフラグ、中止した項目が本当に残るか、長いパス・`\\?\` 付きのパス・ネットワーク上のパスでの動作、スレッドの条件は V18 で確かめる。確かめるまで、この手順は確定しない。
+  - **未解決**: ごみ箱の最大サイズを超える項目は、`PreDeleteItem` のフラグでは見分けられず、確認なしに完全削除される（V18）。対処の方針は確認中で、決まるまでこの手順は確定しない。
 - 分類できない `HRESULT` は `KindUnknown` にして値を `Err` に残す。
 - 既存ライブラリ（`hymkor/trash-go`、`rafshawn/go2trash` など）は実装の参考にしてよい。依存に加える場合は許可リストの変更になるので確認を取る。
 
@@ -1107,7 +1107,9 @@ hdiutil detach /Volumes/fsopstest
   使えない場合の方式は結果を見て決める。Linux の `RENAME_NOREPLACE` が `EINVAL` を返す場合も同じ方針で扱う（§8.4）。
   - **結果（2026-09-23、windows-latest（Windows 11 build 26100）・macos-latest・ubuntu-latest、Go 1.27.1）:** macOS の FAT32 では `RENAME_EXCL` が使える。exFAT では新しい名前への変更でも常に `ENOTSUP`（移動先が既にあれば `EEXIST`）。
     Linux の `RENAME_NOREPLACE` は ext4 と vfat で使える（vfat では大文字小文字だけの変更が `EEXIST`）。SMB は CI で用意できず未確認。
-    → §8.4 に「名前を確保してから置き換える」代わりの手段を加えた。その動作（exFAT での手順 1〜4）は追加のプローブで確かめる。
+    → §8.4 に「名前を確保してから置き換える」代わりの手段を加えた。
+  - **追加確認（2026-09-23、macos-latest）:** exFAT で §8.4 の代わりの手段（手順 1〜4）が期待どおりに動いた。新しい名前へのファイル・中身のあるフォルダの変更が成功し、
+    既存の移動先（ファイル・フォルダ）は手順 1 の `EEXIST` で失敗して上書きされない。大文字小文字だけの変更は、§8.4 の「同じファイルの名前変更」として通常の `rename` で成功した。
 - **V13** Windows: ごみ箱の最大サイズを超える項目、およびボリュームのごみ箱が「ごみ箱にファイルを移動しないで、削除と同時にファイルを消去する」設定のときに、
   `SHFileOperationW`（`FOF_ALLOWUNDO | FOF_NOCONFIRMATION`）が確認なしに完全削除するか。
   完全削除する場合は、`IFileOperation` の進捗通知（`PreDeleteItem` のフラグ `TSF_DELETE_RECYCLE_IF_POSSIBLE`）で完全削除になる項目を中止する方式（§21 の移行を前倒しする）と、
@@ -1134,6 +1136,14 @@ hdiutil detach /Volumes/fsopstest
   「すぐに削除する」設定のボリュームと、ごみ箱の最大サイズを超える項目で、そのフラグがないか。`PreDeleteItem` で中止した項目が完全に残るか。
   `PostDeleteItem` でごみ箱内の項目のパスが取れるか。260 文字を超えるパス、`\\?\` 付きのパス、`\\localhost\C$` 経由のパス、`foo.` を `SHCreateItemFromParsingName` に渡したときの動作。
   STA での初期化と `LockOSThread` が必要か。
+  - **結果（2026-09-23、windows-latest（Windows 11 build 26100）、Go 1.27.1）:** `PreDeleteItem` のフラグは、ごみ箱に入れられる場合 `0x282`、入れられない場合 `0x202`（`TSF_DELETE_RECYCLE_IF_POSSIBLE` は `0x80`）。
+    「すぐに削除する」設定のボリューム、`\\localhost\C$` 経由のパス、260 文字を超えるパスではこのフラグがなく、`E_ABORT` を返すと `PerformOperations` も `E_ABORT` になり、項目は残った。
+    通常の固定ドライブ（NTFS・exFAT・FAT32）ではごみ箱に入り、`PostDeleteItem` の `psiNewlyCreated` から `$Recycle.Bin` 内のパスが取れた。
+    **ごみ箱の最大サイズを超える項目では、フラグが「入れられる」（`0x282`）のまま完全削除された**（`PostDeleteItem` の `psiNewlyCreated` は NULL）。`PreDeleteItem` では防げない。
+    `FOF_WANTNUKEWARNING` を付けると、完全削除の前に確認のダイアログが出て止まった（30 秒で強制終了。項目は残った）。
+    `\\?\` 付きのパスは `SHCreateItemFromParsingName` が `E_INVALIDARG`。`foo.` は `foo` と解釈され、隣の `foo` がごみ箱に入った。
+    COM は STA・MTA・初期化なしのいずれでも動作した。
+    → 最大サイズを超える項目の扱いは未解決（方針を確認中。§12.2）。
 
 ---
 
