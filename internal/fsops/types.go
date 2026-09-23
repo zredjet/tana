@@ -363,10 +363,3 @@ func (o Outcome) String() string {
 	}
 	return "Outcome(" + strconv.Itoa(int(o)) + ")"
 }
-
-// ---- 名前の変更 ----
-
-// Rename は path の名前を newName に変える。上書きは一切しない（SPEC §11.3）。
-func Rename(path, newName string) error {
-	return &OpError{Op: "rename", Path: path, Kind: KindUnknown, Err: errors.ErrUnsupported}
-}

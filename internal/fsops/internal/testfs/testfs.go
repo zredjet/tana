@@ -53,6 +53,14 @@ const CrossVolEnv = "FSOPS_CROSSVOL_DIR"
 // TrashEnv は、ごみ箱のテストを実行するかを指定する環境変数（SPEC §18.2）。"1" のときだけ実行する。
 const TrashEnv = "FSOPS_TEST_TRASH"
 
+// CI が用意する特別なボリューム・設定のフォルダを指す環境変数（SPEC §18.2）。EnvDir で使う。
+const (
+	ExFATEnv      = "FSOPS_PROBE_EXFAT_DIR"       // exFAT のボリューム（Windows: VHD、macOS: hdiutil のイメージ）
+	FAT32Env      = "FSOPS_PROBE_FAT32_DIR"       // FAT32 のボリューム（Windows: VHD、macOS: hdiutil のイメージ、Linux: loop マウントした vfat）
+	TrashNukeEnv  = "FSOPS_PROBE_TRASH_NUKE_DIR"  // Windows: ごみ箱を「すぐに削除する」設定にした NTFS のボリューム
+	TrashSmallEnv = "FSOPS_PROBE_TRASH_SMALL_DIR" // Windows: ごみ箱の最大サイズを 1 MB にした NTFS のボリューム
+)
+
 // CrossVolDir は、FSOPS_CROSSVOL_DIR の中にこのテスト専用のフォルダを作って返す。テストの終了時に削除する。
 // FSOPS_CROSSVOL_DIR が未設定なら t.Skip する。
 func CrossVolDir(t testing.TB) string {
