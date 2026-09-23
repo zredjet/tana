@@ -46,6 +46,15 @@ type executor struct {
 	conflicts   []Conflict // Execute の開始時に固定した決定
 	conflictIdx conflictIndex
 	progress    *progressReporter
+	buf         []byte // コピーのバッファ（§10.1）。項目は 1 件ずつ処理するので、Execute の間使い回す
+}
+
+// copyBuf はコピーのバッファを返す。最初に使うときに確保する。
+func (ex *executor) copyBuf() []byte {
+	if ex.buf == nil {
+		ex.buf = make([]byte, copyBufSize)
+	}
+	return ex.buf
 }
 
 // run は、トップレベルの項目を計画の順に 1 件ずつ処理する（§7.2）。

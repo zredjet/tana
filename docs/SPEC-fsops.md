@@ -560,6 +560,8 @@ const (
   読み取り専用とは、Windows では読み取り専用属性、Unix（macOS・Linux）ではオーナーの書き込み権限がないこと、または macOS のロック（`UF_IMMUTABLE`）を指す。
   （Unix の rename はファイル自身の権限を見ないため、両 OS で結果をそろえるために事前に確認する。）
 - 上書き先が他のプロセスに使用されていて置き換えられない場合は `KindLocked`。上書き先は元のまま、一時ファイルは削除する。
+  Windows の置換リネーム（`MoveFileExW` の `MOVEFILE_REPLACE_EXISTING`）は、上書き先が削除を許さずに開かれているとき `ERROR_ACCESS_DENIED` で失敗する（2026-09-24 の CI で確認）。
+  そのため、`ERROR_ACCESS_DENIED` で上書き先が読み取り専用でなければ、上書き先を `DELETE` のアクセス権で開き直し、`ERROR_SHARING_VIOLATION` になれば `KindLocked` とする。
 - 上書きされた元のファイルはどこにも退避しない（退避は §21 の将来の検討事項）。
 
 ### 9.4 マージ

@@ -434,3 +434,52 @@ func TestCopyProgress(t *testing.T) {
 		}
 	}
 }
+
+// TestCopySkipIgnoresSourceChange は、Skip（未設定を含む）に決めた衝突は、計画後にコピー元の種類が変わっても Skipped（Err なし）になることを確かめる。
+func TestCopySkipIgnoresSourceChange(t *testing.T) {
+	t.Parallel()
+	root := testfs.TempDir(t)
+	testfs.Build(t, root, testfs.Tree{"src/x": testfs.File("file"), "dest/x": testfs.File("old")})
+	plan := mustPlan(t, Request{Op: OpCopy, Sources: []string{filepath.Join(root, "src", "x")}, DestDir: filepath.Join(root, "dest")})
+	del := mustPlan(t, Request{Op: OpDelete, Sources: []string{filepath.Join(root, "src", "x")}})
+	execPlan(t, context.Background(), del, ExecOptions{})
+	testfs.Build(t, root, testfs.Tree{"src/x/in": testfs.File("now a folder")})
+	res := execPlan(t, context.Background(), plan, ExecOptions{})
+	if it := res.Items[0]; it.Outcome != OutcomeSkipped || it.Err != nil || res.Status != StatusCompleted {
+		t.Errorf("result = %+v, want Skipped with nil Err", res)
+	}
+	wantFiles(t, root, map[string]string{"dest/x": "old"})
+}
+
+// TestCopyDirReplacedByLink は、コピー元のフォルダを、フォルダと判定した後・開く前にリンクへ置き換えても（フックで注入）、
+// リンクの先の中身を複製せず KindSourceChanged で報告することを確かめる（§18.4 の I4「リンクを含むツリーのコピー」）。
+func TestCopyDirReplacedByLink(t *testing.T) {
+	t.Parallel()
+	root := testfs.TempDir(t)
+	markerTree(t, root)
+	testfs.Build(t, root, testfs.Tree{"src/tree/a": testfs.File("a"), "src/tree/sub/b": testfs.File("b"), "src/m/c": testfs.File("c"), "dest/m/old": testfs.File("old")})
+	dest := filepath.Join(root, "dest")
+	plan := mustPlan(t, Request{Op: OpCopy, Sources: []string{filepath.Join(root, "src", "tree"), filepath.Join(root, "src", "m")}, DestDir: dest})
+	decide(t, plan, filepath.Join(dest, "m"), DecisionMerge)
+	victims := map[string]bool{filepath.Join(root, "src", "tree", "sub"): true, filepath.Join(root, "src", "m"): true}
+	h := &testHooks{beforeEnterDir: func(p string) {
+		if victims[p] {
+			delete(victims, p)
+			replaceWithLink(t, root, p)
+		}
+	}}
+	res := execPlan(t, context.Background(), plan, ExecOptions{hooks: h})
+	if it := res.Items[0]; it.Outcome != OutcomePartial || len(it.Details) != 1 || it.Details[0].Err == nil || it.Details[0].Err.Kind != KindSourceChanged {
+		t.Errorf("tree: %+v, want Partial with sub failed by KindSourceChanged", it)
+	}
+	if it := res.Items[1]; it.Outcome != OutcomeFailed || it.Err == nil || it.Err.Kind != KindSourceChanged {
+		t.Errorf("m: %+v (%v), want Failed with KindSourceChanged (nothing was written)", it, it.Err)
+	}
+	for _, rel := range []string{"tree/sub/marker.txt", "tree/sub/b", "m/marker.txt", "m/c"} {
+		if testfs.Exists(t, filepath.Join(dest, filepath.FromSlash(rel))) {
+			t.Errorf("%s was copied", rel)
+		}
+	}
+	wantFiles(t, dest, map[string]string{"tree/a": "a", "m/old": "old"})
+	checkMarkers(t, root)
+}

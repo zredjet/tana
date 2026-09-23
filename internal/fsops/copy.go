@@ -114,6 +114,11 @@ func (cp *copier) syncChanged() {
 // copyItem は、コピー（MethodCopy）のトップレベルの 1 項目を処理する（§10）。i は Items() の添字。
 func (ex *executor) copyItem(i int, it Item) ItemResult {
 	res := ItemResult{Src: it.Src, Dst: it.Dst}
+	pc := ex.conflictIdx.top[i]
+	if pc != nil && (pc.c.Decision == DecisionUnset || pc.c.Decision == DecisionSkip) {
+		res.Outcome = OutcomeSkipped // 衝突の決定による Skip（I1）。コピー元が変わっていても何もしないので調べない
+		return res
+	}
 	e, err := statTop(it.Src)
 	if err != nil {
 		res.Outcome, res.Err = OutcomeFailed, &OpError{Op: "copy", Path: it.Src, Kind: classify(err, classifyOpts{}), Err: err}
@@ -124,7 +129,7 @@ func (ex *executor) copyItem(i int, it Item) ItemResult {
 		return res
 	}
 	cp := &copier{ex: ex}
-	dst, out, oe := cp.copyEntry(it.Src, it.Dst, e, ex.conflictIdx.top[i])
+	dst, out, oe := cp.copyEntry(it.Src, it.Dst, e, pc)
 	cp.syncChanged()
 	res.Dst, res.Details, res.Warnings = dst, cp.details, cp.warnings
 	switch {
@@ -132,6 +137,8 @@ func (ex *executor) copyItem(i int, it Item) ItemResult {
 		res.Outcome, res.Err = OutcomePartial, cp.canceledErr(it.Src)
 	case cp.canceled:
 		res.Outcome, res.Err = OutcomeSkipped, cp.canceledErr(it.Src)
+	case out == OutcomeFailed && cp.wrote:
+		res.Outcome, res.Err = OutcomePartial, oe // 作ったフォルダの中身を列挙できなかった（空のフォルダが残る）
 	case out != OutcomeDone:
 		res.Outcome, res.Err = out, oe
 	case cp.firstErr != nil:
@@ -145,12 +152,12 @@ func (ex *executor) copyItem(i int, it Item) ItemResult {
 // copyEntry は、エントリ e（src）を dst にコピーする。pc は計画時に検出した衝突（なければ nil）。
 // 実際のコピー先のパスと、エントリ自体の結果を返す。フォルダの中のエントリの結果は Details に記録する。
 func (cp *copier) copyEntry(src, dst string, e dirEntry, pc *planned) (string, Outcome, *OpError) {
+	if pc != nil && (pc.c.Decision == DecisionUnset || pc.c.Decision == DecisionSkip) {
+		return dst, OutcomeSkipped, nil // 衝突の決定による Skip（I1）。コピー元が変わっていても何もしないので確かめない
+	}
 	if pc != nil && e.info.Type != pc.c.SrcInfo.Type {
 		// 決定は計画時の種類に対して行われたものなので、そのまま適用しない。
 		return dst, OutcomeFailed, &OpError{Op: "copy", Path: src, Dest: dst, Kind: KindSourceChanged}
-	}
-	if pc != nil && (pc.c.Decision == DecisionUnset || pc.c.Decision == DecisionSkip) {
-		return dst, OutcomeSkipped, nil // 衝突の決定による Skip（I1）
 	}
 	switch e.info.Type {
 	case TypeFile:
@@ -337,7 +344,7 @@ func (cp *copier) writeTemp(src, dst string, e dirEntry) (string, *OpError) {
 		if oe, ok := err.(*OpError); ok {
 			return "", &OpError{Op: "copy", Path: src, Dest: dst, Kind: oe.Kind, Err: oe.Err}
 		}
-		return "", fail(withUserPaths(err, src, ""), classifyOpts{noFollow: true}) // ELOOP はリンクに置き換えられていたことを示す
+		return "", sourceErr(src, dst, e, withUserPaths(err, src, ""))
 	}
 	defer in.Close()
 
@@ -354,7 +361,7 @@ func (cp *copier) writeTemp(src, dst string, e dirEntry) (string, *OpError) {
 	}()
 
 	cp.ex.progress.step(src)
-	buf := make([]byte, copyBufSize)
+	buf := cp.ex.copyBuf()
 	var written int64
 	for {
 		if cp.checkCanceled() {
@@ -389,6 +396,18 @@ func (cp *copier) writeTemp(src, dst string, e dirEntry) (string, *OpError) {
 		return "", fail(withUserPaths(err, tmp, ""), classifyOpts{})
 	}
 	return tmp, nil
+}
+
+// sourceErr は、コピー元 src（走査時のエントリ e）を開けなかったエラーを分類する。
+// リンクに当たった（O_NOFOLLOW の ELOOP）場合と、調べ直して fileID か種類が走査時と違う場合は KindSourceChanged にする。
+func sourceErr(src, dst string, e dirEntry, err error) *OpError {
+	k := classify(err, classifyOpts{noFollow: true})
+	if k != KindSourceChanged {
+		if now, serr := statTop(src); serr == nil && (now.id != e.id || now.info.Type != e.info.Type) {
+			k = KindSourceChanged
+		}
+	}
+	return &OpError{Op: "copy", Path: src, Dest: dst, Kind: k, Err: err}
 }
 
 // createTemp は、フォルダ dir に一時ファイル（§10.1 の手順 2）を O_CREATE|O_EXCL|O_WRONLY、0o600 で作る。
@@ -431,7 +450,8 @@ func removeTemp(tmp string) {
 }
 
 // copyDir はフォルダをコピーする（§10.2）。中身の結果は Details に記録する。
-// 実際のコピー先のパスと、フォルダ自体の結果（作成・マージできなかった場合は Skipped・Failed）を返す。
+// 実際のコピー先のパスと、フォルダ自体の結果（作成・マージできなかった場合、中身を列挙できなかった場合は Skipped・Failed）を返す。
+// リンクに置き換えられたフォルダには入らない（列挙はリンクを辿らない。§18.4 の I4）。
 func (cp *copier) copyDir(src, dst string, e dirEntry, pc *planned) (string, Outcome, *OpError) {
 	mkdir := func(p string) error {
 		s, err := sysPath(p)
@@ -471,10 +491,10 @@ func (cp *copier) copyDir(src, dst string, e dirEntry, pc *planned) (string, Out
 		cp.changed(filepath.Dir(dst))
 	}
 
+	cp.ex.opt.hooks.enterDir(src)
 	entries, err := readDir(src)
 	if err != nil {
-		cp.entry(src, dst, OutcomeFailed, &OpError{Op: "copy", Path: src, Dest: dst, Kind: classify(err, classifyOpts{}), Err: err})
-		return dst, OutcomeDone, nil
+		return dst, OutcomeFailed, sourceErr(src, dst, e, err)
 	}
 	for _, ce := range entries {
 		if cp.checkCanceled() {
