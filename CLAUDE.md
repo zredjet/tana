@@ -48,7 +48,7 @@ Go 製のターミナルファイラー（Windows / macOS 対応）のリポジ�
 ## テストのルール
 
 - 不変条件に関わる処理は、テストを先に書いてから実装する。
-- テストが触ってよいのは `t.TempDir()` と `FSOPS_CROSSVOL_DIR` の中だけ。ごみ箱のテストは `FSOPS_TEST_TRASH=1` のときだけ実行する。
+- テストが触ってよいのは `t.TempDir()`、`FSOPS_CROSSVOL_DIR`、`FSOPS_PROBE_*_DIR`（CI が用意する特別なボリューム。SPEC §18.2）の中だけ。ごみ箱のテストは `FSOPS_TEST_TRASH=1` のときだけ実行する。
 - `t.TempDir()` のパスは `filepath.EvalSymlinks` で正規化してから使う（Windows ランナーは `RUNNER~1` 形式の短縮名、macOS は `/var` → `/private/var`）。
 - 特殊な環境や権限が必要なテストは、条件を満たさなければ理由を書いて `t.Skip` する。
 - テストを通すためにテストの条件を弱めない。スリープやリトライでタイミングの問題を隠さない。必要なら理由を示して確認を取る。
