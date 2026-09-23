@@ -1,0 +1,51 @@
+//go:build unix
+
+package fsops
+
+import (
+	"errors"
+	"syscall"
+
+	"golang.org/x/sys/unix"
+)
+
+// classifyErrno は err に含まれる errno を分類する（SPEC §17）。
+// 対応表にない番号、または errno を含まない場合は ok が false。
+//
+// ELOOP は KindSourceChanged にする。
+// fsops は操作対象のパスを O_NOFOLLOW などでリンクを辿らずに扱うため、ELOOP はリンクに置き換えられていたことを示す。
+func classifyErrno(err error, o classifyOpts) (k Kind, ok bool) {
+	errno, ok := errors.AsType[syscall.Errno](err)
+	if !ok {
+		return KindUnknown, false
+	}
+	switch errno {
+	case unix.ENOENT, unix.ENOTDIR:
+		return KindNotFound, true
+	case unix.EEXIST:
+		return KindExist, true
+	case unix.EACCES:
+		return KindPermission, true
+	case unix.EPERM:
+		// macOS のロック（UF_IMMUTABLE）でも EPERM になるため、対象の属性で決める。
+		if o.readOnly != nil && o.readOnly() {
+			return KindReadOnly, true
+		}
+		return KindPermission, true
+	case unix.EBUSY:
+		return KindLocked, true
+	case unix.EROFS:
+		return KindReadOnly, true
+	case unix.ENOSPC, unix.EDQUOT:
+		return KindNoSpace, true
+	case unix.ENOTEMPTY:
+		return KindNotEmpty, true
+	case unix.EXDEV:
+		return KindCrossDevice, true
+	case unix.ENAMETOOLONG, unix.EILSEQ:
+		return KindInvalidName, true
+	case unix.ELOOP:
+		return KindSourceChanged, true
+	}
+	return KindUnknown, false
+}
