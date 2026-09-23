@@ -41,23 +41,19 @@ type Request struct {
 	DestDir string   // OpCopy / OpMove のみ。存在するフォルダの絶対パス。OpTrash / OpDelete では空
 }
 
-// NewPlan は計画を作る。ファイルシステムは一切変更しない。
-// error を返すのはリクエスト全体が不正な場合だけ（SPEC §6.1）。項目ごとの問題は Item.Err に入れる。
-func NewPlan(ctx context.Context, req Request) (*Plan, error) {
-	return nil, &OpError{Op: "plan", Kind: KindUnknown, Err: errors.ErrUnsupported}
-}
-
 // Plan は NewPlan が作る計画。フィールドはすべて非公開で、NewPlan 以外では作れない。
 // 呼び出し側が変更できるのは、Decide による衝突の決定だけ。
 //
 // NewPlan が作る Plan は items が 1 件以上なので、items が空の Plan はゼロ値（NewPlan 以外で作られたもの）とみなす。
 type Plan struct {
-	req        Request
-	items      []Item
-	conflicts  []Conflict
-	totalFiles int
-	totalBytes int64
-	warnings   []*OpError
+	req       Request
+	items     []Item
+	conflicts []Conflict
+	// conflictDst は、conflicts と同じ添字で、計画時に記録した上書き先・マージ先の fileID（§6.3、§7.3）。
+	conflictDst []fileID
+	totalFiles  int
+	totalBytes  int64
+	warnings    []*OpError
 
 	mu      sync.Mutex // conflicts の Decision と started を守る
 	started bool       // Execute が開始された
@@ -87,10 +83,10 @@ func (p *Plan) Conflicts() []Conflict {
 	return append([]Conflict(nil), p.conflicts...)
 }
 
-// TotalFiles は処理するファイルの数を返す。
+// TotalFiles は処理するファイルの数を返す（フォルダ以外のエントリの数。§6.3）。
 func (p *Plan) TotalFiles() int { return p.totalFiles }
 
-// TotalBytes は書き込むバイト数を返す。
+// TotalBytes は処理する通常のファイルの大きさの合計を返す（§6.3。同一ボリュームの移動とごみ箱では 0）。
 func (p *Plan) TotalBytes() int64 { return p.totalBytes }
 
 // Warnings は実行を妨げない問題（空き容量不足の見込み、フォルダ内の走査エラーなど）のコピーを返す。
@@ -100,12 +96,6 @@ func (p *Plan) Warnings() []*OpError {
 		ws[i] = w.clone()
 	}
 	return ws
-}
-
-// Decide は衝突の決定を設定する。
-// SPEC §9.1 で許されない決定、存在しない ID、Execute の開始後の呼び出しは error を返す。
-func (p *Plan) Decide(id ConflictID, d Decision) error {
-	return &OpError{Op: "decide", Kind: KindUnknown, Err: errors.ErrUnsupported}
 }
 
 // Item は計画のトップレベルの項目。
