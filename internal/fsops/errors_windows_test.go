@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/zredjet/tana/internal/fsops/internal/testfs"
 	"golang.org/x/sys/windows"
 )
 
@@ -41,7 +42,7 @@ func TestClassifyErrnoWindows(t *testing.T) {
 // TestClassifyLockedWindows は、共有モード 0 で開かれたファイルを開くと KindLocked になることを確かめる。
 func TestClassifyLockedWindows(t *testing.T) {
 	t.Parallel()
-	path := filepath.Join(tempDir(t), "locked.txt")
+	path := filepath.Join(testfs.TempDir(t), "locked.txt")
 	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}

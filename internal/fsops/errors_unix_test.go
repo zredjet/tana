@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zredjet/tana/internal/fsops/internal/testfs"
 	"golang.org/x/sys/unix"
 )
 
@@ -42,7 +43,7 @@ func TestClassifyErrnoUnix(t *testing.T) {
 // TestClassifyRealErrorsUnix は、Unix に固有の実際のエラーが期待どおりに分類されることを確かめる。
 func TestClassifyRealErrorsUnix(t *testing.T) {
 	t.Parallel()
-	dir := tempDir(t)
+	dir := testfs.TempDir(t)
 	target := filepath.Join(dir, "target")
 	if err := os.WriteFile(target, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)

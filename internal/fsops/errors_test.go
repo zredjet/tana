@@ -9,17 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-)
 
-// tempDir は t.TempDir() を EvalSymlinks で正規化して返す。
-func tempDir(t *testing.T) string {
-	t.Helper()
-	d, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	return d
-}
+	"github.com/zredjet/tana/internal/fsops/internal/testfs"
+)
 
 // checkStrings は、列挙型の各値の String() が prefix で始まる一意の識別子であり、
 // 範囲外の値が "<型名>(<数値>)" になることを確かめる。
@@ -178,7 +170,7 @@ func TestClassifyGeneric(t *testing.T) {
 // TestClassifyRealErrors は、実際の OS のエラーが期待どおりに分類されることを確かめる。
 func TestClassifyRealErrors(t *testing.T) {
 	t.Parallel()
-	dir := tempDir(t)
+	dir := testfs.TempDir(t)
 	file := filepath.Join(dir, "file.txt")
 	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
