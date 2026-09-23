@@ -37,7 +37,7 @@ func mustGUID(s string) windows.GUID {
 const (
 	clsctxInprocServer            = 0x1
 	fofxRecycleOnDelete           = 0x00080000
-	tsfDeleteRecycleIfPossible    = 0x100
+	tsfDeleteRecycleIfPossible    = 0x80 // TSF_DELETE_RECYCLE_IF_POSSIBLE（shobjidl.h）
 	sigdnFileSysPath              = 0x80058000
 	eAbort                        = 0x80004004
 	eNoInterface                  = 0x80004002
