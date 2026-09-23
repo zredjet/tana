@@ -674,9 +674,11 @@ const (
     - グループポリシー（HKCU と HKLM の `Software\Microsoft\Windows\CurrentVersion\Policies\Explorer`）の `NoRecycleFiles` が 1 なら `KindTrashUnavailable`。
     - ボリュームの設定（HKCU の `Software\Microsoft\Windows\CurrentVersion\Explorer\BitBucket\Volume\{ボリューム GUID}`）の `NukeOnDelete` が 1 なら `KindTrashUnavailable`。
     - 最大サイズは、ポリシーの `RecycleBinSize`（ボリュームの容量に対する割合）があればそれを、なければボリュームの設定の `MaxCapacity`（MB）を使う。
-      項目のサイズ（フォルダは中身の合計。§12.1）が最大サイズ以上なら `KindTrashUnavailable`。
+      項目のサイズ（ファイルの大きさ。フォルダは中身のファイルの大きさの合計。§12.1）が最大サイズ（MB は 1048576 バイト）を超えるなら `KindTrashUnavailable`。
+      最大サイズちょうどは入る。ごみ箱に既にある項目の量は影響しない（V19）。
     - 設定を読めない場合（キーや値がない、ボリューム GUID が取れない）は、分からないものとして `KindTrashUnavailable` にする。
-    - 比べ方の詳細（境界の扱い、実サイズか割り当てサイズか、ごみ箱に既にある項目の影響）は V19 の結果で確定する。
+    - 最大サイズを超えるフォルダでは、Windows はフォルダ自体を「入れられる」と通知したあと中身を 1 つずつ完全削除しようとし、その中身の `PreDeleteItem` にはフラグ `0x80` がない（V19）。
+      手順 4 の中止により、中身は 1 つも消えずに残る。事前確認の見落としに対する二つ目の防御として扱う。
   - パスに Win32 の正規化で変わる名前（末尾の `.` や空白、予約名）が含まれる場合、つまり `GetFullPathNameW` の結果が元のパスと一致しない場合は `KindTrashUnavailable`。
     `SHFileOperationW` では `foo.` を指定すると隣の別ファイル `foo` がごみ箱に入った（V4）。`\\?\` 付きのパスは受け付けられなかった。
 - 実装: `IFileOperation`（COM）を使う（V13 の結果により、`SHFileOperationW` から移行した）。
@@ -1156,6 +1158,11 @@ hdiutil detach /Volumes/fsopstest
 - **V19** Windows: §12.2 のごみ箱の設定と最大サイズの事前確認が、実際の動作を正しく予測するか。
   レジストリ（ボリュームの設定・グループポリシー）が読めるか。最大サイズの境界（ちょうど・1 バイト超・割り当て単位での切り上げ）、フォルダ（中身の合計）、
   ごみ箱に既に項目がある場合（古い項目が消されて入るのか、完全削除されるのか）の動作。
+  - **結果（2026-09-23、windows-latest（Windows 11 build 26100））:** レジストリの `BitBucket\Volume\{GUID}` は、テスト用の VHD（`MaxCapacity` は 5〜6 MB）と C:（9699 MB）のどれにもあり、読めた。ランナーにグループポリシーの設定はない。
+    最大サイズ 1 MB（1048576 バイト）のボリュームで、1048576 バイトまでのファイルは入り、1048577 バイトのファイルは確認なしに完全削除された（ファイルの大きさで決まる）。
+    ごみ箱の使用量が最大サイズを超えていても（12 MB）、最大サイズ以下の新しい項目は入り、古い項目は消されなかった。
+    800000 バイトのフォルダは入った。1200000 バイトのフォルダは、Windows が中身を 1 つずつ完全削除しようとし、最初の中身の `PreDeleteItem`（フラグ `0x2`）で中止されて、中身を含めてすべて残った。
+    §12.2 の事前確認（最大サイズを超えるなら `KindTrashUnavailable`）の予測は、すべての場合で実際の動作と一致した。→ §12.2 を確定した。
 
 ---
 

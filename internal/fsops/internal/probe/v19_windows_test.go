@@ -120,7 +120,7 @@ func predictTrash(t *testing.T, root string, size int64) trashPrediction {
 }
 
 // TestV19 は、SPEC §12.2 の事前確認（ごみ箱の設定と最大サイズ）が実際の動作を正しく予測するかを記録する（SPEC §20 V19）。
-// 予測が「入る」なのに完全削除された場合は I5 に関わるので、DANGEROUS としてログに残す（境界の扱いを確かめるためのプローブなので失敗にはしない）。
+// 予測が「入る」なのに完全削除された場合は、SPEC の事前確認では I5 を守れないことになるので、テストの失敗にする。
 // ごみ箱は空にしない（完全削除になるため）。代わりに、各操作の前後でごみ箱の使用量を記録する。FSOPS_TEST_TRASH=1 のときだけ実行する。
 func TestV19(t *testing.T) {
 	testfs.RequireTrash(t)
@@ -185,7 +185,7 @@ func TestV19(t *testing.T) {
 			tc.name, pred.ok, pred.capacity, verdict, children, usageBefore, binUsage(t, root), s)
 		switch {
 		case pred.ok && strings.HasPrefix(verdict, "PERMANENTLY"):
-			t.Logf("V19: %s: DANGEROUS: predicted to be recycled but was permanently deleted", tc.name)
+			t.Errorf("V19: %s: DANGEROUS: predicted to be recycled but was permanently deleted (I5)", tc.name)
 		case !pred.ok && strings.HasPrefix(verdict, "trashed"):
 			t.Logf("V19: %s: conservative: predicted not to be recycled but was recycled", tc.name)
 		}
