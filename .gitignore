@@ -1,0 +1,25 @@
+# macOS
+.DS_Store
+._*
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# エディタ
+.idea/
+.vscode/
+*.swp
+*~
+
+# ビルド成果物
+/fsopsctl
+*.exe
+*.test
+*.out
+/dist/
+
+# ボリュームをまたぐテスト用のイメージ（SPEC §18.3）
+*.dmg
+*.vhd
+*.vhdx
