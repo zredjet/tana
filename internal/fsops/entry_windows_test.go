@@ -55,6 +55,8 @@ func TestEntryTypeFromAttrs(t *testing.T) {
 
 // TestLstatEntryWOF は、compact /exe で透過圧縮（WOF）したファイルが TypeFile になり、
 // サイズが元のサイズのままであることを確かめる（SPEC §14.1）。
+// WOF のフィルタが動いている通常の状態では、属性に FILE_ATTRIBUTE_REPARSE_POINT が現れない（2026-09-23 の CI で確認）。
+// 現れる場合は、タグが WOF でなければ TypeSpecial になるので、同じ確認でタグの扱いも確かめられる。
 func TestLstatEntryWOF(t *testing.T) {
 	t.Parallel()
 	root := testfs.TempDir(t)
@@ -69,10 +71,9 @@ func TestLstatEntryWOF(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fi.Sys().(*syscall.Win32FileAttributeData).FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT == 0 {
-		t.Skipf("compact /exe did not make a WOF reparse point on this volume:\n%s", out)
-	}
-	// タグが WOF でなければ TypeSpecial になり、ここで失敗する。
+	attrs := fi.Sys().(*syscall.Win32FileAttributeData).FileAttributes
+	t.Logf("attributes after compact /exe: %#08x (reparse point visible: %v)\n%s",
+		attrs, attrs&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0, out)
 	checkEntry(t, p, TypeFile, int64(len(data)), time.Time{})
 	if got := testfs.ReadFile(t, p); got != data {
 		t.Error("content of the compressed file changed")
