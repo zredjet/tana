@@ -717,6 +717,8 @@ const (
   - fsops が作った一時ファイル（§10.1）の削除には `os.Remove` を使ってよい。
 - リンクはリンク自体だけが消えることを確認する（V3）。
 - フォルダは中身を消した後に削除する（空でなければ失敗するので、消し残しがあれば自然に残る。`KindNotEmpty`）。
+- 種類に合わない方法での削除は、何も消さずに失敗する（V3）。判定の後にエントリが置き換えられた場合に誤った分類にしないため、
+  削除が `ERROR_ACCESS_DENIED`・`ERROR_DIRECTORY`（Unix では `EISDIR`・`ENOTDIR`・`EPERM`）で失敗したら `Lstat` し直し、種類が変わっていれば `KindSourceChanged` とする。
 - 1 件失敗しても残りは続け、トップレベルの結果を `OutcomePartial` にする。
 - Windows の読み取り専用ファイルは削除に失敗する（`DeleteFileW` は `ERROR_ACCESS_DENIED` を返すと想定している。V15 で確認する）。属性を勝手に外さず `KindReadOnly` として報告する。
 - Windows のフォルダの読み取り専用属性は保護を意味しないため、フォルダに限り属性を外してから削除してよい（V15 の結果で決める）。削除に失敗したら属性を元に戻す。
@@ -981,6 +983,7 @@ hdiutil detach /Volumes/fsopstest
 | メタデータ | `0o600` のファイルのコピー中（フックで停止）に、一時ファイルの権限が `0o600` である | Unix |
 | メタデータ | 読み取り専用のフォルダ（`0o555`）を含むツリーのコピー → 中身も含めて複製され、フォルダの権限が保持される | 共通 |
 | リンク | Windows でフォルダ用のシンボリックリンク（リンク先がコピー先にない相対リンク）をコピー → フォルダ用のまま | Windows |
+| リンク | シンボリックリンクの作成が `ERROR_PRIVILEGE_NOT_HELD` で失敗する（フックで注入。CI のランナーは昇格済みで権限不足を再現できないため。V8）→ その項目は `KindLinkUnsupported`、ほかは続行 | 共通 |
 | 検証 | コピー中にコピー元が変更された → `KindSourceChanged`、一時ファイルなし | 共通 |
 | 容量 | 空き容量不足の見込みが `Warnings` に入る | CROSSVOL |
 | 容量 | 書き込み中の容量不足 → `KindNoSpace`、残りは Skipped | CROSSVOL（他のテストと並行実行しない） |
@@ -1024,11 +1027,19 @@ hdiutil detach /Volumes/fsopstest
 - **V2** macOS（APFS）: `renamex_np(RENAME_EXCL)` で、大文字小文字だけ・NFC/NFD だけ違う名前へ変更したときの動作。`golang.org/x/sys/unix` に `RenamexNp` があるか。
   （x/sys v0.38.0 に `unix.RenamexNp` と `RENAME_EXCL` があることはソースで確認済み。動作は未確認。）
 - **V3** Windows: 使用する Go のバージョンで、ジャンクションとディレクトリのシンボリックリンクが `Lstat` でどう見えるか（`ModeSymlink` / `ModeIrregular` / `ModeDir`）。§13.2 の削除方法（`RemoveDirectoryW`）でリンク自体だけが消え、リンク先の中身が残ること。
+  - **結果（2026-09-23、Go 1.27.1、windows-latest）:** ジャンクションは `Lstat` で `ModeIrregular`（`IsDir()` は false、`ModeSymlink` なし）、フォルダ用・ファイル用のシンボリックリンクは `ModeSymlink`。§14.1 の属性とタグによる判定を維持する。
+    `RemoveDirectoryW`（ジャンクション・フォルダ用のリンク）と `DeleteFileW`（ファイル用のリンク）でリンク自体だけが消え、リンク先の中身は残った。
+    種類に合わない関数では何も消えずに失敗した（ジャンクションに `DeleteFileW` → `ERROR_ACCESS_DENIED`、ファイル用のリンクに `RemoveDirectoryW` → `ERROR_DIRECTORY`）。
 - **V4** Windows: `SHFileOperationW` の動作。`MAX_PATH` を超えるパス、`\\?\` 付きのパス、固定ドライブ以外のパスでどうなるか（特に、黙って完全削除されないか）。goroutine から呼ぶ際に `runtime.LockOSThread` と `CoInitializeEx` が必要か。
 - **V5** macOS の CI: `trashItemAtURL` が CI 上で成功するか。返されたパスを `Lstat` できるか（プライバシー保護による制限の有無）。
 - **V6** Windows の `Zone.Identifier`（`path:Zone.Identifier`）を `os` で読み書きできるか。macOS の `com.apple.quarantine` を `golang.org/x/sys/unix` の `Getxattr` / `Setxattr` で読み書きできるか。
 - **V7** CI: Windows ランナーで diskpart による VHD の作成・マウントができるか。macOS ランナーで `hdiutil attach` ができるか。Windows ランナーで `\\localhost\C$` にアクセスでき、`GetDriveType` が `DRIVE_REMOTE` を返すか。
+  - **結果（2026-09-23）:** diskpart で 64 MB の VHD を作成・アタッチでき、NTFS・`DRIVE_FIXED`・C: と別のシリアル番号になった。macOS では `hdiutil attach` で APFS のイメージをマウントできた。
+    ボリュームをまたぐ `os.Rename` は Windows で `ERROR_NOT_SAME_DEVICE`、macOS で `EXDEV` になる。
+    `\\localhost\C$\...` 経由で読み取りができ、`GetVolumePathName` のルートに対する `GetDriveType` は `DRIVE_REMOTE`（`\\?\UNC\` 形式でも同じ）。ボリュームシリアル番号は C: と同じ。
 - **V8** Windows ランナーでシンボリックリンクの作成権限があるか。`mklink /J` が使えるか。
+  - **結果（2026-09-23）:** ランナーは昇格済み（High Mandatory Level）。`SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE` の有無にかかわらず `CreateSymbolicLink` が成功し、`os.Symlink` と `mklink /J` も使える。
+    リンクを使うテストは Windows の CI で Skip されずに実行される。権限不足（`KindLinkUnsupported`）は CI で再現できないため、フックで注入して確かめる（§18.4）。
 - **V9** OneDrive の未ダウンロードファイルの扱い。CI では確認できないため、実機（仮想マシンの Windows など）での確認項目として記録するだけにする。
 - **V10** Windows の `$Recycle.Bin\<SID>\` にある `$I` ファイルの形式（先頭から、版番号 8 バイト、元のサイズ 8 バイト、削除日時 8 バイト、版 2 ではパスの文字数 4 バイト、UTF-16 の元のパス）が想定どおりか。
 - **V11** Windows: 末尾が `.` や空白の名前、予約名（`CON` など）のエントリを `\\?\` 経由で作り、走査・コピー・移動・完全削除が同名の別ファイルに影響しないこと。
