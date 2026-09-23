@@ -139,7 +139,7 @@ fsops のすべての操作は、正常終了・失敗・キャンセルのど�
 
 - `internal/fsops` が import してよいのは、標準ライブラリ、`golang.org/x/sys/...`、`golang.org/x/text/...`、および `internal/fsops` 配下のパッケージだけ。
 - `golang.org/x/text` は、必要になるまで `go.mod` に入れない（I6 により、ファイル名の正規化には使わない）。
-- `deps_test.go` は、`GOOS` を windows・darwin・linux に、darwin ではさらに `CGO_ENABLED` を 0 と 1 に変えて `go list -deps` を実行し、どの組み合わせでも許可リスト外の依存があればテストを失敗させる。
+- `deps_test.go` は、`GOOS`（windows・darwin・linux）・`GOARCH`（amd64・arm64）・`CGO_ENABLED`（0・1）のすべての組み合わせで `go list -deps -test` を実行し、どの組み合わせでも許可リスト外の依存（テストの依存を含む）があればテストを失敗させる。
 - 将来ほかのプロジェクトから使う必要が出たら、`internal/` の外へ移動するか別モジュールに切り出す。それまでは `internal/` に置く。
 
 ---
@@ -608,7 +608,7 @@ const (
 - 上書き（ファイル同士）: 置換リネーム（§9.3 の事前確認を行う）。
 - 自動リネーム: §9.2 の候補名へ排他リネーム。
 - マージ（フォルダ同士）: 中身を 1 件ずつ移動する（内側の衝突はそれぞれの決定に従う）。
-  最後に移動元のフォルダが空なら `os.Remove` で削除する。空でなければ残して報告する（Outcome は §7.4）。
+  最後に移動元のフォルダが空なら、§13.2 のフォルダの削除方法で削除する。空でなければ残して報告する（Outcome は §7.4）。
 - トップレベルの項目のリネームがボリューム違いのエラー（Windows: `ERROR_NOT_SAME_DEVICE`、Unix: `EXDEV`）で失敗したら、その項目を §11.2 の方式でやり直す。
   マージの途中で内側のエントリがこのエラーになった場合は、そのエントリを失敗とする。
 
@@ -701,10 +701,24 @@ const (
 ### 13.2 完全削除（`OpDelete`）
 
 - 後順（中身を先、フォルダを後）で削除する。
-- ファイル・リンク・特殊なファイルは `os.Remove`。リンクはリンク自体だけが消えることを確認する（V3）。
-- フォルダは中身を消した後に `os.Remove`（空でなければ失敗するので、消し残しがあれば自然に残る。`KindNotEmpty`）。
+- 削除は、エントリの種類（§14.1）に応じて次の方法で行う。利用者のファイルの削除に `os.Remove` は使わない。
+
+  | 種類 | Unix | Windows |
+  |---|---|---|
+  | ファイル・特殊なファイル・ファイル用のシンボリックリンク | `unlink`（§13.1 のハンドルで入ったフォルダの中では `unlinkat(fd, name, 0)`） | `DeleteFileW` |
+  | フォルダ | `rmdir`（同 `unlinkat(fd, name, AT_REMOVEDIR)`） | `RemoveDirectoryW` |
+  | フォルダ用のシンボリックリンク・ジャンクション（Windows） | — | `RemoveDirectoryW` |
+
+  - Windows のフォルダ用・ファイル用の区別は、エントリの属性（`FILE_ATTRIBUTE_DIRECTORY`）で決める。`TypeSpecial` も同じ。
+  - Windows では、パスは §8.2 の helper で `\\?\` 形式にしてから渡す。
+  - `os.Remove` を使わない理由:
+    - ファイルとしての削除とフォルダとしての削除を両方試すため、判定の後にフォルダがファイルに置き換えられると、そのファイルを消してしまう（逆も同様）。
+    - Windows では、読み取り専用のファイルの削除に失敗すると属性を外して削除をやり直し、それも失敗すると属性を外したまま戻さない（Go 1.27 の `os/file_windows.go` で確認）。
+  - fsops が作った一時ファイル（§10.1）の削除には `os.Remove` を使ってよい。
+- リンクはリンク自体だけが消えることを確認する（V3）。
+- フォルダは中身を消した後に削除する（空でなければ失敗するので、消し残しがあれば自然に残る。`KindNotEmpty`）。
 - 1 件失敗しても残りは続け、トップレベルの結果を `OutcomePartial` にする。
-- Windows の読み取り専用ファイルは削除に失敗する。属性を勝手に外さず `KindReadOnly` として報告する。
+- Windows の読み取り専用ファイルは削除に失敗する（`DeleteFileW` は `ERROR_ACCESS_DENIED` を返すと想定している。V15 で確認する）。属性を勝手に外さず `KindReadOnly` として報告する。
 - Windows のフォルダの読み取り専用属性は保護を意味しないため、フォルダに限り属性を外してから削除してよい（V15 の結果で決める）。削除に失敗したら属性を元に戻す。
 
 ### 13.3 記録した項目だけの削除（移動元の削除）
@@ -715,7 +729,7 @@ const (
   照合するのは、ファイルとリンクでは fileID・種類・サイズ・更新日時、フォルダでは fileID と種類だけとする（フォルダの更新日時は中身を消すと変わるため）。
   一致しないもの（コピー後に変更・置き換えられたもの）は削除せず、`Details` に `KindSourceChanged` で報告する。
   コピー後・削除前に移動元のファイルが編集・保存された場合に、その変更を失わないため（I2）。
-- ファイルとリンクを先に消し、フォルダは深い順に `os.Remove` する。空でなければ残す（コピー中に追加されたファイルがあると空にならないため、そのファイルは残る）。
+- ファイルとリンクを先に消し、フォルダは深い順に消す。削除の方法は §13.2 と同じ。フォルダは空でなければ残す（コピー中に追加されたファイルがあると空にならないため、そのファイルは残る）。
 - フォルダへの入り方は §13.1 に従う。
 - Windows では、照合で一致したエントリに読み取り専用属性があれば、属性を外してから削除する。
   移動先には属性を保持した複製があり、利用者は移動を指示しているため。削除に失敗したら属性を元に戻す。macOS のロック（`UF_IMMUTABLE`）は外さない。
@@ -846,6 +860,8 @@ type OpError struct {
 
 - `OpError` は `Error()` と `Unwrap()` を実装する。`Error()` は英語の技術的な文字列でよい（ログ用）。
 - `KindOf(err error) Kind` は `errors.As` で `*OpError` を探し、見つからなければ `KindUnknown` を返す。
+  nil の `*OpError`（`ItemResult.Err` が nil のときなど）を `error` として渡した場合も `KindUnknown` を返す。
+  `OpError` の `Error()`・`Unwrap()` も nil のレシーバで panic しない。
 - UI は `Kind` から日本語のメッセージを作る。fsops はメッセージを作らない。
 
 主な対応:
@@ -864,7 +880,11 @@ type OpError struct {
 | InvalidName | `ERROR_INVALID_NAME`、`ERROR_FILENAME_EXCED_RANGE` | `ENAMETOOLONG`、`EILSEQ` |
 | SourceChanged | — | `ELOOP`（`O_NOFOLLOW` でリンクに当たった場合） |
 
-- 可能な場合は `errors.Is(err, fs.ErrNotExist)` なども使う。
+- 可能な場合は `errors.Is(err, fs.ErrNotExist)` なども使う。ただしエラー番号の対応を先に調べる（Unix では `ENOTEMPTY` も `fs.ErrExist` に当たるため）。
+- 条件付きの対応は、呼び出し側が条件を指定したときだけ適用する。条件を満たさない場合は次のとおり。
+  - `ERROR_PRIVILEGE_NOT_HELD`（リンク作成以外）→ Permission
+  - `ELOOP`（`O_NOFOLLOW` 以外。リンクの循環など）→ Unknown
+  - `ERROR_ACCESS_DENIED`・`EPERM` で、対象が読み取り専用でない場合 → Permission
 - `ctx.Err()`（`context.Canceled`、`context.DeadlineExceeded`）は `KindCanceled`。
 - `ERROR_ACCESS_DENIED` は原因が複数あるため、対象の属性を調べて ReadOnly か Permission かを決める。
 
@@ -954,6 +974,8 @@ hdiutil detach /Volumes/fsopstest
 | ロック | 上書き先が使用中 → `KindLocked`、上書き先は元のまま、一時ファイルなし | Windows |
 | 読み取り専用 | 読み取り専用の上書き先 → `KindReadOnly`（両 OS で同じ結果） | 共通 |
 | 読み取り専用 | 読み取り専用ファイルのコピー → 属性が保持される | 共通 |
+| 読み取り専用 | 読み取り専用ファイルを含むツリーの完全削除 → そのファイルは `KindReadOnly` で残り、読み取り専用属性も残る | Windows |
+| 削除 | 削除の直前（フックで注入）にフォルダをファイルに置き換える → そのファイルは消えない | 共通 |
 | メタデータ | ファイル・フォルダの更新日時が保持される | 共通 |
 | メタデータ | リンクを含むツリーのコピー → リンク先の更新日時・権限が変わらない | 共通 |
 | メタデータ | `0o600` のファイルのコピー中（フックで停止）に、一時ファイルの権限が `0o600` である | Unix |
@@ -1001,7 +1023,7 @@ hdiutil detach /Volumes/fsopstest
 - **V1** Windows: `MoveFileExW(src, dst, 0)` で、大文字小文字だけ違う名前への変更が成功するか。
 - **V2** macOS（APFS）: `renamex_np(RENAME_EXCL)` で、大文字小文字だけ・NFC/NFD だけ違う名前へ変更したときの動作。`golang.org/x/sys/unix` に `RenamexNp` があるか。
   （x/sys v0.38.0 に `unix.RenamexNp` と `RENAME_EXCL` があることはソースで確認済み。動作は未確認。）
-- **V3** Windows: 使用する Go のバージョンで、ジャンクションとディレクトリのシンボリックリンクが `Lstat` でどう見えるか（`ModeSymlink` / `ModeIrregular` / `ModeDir`）。`os.Remove` でリンク自体だけが消え、リンク先の中身が残ること。
+- **V3** Windows: 使用する Go のバージョンで、ジャンクションとディレクトリのシンボリックリンクが `Lstat` でどう見えるか（`ModeSymlink` / `ModeIrregular` / `ModeDir`）。§13.2 の削除方法（`RemoveDirectoryW`）でリンク自体だけが消え、リンク先の中身が残ること。
 - **V4** Windows: `SHFileOperationW` の動作。`MAX_PATH` を超えるパス、`\\?\` 付きのパス、固定ドライブ以外のパスでどうなるか（特に、黙って完全削除されないか）。goroutine から呼ぶ際に `runtime.LockOSThread` と `CoInitializeEx` が必要か。
 - **V5** macOS の CI: `trashItemAtURL` が CI 上で成功するか。返されたパスを `Lstat` できるか（プライバシー保護による制限の有無）。
 - **V6** Windows の `Zone.Identifier`（`path:Zone.Identifier`）を `os` で読み書きできるか。macOS の `com.apple.quarantine` を `golang.org/x/sys/unix` の `Getxattr` / `Setxattr` で読み書きできるか。
@@ -1019,7 +1041,7 @@ hdiutil detach /Volumes/fsopstest
   設定の事前確認のどちらにするかを、結果を見て決める（§12.2）。
 - **V14** Windows: `FileIdExtdDirectoryInfo` による列挙が NTFS・exFAT・FAT32 の VHD で使えるか。得られるファイル ID・リパースタグが `FileIdInfo`・`FileAttributeTagInfo` と一致するか。
   使えないファイルシステムでは `FileIdBothDirectoryInfo` などに切り替えるかを、結果を見て決める（§13.1）。
-- **V15** Windows: 読み取り専用属性の付いた空のフォルダを `RemoveDirectory`（`os.Remove`）で削除できるか（§13.2）。
+- **V15** Windows: 読み取り専用属性の付いた空のフォルダを `RemoveDirectoryW` で削除できるか。読み取り専用属性の付いたファイルに `DeleteFileW` が `ERROR_ACCESS_DENIED` を返し、ファイルと属性がそのまま残るか（POSIX 形式の削除を使う新しい Windows でも同じか）（§13.2）。
 
 ---
 
