@@ -69,7 +69,8 @@ jobs:
             "FSOPS_PROBE_TRASH_SMALL_DIR=X:\"
           ) | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
       - run: go vet ./...
-      - run: go test ./...
+      # TestCopyNoSpaceCrossVolume が別ボリュームを一杯にするので、パッケージを並行させない（-p 1。§18.4「容量」）。
+      - run: go test -p 1 ./...
       # 要検証事項のプローブと、環境によって Skip しうる Windows 固有のテストは、結果をログに残すため -v で実行する（SPEC §20）。
       - name: Probes (verbose)
         run: |
@@ -104,7 +105,8 @@ jobs:
           echo "FSOPS_PROBE_EXFAT_DIR=/Volumes/FSOPSEXFAT" >> "$GITHUB_ENV"
           echo "FSOPS_PROBE_FAT32_DIR=/Volumes/FSOPSFAT32" >> "$GITHUB_ENV"
       - run: go vet ./...
-      - run: go test -race ./...
+      # TestCopyNoSpaceCrossVolume が別ボリュームを一杯にするので、パッケージを並行させない（-p 1。§18.4「容量」）。
+      - run: go test -race -p 1 ./...
       # 要検証事項のプローブと、環境によって Skip しうるテストは、結果をログに残すため -v で実行する（SPEC §20）。
       - name: Probes (verbose)
         run: |

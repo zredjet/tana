@@ -977,7 +977,7 @@ CI ではどちらも設定する（§19）。
 ```sh
 hdiutil create -size 64m -fs APFS -volname fsopstest /tmp/fsopstest.dmg
 hdiutil attach /tmp/fsopstest.dmg          # /Volumes/fsopstest にマウントされる
-FSOPS_CROSSVOL_DIR=/Volumes/fsopstest go test ./internal/fsops/...
+FSOPS_CROSSVOL_DIR=/Volumes/fsopstest go test -p 1 ./internal/fsops/...   # -p 1 は §19 と同じ理由
 hdiutil detach /Volumes/fsopstest
 ```
 
@@ -1062,12 +1062,12 @@ hdiutil detach /Volumes/fsopstest
      `W:`・`X:` の設定は HKCU の `Software\Microsoft\Windows\CurrentVersion\Explorer\BitBucket\Volume\{ボリューム GUID}` の `NukeOnDelete`・`MaxCapacity` で行い、C: と T: の設定は変えない。
   2. `FSOPS_CROSSVOL_DIR`、`FSOPS_TEST_TRASH=1`、§18.2 の `FSOPS_PROBE_*` を `GITHUB_ENV` に設定する
   3. `go vet ./...`
-  4. `go test ./...`
+  4. `go test -p 1 ./...`（`-p 1` は、別ボリュームを一杯にするテスト（§18.4「容量」）を、ほかのパッケージのテストと並行させないため）
 - **macos ジョブ（`macos-latest`）**
   1. `hdiutil` で 64 MB の APFS イメージを作成してマウントする（§18.3 と同じ）。さらに exFAT と FAT32 のイメージを作ってマウントする
   2. `FSOPS_CROSSVOL_DIR=/Volumes/fsopstest`、`FSOPS_TEST_TRASH=1`、`FSOPS_PROBE_EXFAT_DIR`、`FSOPS_PROBE_FAT32_DIR` を設定する
   3. `go vet ./...`
-  4. `go test -race ./...`
+  4. `go test -race -p 1 ./...`
   5. `CGO_ENABLED=0 go vet ./...` と、ごみ箱が使えないことを確かめるテスト（§18.4 の I5 の行）の `CGO_ENABLED=0` での実行
 - **ubuntu ジョブ（`ubuntu-latest`、公開・非公開に関わらず毎回実行）**
   1. `gofmt -l .` の出力が空であること
@@ -1167,6 +1167,9 @@ hdiutil detach /Volumes/fsopstest
     ごみ箱の使用量が最大サイズを超えていても（12 MB）、最大サイズ以下の新しい項目は入り、古い項目は消されなかった。
     800000 バイトのフォルダは入った。1200000 バイトのフォルダは、Windows が中身を 1 つずつ完全削除しようとし、最初の中身の `PreDeleteItem`（フラグ `0x2`）で中止されて、中身を含めてすべて残った。
     §12.2 の事前確認（最大サイズを超えるなら `KindTrashUnavailable`）の予測は、すべての場合で実際の動作と一致した。→ §12.2 を確定した。
+
+- **V20** シンボリックリンクを作れないボリューム（exFAT・FAT32・vfat）でシンボリックリンクを作ったときに返るエラー番号（§14.2、§17）。
+  §17 では Unix に `KindLinkUnsupported` の対応がなく、`EPERM` などは `KindPermission` になる。対応を加えるかを、結果を見て決める。
 
 ---
 

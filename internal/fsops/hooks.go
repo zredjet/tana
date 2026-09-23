@@ -15,6 +15,11 @@ type testHooks struct {
 	onWrite func(dst string, written int64) error
 	// beforeFinalRename は、一時ファイルを最終名にする直前に、その名前（自動リネームでは試す候補ごと）で呼ばれる（計画後に現れた衝突の注入用。I1）。
 	beforeFinalRename func(dst string)
+	// beforeSymlink は、コピーでシンボリックリンクを作る直前に呼ばれる（§14.2）。error を返すと、作らずにそのエラーで失敗させる
+	// （権限不足の注入用。CI のランナーは昇格済みで再現できないため。V8）。link は作るリンクのパス。
+	beforeSymlink func(link string) error
+	// beforeVerify は、コピーの検証（§10.4）の直前に、書き終えて閉じた一時ファイルのパスで呼ばれる（書き込みの破損の注入用）。
+	beforeVerify func(tmp string)
 }
 
 func (h *testHooks) enterDir(path string) {
@@ -39,5 +44,18 @@ func (h *testHooks) write(dst string, written int64) error {
 func (h *testHooks) finalRename(dst string) {
 	if h != nil && h.beforeFinalRename != nil {
 		h.beforeFinalRename(dst)
+	}
+}
+
+func (h *testHooks) symlink(link string) error {
+	if h != nil && h.beforeSymlink != nil {
+		return h.beforeSymlink(link)
+	}
+	return nil
+}
+
+func (h *testHooks) verify(tmp string) {
+	if h != nil && h.beforeVerify != nil {
+		h.beforeVerify(tmp)
 	}
 }

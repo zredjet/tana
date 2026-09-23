@@ -103,3 +103,6 @@ func (r *progressReporter) fileDone(path string) {
 	r.cur.DoneFiles++
 	r.report(false)
 }
+
+// setStage は、報告せずに段階を変える（検証の後にコピーの段階に戻すときに使う）。
+func (r *progressReporter) setStage(s Stage) { r.cur.Stage = s }
