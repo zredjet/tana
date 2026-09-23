@@ -31,8 +31,17 @@ func readDirSys(s string) ([]dirEntry, error) {
 	if err := windows.GetFileInformationByHandle(h, &bi); err != nil {
 		return nil, &os.PathError{Op: "GetFileInformationByHandle", Path: s, Err: err}
 	}
-	if bi.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY == 0 || bi.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-		// フォルダでない、またはリンク・ジャンクション。中に入らない（I4）。
+	// 種類は §14.1 と同じ規則で判定する。クラウドファイル（OneDrive など）のフォルダはリパースポイントだが TypeDir として入る。
+	// フォルダでないもの、リンク・ジャンクション・その他のリパースポイントには入らない（I4）。
+	var tag uint32
+	if bi.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		var ti fileAttributeTagInfo
+		if err := windows.GetFileInformationByHandleEx(h, windows.FileAttributeTagInfo, (*byte)(unsafe.Pointer(&ti)), uint32(unsafe.Sizeof(ti))); err != nil {
+			return nil, &os.PathError{Op: "GetFileInformationByHandleEx", Path: s, Err: err}
+		}
+		tag = ti.ReparseTag
+	}
+	if entryTypeFromAttrs(bi.FileAttributes, tag) != TypeDir {
 		return nil, &os.PathError{Op: "readdir", Path: s, Err: windows.ERROR_DIRECTORY}
 	}
 	dirID, err := statIDHandle(h)

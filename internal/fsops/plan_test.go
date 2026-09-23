@@ -173,6 +173,24 @@ func TestNewPlanItems(t *testing.T) {
 	}
 }
 
+// TestNewPlanSelfHardLink は、別のフォルダにあるコピー元へのハードリンクを Self にしないことを確かめる（Self は同じフォルダへのコピー。§5）。
+func TestNewPlanSelfHardLink(t *testing.T) {
+	t.Parallel()
+	root := testfs.TempDir(t)
+	testfs.Build(t, root, testfs.Tree{"a/x": testfs.File("x"), "b": testfs.Dir()})
+	if err := os.Link(testfs.ExtendedPath(filepath.Join(root, "a", "x")), testfs.ExtendedPath(filepath.Join(root, "b", "x"))); err != nil {
+		t.Skipf("hard links are not available: %v", err)
+	}
+	plan := mustPlan(t, Request{Op: OpCopy, Sources: []string{filepath.Join(root, "a", "x")}, DestDir: filepath.Join(root, "b")})
+	cs := plan.Conflicts()
+	if len(cs) != 1 || cs[0].Self {
+		t.Fatalf("conflicts = %+v, want one non-Self conflict", cs)
+	}
+	if err := plan.Decide(cs[0].ID, DecisionOverwrite); err != nil {
+		t.Errorf("Decide(Overwrite) on a hard link in another folder: %v", err)
+	}
+}
+
 // TestNewPlanJunctionDest は、ジャンクション経由でコピー元の内側を指すコピー先を KindDestInsideSource にすることを確かめる（§18.4「計画」、Windows）。
 func TestNewPlanJunctionDest(t *testing.T) {
 	t.Parallel()
@@ -233,9 +251,14 @@ func TestNewPlanTotals(t *testing.T) {
 			t.Errorf("%v: TotalFiles=%d TotalBytes=%d, want 6, 9", op, plan.TotalFiles(), plan.TotalBytes())
 		}
 	}
+	// ごみ箱はトップレベルの項目の数。計画時に失敗と分かっている項目（ごみ箱が使えないビルドなど）は数えない。
 	plan := mustPlan(t, Request{Op: OpTrash, Sources: []string{p("src"), p("single")}})
-	if plan.TotalFiles() != 2 || plan.TotalBytes() != 0 {
-		t.Errorf("OpTrash: TotalFiles=%d TotalBytes=%d, want 2, 0", plan.TotalFiles(), plan.TotalBytes())
+	want := 0
+	if trashAvailableHere() {
+		want = 2
+	}
+	if plan.TotalFiles() != want || plan.TotalBytes() != 0 {
+		t.Errorf("OpTrash: TotalFiles=%d TotalBytes=%d, want %d, 0", plan.TotalFiles(), plan.TotalBytes(), want)
 	}
 }
 

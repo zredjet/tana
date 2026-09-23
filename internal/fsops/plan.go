@@ -2,8 +2,6 @@ package fsops
 
 import (
 	"context"
-	"errors"
-	"io/fs"
 	"path/filepath"
 )
 
@@ -11,7 +9,7 @@ import (
 // error を返すのはリクエスト全体が不正な場合（§6.1）と、ctx がキャンセルされた場合（KindCanceled）だけ。
 // 項目ごとの問題は Item.Err に入れ、フォルダ内の走査エラーなどは Warnings に入れる。
 func NewPlan(ctx context.Context, req Request) (*Plan, error) {
-	pl := &planner{ctx: ctx, plan: &Plan{}}
+	pl := &planner{ctx: ctx, plan: &Plan{}, dirIDs: map[string]dirIDResult{}}
 	if err := pl.run(req); err != nil {
 		return nil, err
 	}
@@ -23,6 +21,24 @@ type planner struct {
 	ctx    context.Context
 	plan   *Plan
 	destID idStat // OpCopy / OpMove の DestDir（リンクを辿った先）
+	// dirIDs は、Sources の親フォルダ・祖先の fileID（リンクを辿った先）の記録。
+	// Sources は同じフォルダにあることが多いので、同じフォルダを何度も開かないようにする。計画の間だけ使う。
+	dirIDs map[string]dirIDResult
+}
+
+type dirIDResult struct {
+	st  idStat
+	err error
+}
+
+// dirID は、フォルダ p の fileID（リンクを辿った先）を返す。同じパスは 1 回だけ調べる。
+func (pl *planner) dirID(p string) (idStat, error) {
+	if r, ok := pl.dirIDs[p]; ok {
+		return r.st, r.err
+	}
+	st, err := fileIDFollow(p)
+	pl.dirIDs[p] = dirIDResult{st, err}
+	return st, err
 }
 
 // errCanceled は、ctx がキャンセルされていれば KindCanceled の *OpError を返す。
@@ -134,7 +150,7 @@ func (pl *planner) checkNesting(srcs []string) (string, error) {
 			if err := pl.errCanceled(); err != nil {
 				return "", err
 			}
-			if st, err := fileIDFollow(p); err == nil {
+			if st, err := pl.dirID(p); err == nil {
 				if j, ok := owner[st.id]; ok && j != i {
 					return s, nil
 				}
@@ -178,7 +194,7 @@ func (pl *planner) item(i int, src string) Item {
 	switch r.Op {
 	case OpCopy, OpMove:
 		if r.Op == OpMove {
-			if parent, err := fileIDFollow(filepath.Dir(src)); err == nil && parent.id == pl.destID.id {
+			if parent, err := pl.dirID(filepath.Dir(src)); err == nil && parent.id == pl.destID.id {
 				it.Err = planError(src, KindSameFile, nil)
 				return it
 			}
@@ -218,26 +234,24 @@ func (pl *planner) count(i int, it Item) (files int, bytes int64, err error) {
 		return 1, 0, nil
 	}
 	w := &walker{pl: pl, item: i, countBytes: it.Method != MethodRename}
+	var dirConflict bool
+	var cid ConflictID
 	if it.Dst != "" {
-		dirConflict, cid, err := w.conflict(it.Src, it.Dst, it.Info, 0)
-		if err != nil {
-			return 0, 0, err
+		// 自分自身（Self）は、コピー元と同じフォルダへのコピー（§5）。同じファイルへの別のハードリンクは Self にしない。
+		self := false
+		if parent, err := pl.dirID(filepath.Dir(it.Src)); err == nil && parent.id == pl.destID.id {
+			self = true
 		}
-		switch {
-		case dirConflict:
-			err = w.walk(it.Src, it.Dst, cid)
-		case it.Method == MethodRename:
-			return 1, 0, nil // 衝突がなければ走査せず、1 項目として数える
-		case it.Info.Type == TypeDir:
-			err = w.walk(it.Src, "", 0)
-		default:
-			w.add(it.Info)
-		}
-		return w.files, w.bytes, err
+		dirConflict, cid = w.conflict(it.Src, it.Dst, it.Info, 0, self)
 	}
-	if it.Info.Type == TypeDir {
+	switch {
+	case dirConflict:
+		err = w.walk(it.Src, it.Dst, cid)
+	case it.Method == MethodRename:
+		return 1, 0, nil // フォルダ同士の衝突がなければ走査せず、1 項目として数える
+	case it.Info.Type == TypeDir:
 		err = w.walk(it.Src, "", 0)
-	} else {
+	default:
 		w.add(it.Info)
 	}
 	return w.files, w.bytes, err
@@ -266,26 +280,20 @@ func (w *walker) warn(path string, err error) {
 	w.pl.plan.warnings = append(w.pl.plan.warnings, planError(path, classify(err, classifyOpts{}), withUserPaths(err, path, "")))
 }
 
-// conflict は、src から dst への衝突を調べ、あれば記録する（§6.3）。
+// conflict は、src から dst への衝突を調べ、あれば記録する（§6.3）。self は、トップレベルの自分自身への衝突か。
 // dirConflict は、フォルダ同士の衝突（中を走査して内側の衝突を探す必要がある）かを返す。
-func (w *walker) conflict(src, dst string, srcInfo EntryInfo, parent ConflictID) (dirConflict bool, id ConflictID, err error) {
+func (w *walker) conflict(src, dst string, srcInfo EntryInfo, parent ConflictID, self bool) (dirConflict bool, id ConflictID) {
 	dstInfo, err := lstatEntry(dst)
-	if errors.Is(err, fs.ErrNotExist) || classify(err, classifyOpts{}) == KindNotFound {
-		return false, 0, nil
-	}
 	if err != nil {
-		w.warn(dst, err)
-		return false, 0, nil
+		if classify(err, classifyOpts{}) != KindNotFound {
+			w.warn(dst, err)
+		}
+		return false, 0
 	}
-	c := Conflict{Parent: parent, Item: w.item, Src: src, Dst: dst, SrcInfo: srcInfo, DstInfo: dstInfo}
+	c := Conflict{Parent: parent, Item: w.item, Src: src, Dst: dst, SrcInfo: srcInfo, DstInfo: dstInfo, Self: self}
 	var dstID fileID
 	if st, err := fileIDOf(dst); err == nil {
 		dstID = st.id
-		if parent == 0 {
-			if s, err := fileIDOf(src); err == nil && s.id == st.id {
-				c.Self = true
-			}
-		}
 	} else {
 		// 記録できなければゼロのままにする。実行時の照合（§7.3）で一致しないので、上書き・マージされない。
 		w.warn(dst, err)
@@ -294,7 +302,7 @@ func (w *walker) conflict(src, dst string, srcInfo EntryInfo, parent ConflictID)
 	c.ID = ConflictID(len(p.conflicts) + 1)
 	p.conflicts = append(p.conflicts, c)
 	p.conflictDst = append(p.conflictDst, dstID)
-	return !c.Self && srcInfo.Type == TypeDir && dstInfo.Type == TypeDir, c.ID, nil
+	return !self && srcInfo.Type == TypeDir && dstInfo.Type == TypeDir, c.ID
 }
 
 // walk は、フォルダ src の中身を数える。dst が空でなければ、dst の同名のエントリとの衝突も調べる（parent はその親の衝突）。
@@ -315,11 +323,7 @@ func (w *walker) walk(src, dst string, parent ConflictID) error {
 		var cid ConflictID
 		if dst != "" {
 			d := filepath.Join(dst, e.name)
-			dirConflict, id, err := w.conflict(childSrc, d, e.info, parent)
-			if err != nil {
-				return err
-			}
-			if dirConflict {
+			if dirConflict, id := w.conflict(childSrc, d, e.info, parent, false); dirConflict {
 				childDst, cid = d, id
 			}
 		}

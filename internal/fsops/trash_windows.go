@@ -27,12 +27,16 @@ func trashAvailable(ctx context.Context, src string, info EntryInfo) (bool, erro
 	if hasWin32UnsafeComponent(src) {
 		return false, nil
 	}
+	// GetFullPathNameW には、正規化されるかを調べるために \\?\ を付けないパスを渡す（この確認のための例外）。
 	full, err := fullPathName(src)
 	if err != nil || full != src {
 		return false, err
 	}
-	// ここまでで、src は \\?\ を付けずに Win32 の API に渡しても同じエントリを指す。
-	root, err := volumePathName(src)
+	s, err := sysPath(src)
+	if err != nil {
+		return false, err
+	}
+	root, err := volumePathName(s) // \\?\C:\ や \\?\UNC\server\share\ の形
 	if err != nil {
 		return false, err
 	}
@@ -147,16 +151,21 @@ func recycleCapacity(root string) (capacity int64, ok bool, err error) {
 	} else if found && v == 1 {
 		return 0, false, nil
 	}
+	// ポリシーの RecycleBinSize（容量に対する割合）は、ユーザーとマシンの両方にあれば小さいほうを使う（安全側）。
+	percent, havePolicy := uint64(0), false
 	for _, h := range hives {
 		if v, found, err := readDWORD(h, policiesExplorerKey, "RecycleBinSize"); err != nil {
 			return 0, false, err
-		} else if found {
-			var total uint64
-			if err := windows.GetDiskFreeSpaceEx(r16, nil, &total, nil); err != nil {
-				return 0, false, err
-			}
-			return int64(total / 100 * v), true, nil
+		} else if found && (!havePolicy || v < percent) {
+			percent, havePolicy = v, true
 		}
+	}
+	if havePolicy {
+		var total uint64
+		if err := windows.GetDiskFreeSpaceEx(r16, nil, &total, nil); err != nil {
+			return 0, false, err
+		}
+		return int64(total / 100 * percent), true, nil
 	}
 	v, found, err := readDWORD(registry.CURRENT_USER, volKey, "MaxCapacity")
 	if err != nil || !found {
