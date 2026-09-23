@@ -87,6 +87,8 @@ func TestKindOf(t *testing.T) {
 		// KindOf は *OpError だけを見る。生のエラーは分類しない（SPEC §17）。
 		{"raw context.Canceled", context.Canceled, KindUnknown},
 		{"raw fs.ErrNotExist", fs.ErrNotExist, KindUnknown},
+		// ItemResult.Err などの nil の *OpError を error として渡した場合
+		{"typed nil OpError", (*OpError)(nil), KindUnknown},
 	}
 	for _, tt := range tests {
 		if got := KindOf(tt.err); got != tt.want {
@@ -123,6 +125,15 @@ func TestOpError(t *testing.T) {
 		t.Error("errors.AsType[*fs.PathError](OpError) did not find the wrapped error")
 	}
 
+	// nil の *OpError を error として扱っても panic しない。
+	var nilErr error = (*OpError)(nil)
+	if got := nilErr.Error(); got != "fsops: <nil>" {
+		t.Errorf("nil Error() = %q", got)
+	}
+	if errors.Is(nilErr, fs.ErrNotExist) {
+		t.Error("errors.Is(nil OpError, fs.ErrNotExist) = true, want false")
+	}
+
 	if (*OpError)(nil).clone() != nil {
 		t.Error("nil.clone() != nil")
 	}
@@ -155,6 +166,7 @@ func TestClassifyGeneric(t *testing.T) {
 		{"fs.ErrExist", fs.ErrExist, KindExist},
 		{"fs.ErrPermission", fs.ErrPermission, KindPermission},
 		{"PathError with fs.ErrNotExist", &fs.PathError{Op: "open", Path: "/a", Err: fs.ErrNotExist}, KindNotFound},
+		{"typed nil OpError", (*OpError)(nil), KindUnknown},
 	}
 	for _, tt := range tests {
 		if got := classify(tt.err, classifyOpts{}); got != tt.want {

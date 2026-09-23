@@ -25,13 +25,11 @@ func wrapForms(errno syscall.Errno) []error {
 }
 
 // testErrnoTable は、表の各エラー番号が、どの包み方でも期待どおりに分類されることを確かめる。
-// readOnlyErrno 以外では readOnly が呼ばれないことも確かめる。
-func testErrnoTable(t *testing.T, cases []errnoCase, readOnlyErrno syscall.Errno) {
+// 表には readOnly を使うエラー番号を入れない（testReadOnlyErrno で確かめる）。
+// 表のエラー番号では readOnly が呼ばれないことも確かめる。
+func testErrnoTable(t *testing.T, cases []errnoCase) {
 	t.Helper()
 	for _, c := range cases {
-		if c.errno == readOnlyErrno {
-			continue // testReadOnlyErrno で確かめる
-		}
 		for _, err := range wrapForms(c.errno) {
 			called := false
 			o := classifyOpts{readOnly: func() bool { called = true; return true }}
@@ -39,8 +37,18 @@ func testErrnoTable(t *testing.T, cases []errnoCase, readOnlyErrno syscall.Errno
 				t.Errorf("classify(%#v) = %v, want %v", err, got, c.want)
 			}
 			if called {
-				t.Errorf("classify(%#v) called readOnly; it must only be called for %v", err, readOnlyErrno)
+				t.Errorf("classify(%#v) called readOnly; it must only be called for ERROR_ACCESS_DENIED / EPERM", err)
 			}
+		}
+	}
+}
+
+// testErrnoWithOpts は、errno を o で分類すると、どの包み方でも want になることを確かめる。
+func testErrnoWithOpts(t *testing.T, errno syscall.Errno, o classifyOpts, want Kind) {
+	t.Helper()
+	for _, err := range wrapForms(errno) {
+		if got := classify(err, o); got != want {
+			t.Errorf("classify(%#v, %+v) = %v, want %v", err, o, got, want)
 		}
 	}
 }

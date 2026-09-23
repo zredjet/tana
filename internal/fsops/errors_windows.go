@@ -9,9 +9,6 @@ import (
 
 // classifyErrno は err に含まれる Windows のエラー番号を分類する（SPEC §17）。
 // 対応表にない番号、またはエラー番号を含まない場合は ok が false。
-//
-// ERROR_PRIVILEGE_NOT_HELD は KindLinkUnsupported にする。
-// fsops で特権が必要になる操作はシンボリックリンクの作成（SeCreateSymbolicLinkPrivilege）だけのため。
 func classifyErrno(err error, o classifyOpts) (k Kind, ok bool) {
 	errno, ok := errors.AsType[syscall.Errno](err)
 	if !ok {
@@ -39,7 +36,11 @@ func classifyErrno(err error, o classifyOpts) (k Kind, ok bool) {
 	case windows.ERROR_NOT_SAME_DEVICE:
 		return KindCrossDevice, true
 	case windows.ERROR_PRIVILEGE_NOT_HELD:
-		return KindLinkUnsupported, true
+		// SPEC §17 では、リンクの作成時だけ LinkUnsupported とする。
+		if o.symlinkCreate {
+			return KindLinkUnsupported, true
+		}
+		return KindPermission, true
 	case windows.ERROR_INVALID_NAME, windows.ERROR_FILENAME_EXCED_RANGE:
 		return KindInvalidName, true
 	}

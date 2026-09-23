@@ -11,9 +11,6 @@ import (
 
 // classifyErrno は err に含まれる errno を分類する（SPEC §17）。
 // 対応表にない番号、または errno を含まない場合は ok が false。
-//
-// ELOOP は KindSourceChanged にする。
-// fsops は操作対象のパスを O_NOFOLLOW などでリンクを辿らずに扱うため、ELOOP はリンクに置き換えられていたことを示す。
 func classifyErrno(err error, o classifyOpts) (k Kind, ok bool) {
 	errno, ok := errors.AsType[syscall.Errno](err)
 	if !ok {
@@ -45,7 +42,11 @@ func classifyErrno(err error, o classifyOpts) (k Kind, ok bool) {
 	case unix.ENAMETOOLONG, unix.EILSEQ:
 		return KindInvalidName, true
 	case unix.ELOOP:
-		return KindSourceChanged, true
+		// SPEC §17 では、O_NOFOLLOW でリンクに当たった場合だけ SourceChanged とする。
+		// それ以外（リンクの循環など）は対応表にないので ok を false にする。
+		if o.noFollow {
+			return KindSourceChanged, true
+		}
 	}
 	return KindUnknown, false
 }

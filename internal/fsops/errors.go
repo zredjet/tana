@@ -87,6 +87,9 @@ type OpError struct {
 
 // Error はログ用の技術的な文字列を返す。利用者向けのメッセージではない。
 func (e *OpError) Error() string {
+	if e == nil {
+		return "fsops: <nil>"
+	}
 	s := "fsops: " + e.Op
 	if e.Path != "" {
 		s += " " + e.Path
@@ -101,7 +104,14 @@ func (e *OpError) Error() string {
 	return s
 }
 
-func (e *OpError) Unwrap() error { return e.Err }
+// Unwrap は元のエラーを返す。
+// Item.Err などの nil の *OpError が error として渡された場合にも errors.Is などが panic しないよう、nil を許す。
+func (e *OpError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
 
 // clone は e の浅いコピーを返す。e が nil なら nil を返す。
 // 計画の内容を呼び出し側から変更できないようにするために使う。
@@ -114,8 +124,9 @@ func (e *OpError) clone() *OpError {
 }
 
 // KindOf は err の連鎖から *OpError を探し、その Kind を返す。見つからなければ KindUnknown を返す。
+// nil の *OpError（ItemResult.Err が nil の場合など）を渡しても KindUnknown を返す。
 func KindOf(err error) Kind {
-	if oe, ok := errors.AsType[*OpError](err); ok {
+	if oe, ok := errors.AsType[*OpError](err); ok && oe != nil {
 		return oe.Kind
 	}
 	return KindUnknown
@@ -127,6 +138,12 @@ type classifyOpts struct {
 	// 操作の対象が読み取り専用（Windows: 読み取り専用属性、macOS: UF_IMMUTABLE）なら true を返す。
 	// nil なら読み取り専用でないとみなす（KindPermission）。
 	readOnly func() bool
+	// symlinkCreate は、シンボリックリンクの作成で起きたエラーであることを示す。
+	// Windows の ERROR_PRIVILEGE_NOT_HELD は、このときだけ KindLinkUnsupported にする。
+	symlinkCreate bool
+	// noFollow は、O_NOFOLLOW などでリンクを辿らずに開いたときのエラーであることを示す。
+	// Unix の ELOOP は、このときだけ KindSourceChanged にする（リンクに置き換えられていたことを示すため）。
+	noFollow bool
 }
 
 // classify は OS などから返されたエラーを分類する（SPEC §17）。
@@ -135,7 +152,7 @@ func classify(err error, o classifyOpts) Kind {
 	if err == nil {
 		return KindUnknown
 	}
-	if oe, ok := errors.AsType[*OpError](err); ok {
+	if oe, ok := errors.AsType[*OpError](err); ok && oe != nil {
 		return oe.Kind
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
