@@ -43,9 +43,11 @@ jobs:
           "FSOPS_TEST_TRASH=1" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
       - run: go vet ./...
       - run: go test ./...
-      # 要検証事項のプローブは、結果をログに残すため -v で実行する（SPEC §20）。
+      # 要検証事項のプローブと、環境によって Skip しうる Windows 固有のテストは、結果をログに残すため -v で実行する（SPEC §20）。
       - name: Probes (verbose)
-        run: go test -count=1 -v ./internal/fsops/internal/probe/
+        run: |
+          go test -count=1 -v ./internal/fsops/internal/probe/
+          go test -count=1 -v -run 'TestLstatEntryWOF' ./internal/fsops/
 
   macos:
     # 非公開リポジトリでは、macOS のジョブは pull_request と workflow_dispatch のときだけ実行する（SPEC §19）。

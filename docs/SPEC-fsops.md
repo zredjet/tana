@@ -750,6 +750,7 @@ const (
      - `IO_REPARSE_TAG_SYMLINK` → `TypeSymlink`
      - `IO_REPARSE_TAG_MOUNT_POINT` → `TypeJunction`
      - OneDrive などのクラウドファイル（`IO_REPARSE_TAG_CLOUD` 系）と重複除去（`IO_REPARSE_TAG_DEDUP`）→ 通常のファイル・フォルダとして扱う
+     - `IO_REPARSE_TAG_WOF`（0x80000017、Windows の透過圧縮。`compact /exe` や CompactOS で圧縮されたファイル）→ 通常のファイルとして扱う
      - それ以外 → `TypeSpecial`
 - クラウドファイルを通常扱いにするのは、OneDrive でリダイレクトされたデスクトップ・ドキュメントを普通に操作できるようにするため。未ダウンロードのファイルは、読み込み時にダウンロードが発生する（V9）。
 

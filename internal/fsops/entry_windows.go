@@ -14,6 +14,7 @@ const (
 	ioReparseTagCloud     = 0x9000001A // IO_REPARSE_TAG_CLOUD。CLOUD_1〜CLOUD_F はビット 12〜15 が異なる
 	ioReparseTagCloudMask = 0x0000F000 // IO_REPARSE_TAG_CLOUD_MASK
 	ioReparseTagDedup     = 0x80000013 // IO_REPARSE_TAG_DEDUP
+	ioReparseTagWOF       = 0x80000017 // IO_REPARSE_TAG_WOF（compact /exe、CompactOS による透過圧縮）
 )
 
 // fileAttributeTagInfo は FILE_ATTRIBUTE_TAG_INFO（x/sys/windows に定義がない）。
@@ -86,8 +87,8 @@ func entryTypeFromAttrs(attrs, tag uint32) EntryType {
 		return TypeSymlink
 	case tag == windows.IO_REPARSE_TAG_MOUNT_POINT:
 		return TypeJunction
-	case tag&^ioReparseTagCloudMask == ioReparseTagCloud, tag == ioReparseTagDedup:
-		// OneDrive などのクラウドファイルと重複除去は、通常のファイル・フォルダとして扱う。
+	case tag&^ioReparseTagCloudMask == ioReparseTagCloud, tag == ioReparseTagDedup, tag == ioReparseTagWOF:
+		// OneDrive などのクラウドファイル、重複除去、WOF の透過圧縮は、通常のファイル・フォルダとして扱う。
 		return plain
 	}
 	return TypeSpecial
