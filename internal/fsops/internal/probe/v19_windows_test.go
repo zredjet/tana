@@ -66,7 +66,7 @@ type trashPrediction struct {
 const policiesExplorer = `Software\Microsoft\Windows\CurrentVersion\Policies\Explorer`
 
 // predictTrash は、root のボリュームに size バイトの項目をごみ箱へ送ったときに、ごみ箱に入るかを予測する（SPEC §12.2）。
-// 比べ方は「size < 最大サイズ」を仮に使い、V19 で実際の動作と比べる。
+// 最大サイズ以下なら入る（V19 で確認: 最大サイズちょうどは入り、1 バイト超えると完全削除される。ごみ箱の使用量は影響しない）。
 func predictTrash(t *testing.T, root string, size int64) trashPrediction {
 	t.Helper()
 	for _, hive := range []struct {
@@ -116,7 +116,7 @@ func predictTrash(t *testing.T, root string, size int64) trashPrediction {
 		capacity = int64(v) << 20
 		reason = fmt.Sprintf("%s MaxCapacity=%d MB", guid, v)
 	}
-	return trashPrediction{ok: size < capacity, capacity: capacity, reason: reason}
+	return trashPrediction{ok: size <= capacity, capacity: capacity, reason: reason}
 }
 
 // TestV19 は、SPEC §12.2 の事前確認（ごみ箱の設定と最大サイズ）が実際の動作を正しく予測するかを記録する（SPEC §20 V19）。
@@ -177,8 +177,12 @@ func TestV19(t *testing.T) {
 		before := readBin(t, root)
 		s := ifoTrashFlags(target, coInitSTA, true, flags)
 		verdict := trashVerdict(t, target, root, before)
-		t.Logf("V19: %s: predicted ok=%v (capacity=%d) | actual: %s | %s -> %s || %s",
-			tc.name, pred.ok, pred.capacity, verdict, usageBefore, binUsage(t, root), s)
+		children := ""
+		if len(tc.files) > 1 {
+			children = fmt.Sprintf(" children left=%+q", listNamesIfExists(t, target))
+		}
+		t.Logf("V19: %s: predicted ok=%v (capacity=%d) | actual: %s%s | %s -> %s || %s",
+			tc.name, pred.ok, pred.capacity, verdict, children, usageBefore, binUsage(t, root), s)
 		switch {
 		case pred.ok && strings.HasPrefix(verdict, "PERMANENTLY"):
 			t.Logf("V19: %s: DANGEROUS: predicted to be recycled but was permanently deleted", tc.name)
@@ -186,4 +190,12 @@ func TestV19(t *testing.T) {
 			t.Logf("V19: %s: conservative: predicted not to be recycled but was recycled", tc.name)
 		}
 	}
+}
+
+func listNamesIfExists(t *testing.T, dir string) []string {
+	t.Helper()
+	if !testfs.Exists(t, dir) {
+		return nil
+	}
+	return listNames(t, dir)
 }
