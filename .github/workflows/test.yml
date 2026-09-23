@@ -22,9 +22,30 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      # VHD の作成と FSOPS_CROSSVOL_DIR・FSOPS_TEST_TRASH の設定はフェーズ2で追加する（SPEC §19）。
+      # ボリュームをまたぐテスト用に、64 MB の VHD を NTFS で作って T: に割り当てる（SPEC §19、V7）。
+      - name: Create cross-volume VHD
+        shell: pwsh
+        run: |
+          $vhd = Join-Path $env:RUNNER_TEMP "fsopstest.vhd"
+          $script = Join-Path $env:RUNNER_TEMP "diskpart.txt"
+          @(
+            "create vdisk file=`"$vhd`" maximum=64 type=expandable",
+            "select vdisk file=`"$vhd`"",
+            "attach vdisk",
+            "create partition primary",
+            "format fs=ntfs quick label=fsopstest",
+            "assign letter=T"
+          ) | Set-Content -Encoding ascii $script
+          diskpart /s $script
+          if ($LASTEXITCODE -ne 0) { throw "diskpart failed: $LASTEXITCODE" }
+          Get-Volume -DriveLetter T | Format-List
+          "FSOPS_CROSSVOL_DIR=T:\" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "FSOPS_TEST_TRASH=1" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
       - run: go vet ./...
       - run: go test ./...
+      # 要検証事項のプローブは、結果をログに残すため -v で実行する（SPEC §20）。
+      - name: Probes (verbose)
+        run: go test -count=1 -v ./internal/fsops/internal/probe/
 
   macos:
     # 非公開リポジトリでは、macOS のジョブは pull_request と workflow_dispatch のときだけ実行する（SPEC §19）。
@@ -36,9 +57,18 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      # hdiutil によるイメージの作成と FSOPS_CROSSVOL_DIR・FSOPS_TEST_TRASH の設定はフェーズ2で追加する（SPEC §19）。
+      # ボリュームをまたぐテスト用に、64 MB の APFS イメージを作ってマウントする（SPEC §18.3、§19、V7）。
+      - name: Create cross-volume disk image
+        run: |
+          hdiutil create -size 64m -fs APFS -volname fsopstest "$RUNNER_TEMP/fsopstest.dmg"
+          hdiutil attach "$RUNNER_TEMP/fsopstest.dmg"
+          echo "FSOPS_CROSSVOL_DIR=/Volumes/fsopstest" >> "$GITHUB_ENV"
+          echo "FSOPS_TEST_TRASH=1" >> "$GITHUB_ENV"
       - run: go vet ./...
       - run: go test -race ./...
+      # 要検証事項のプローブは、結果をログに残すため -v で実行する（SPEC §20）。
+      - name: Probes (verbose)
+        run: go test -count=1 -v ./internal/fsops/internal/probe/
       - run: CGO_ENABLED=0 go vet ./...
 
   ubuntu:
