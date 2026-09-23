@@ -3,6 +3,7 @@ package fsops
 import (
 	"os"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -30,37 +31,44 @@ func lstatEntrySys(p string) (EntryInfo, error) {
 		return EntryInfo{}, err
 	}
 	attrs := fi.Sys().(*syscall.Win32FileAttributeData).FileAttributes
-	var tag uint32
-	if attrs&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-		// 属性とタグは同じハンドルから取り、両者が別のエントリのものにならないようにする。
-		attrs, tag, err = reparseTag(p)
-		if err != nil {
-			return EntryInfo{}, err
-		}
+	if attrs&windows.FILE_ATTRIBUTE_REPARSE_POINT == 0 {
+		return entryInfo(entryTypeFromAttrs(attrs, 0), fi), nil
 	}
-	return entryInfo(entryTypeFromAttrs(attrs, tag), fi), nil
+	return reparseEntry(p)
 }
 
-// reparseTag は、p をリパースポイントを辿らずに開き、ファイル属性とリパースタグを返す。
-func reparseTag(p string) (attrs, tag uint32, err error) {
+// reparseEntry は、p をリパースポイントを辿らずに開き、種類・サイズ・更新日時をすべてそのハンドルから求める。
+// os.Lstat の結果と混ぜないのは、その間に置き換えられた場合に、別のエントリの情報が混ざらないようにするため。
+func reparseEntry(p string) (EntryInfo, error) {
 	p16, err := windows.UTF16PtrFromString(p)
 	if err != nil {
-		return 0, 0, err
+		return EntryInfo{}, err
 	}
 	// FILE_READ_ATTRIBUTES だけで開くので、ほかのプロセスの共有モードに妨げられない。
 	h, err := windows.CreateFile(p16, windows.FILE_READ_ATTRIBUTES,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil,
 		windows.OPEN_EXISTING, windows.FILE_FLAG_OPEN_REPARSE_POINT|windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
 	if err != nil {
-		return 0, 0, &os.PathError{Op: "CreateFile", Path: p, Err: err}
+		return EntryInfo{}, &os.PathError{Op: "CreateFile", Path: p, Err: err}
 	}
 	defer windows.CloseHandle(h)
+	var bi windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(h, &bi); err != nil {
+		return EntryInfo{}, &os.PathError{Op: "GetFileInformationByHandle", Path: p, Err: err}
+	}
 	var ti fileAttributeTagInfo
 	if err := windows.GetFileInformationByHandleEx(h, windows.FileAttributeTagInfo,
 		(*byte)(unsafe.Pointer(&ti)), uint32(unsafe.Sizeof(ti))); err != nil {
-		return 0, 0, &os.PathError{Op: "GetFileInformationByHandleEx", Path: p, Err: err}
+		return EntryInfo{}, &os.PathError{Op: "GetFileInformationByHandleEx", Path: p, Err: err}
 	}
-	return ti.FileAttributes, ti.ReparseTag, nil
+	info := EntryInfo{
+		Type:    entryTypeFromAttrs(ti.FileAttributes, ti.ReparseTag),
+		ModTime: time.Unix(0, bi.LastWriteTime.Nanoseconds()),
+	}
+	if info.Type == TypeFile {
+		info.Size = int64(bi.FileSizeHigh)<<32 | int64(bi.FileSizeLow)
+	}
+	return info, nil
 }
 
 // entryTypeFromAttrs はファイル属性とリパースタグから種類を判定する（SPEC §14.1）。

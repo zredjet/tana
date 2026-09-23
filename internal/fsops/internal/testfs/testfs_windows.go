@@ -72,8 +72,13 @@ func CreateSymlink(t testing.TB, target, link string, dir bool) {
 }
 
 // CreateJunction は link にジャンクション（マウントポイント）を作る（cmd /c mklink /J）。
+// cmd.exe が解釈する文字（& | < > ^ %）を含むパスは、別のコマンドやパスとして扱われるため t.Fatal にする。
+// t.TempDir のフォルダ名にはテスト名のこれらの文字が残るので、そうしたテスト名でジャンクションを使わないこと。
 func CreateJunction(t testing.TB, target, link string) {
 	t.Helper()
+	if strings.ContainsAny(link+target, "&|<>^%") {
+		t.Fatalf("CreateJunction: %q or %q contains a character that cmd.exe interprets (& | < > ^ %%)", link, target)
+	}
 	out, err := exec.Command("cmd", "/c", "mklink", "/J", link, target).CombinedOutput()
 	if err != nil {
 		t.Fatalf("mklink /J %s %s: %v\n%s", link, target, err, out)

@@ -2,6 +2,7 @@ package fsops
 
 import (
 	"io/fs"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -83,7 +84,13 @@ func TestLstatEntryLinks(t *testing.T) {
 			t.Parallel()
 			dir := filepath.Join(root, tt.name)
 			testfs.Build(t, dir, testfs.Tree{"link": tt.entry})
-			checkEntry(t, filepath.Join(dir, "link"), TypeSymlink, 0, time.Time{})
+			link := filepath.Join(dir, "link")
+			// リンク自体の更新日時（リンク先のものではない）を返すこと。
+			fi, err := os.Lstat(testfs.ExtendedPath(link))
+			if err != nil {
+				t.Fatal(err)
+			}
+			checkEntry(t, link, TypeSymlink, 0, fi.ModTime())
 		})
 	}
 }

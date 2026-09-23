@@ -14,10 +14,12 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -111,13 +113,7 @@ type Tree map[string]Entry
 // 読み取り専用にしたものは、テストの終了時に書き込み可能に戻す（TempDir を削除できるように）。
 func Build(t testing.TB, root string, tree Tree) {
 	t.Helper()
-	paths := slices.Sorted(func(yield func(string) bool) {
-		for p := range tree {
-			if !yield(p) {
-				return
-			}
-		}
-	})
+	paths := slices.Sorted(maps.Keys(tree))
 	for _, rel := range paths {
 		e := tree[rel]
 		p := filepath.Join(root, filepath.FromSlash(rel))
@@ -201,13 +197,14 @@ func ReadFile(t testing.TB, path string) string {
 }
 
 // Exists は、path にエントリがあるか（リンクを辿らずに）を返す。
+// 途中の階層がファイルの場合（Unix の ENOTDIR）も、ないものとして false を返す。
 func Exists(t testing.TB, path string) bool {
 	t.Helper()
 	_, err := os.Lstat(ExtendedPath(path))
 	if err == nil {
 		return true
 	}
-	if errors.Is(err, fs.ErrNotExist) {
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
 		return false
 	}
 	t.Fatal(err)
@@ -382,19 +379,15 @@ func hashFile(t testing.TB, p string) string {
 
 // Diff は、a と b の違いを人が読める形で返す。違いがなければ nil。
 func Diff(a, b Snapshot) []string {
+	keys := slices.Collect(maps.Keys(a))
+	for k := range b {
+		if _, ok := a[k]; !ok {
+			keys = append(keys, k)
+		}
+	}
+	slices.Sort(keys)
 	var d []string
-	for _, k := range slices.Sorted(func(yield func(string) bool) {
-		for k := range a {
-			if !yield(k) {
-				return
-			}
-		}
-		for k := range b {
-			if _, ok := a[k]; !ok && !yield(k) {
-				return
-			}
-		}
-	}) {
+	for _, k := range keys {
 		na, inA := a[k]
 		nb, inB := b[k]
 		switch {

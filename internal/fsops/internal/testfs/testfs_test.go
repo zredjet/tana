@@ -279,3 +279,21 @@ func mustEval(t *testing.T, p string) string {
 	}
 	return e
 }
+
+func TestExists(t *testing.T) {
+	t.Parallel()
+	root := TempDir(t)
+	Build(t, root, Tree{"f": File(""), "d": Dir(), "link": Symlink("missing")})
+	for rel, want := range map[string]bool{
+		"f":             true,
+		"d":             true,
+		"link":          true, // リンク先がなくてもリンク自体はある
+		"missing":       false,
+		"f/child":       false, // 途中の階層がファイル（Unix では ENOTDIR）
+		"missing/child": false,
+	} {
+		if got := Exists(t, filepath.Join(root, filepath.FromSlash(rel))); got != want {
+			t.Errorf("Exists(%s) = %v, want %v", rel, got, want)
+		}
+	}
+}

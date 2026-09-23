@@ -43,18 +43,8 @@ func TestClassifyErrnoWindows(t *testing.T) {
 func TestClassifyLockedWindows(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(testfs.TempDir(t), "locked.txt")
-	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	p, err := windows.UTF16PtrFromString(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	h, err := windows.CreateFile(p, windows.GENERIC_READ, 0, nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer windows.CloseHandle(h)
+	testfs.WriteFile(t, path, "x")
+	testfs.Lock(t, path)
 
 	f, err := os.Open(path)
 	if err == nil {
