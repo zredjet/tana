@@ -31,11 +31,15 @@ func TestClassifyErrnoWindows(t *testing.T) {
 		// 表にない番号
 		{windows.ERROR_INVALID_PARAMETER, KindUnknown},
 		{windows.ERROR_NOT_SUPPORTED, KindUnknown},
+		// リンクの作成以外では表にない（SPEC §17。V20）
+		{windows.ERROR_INVALID_FUNCTION, KindUnknown},
 	}
 	testErrnoTable(t, cases)
 	testReadOnlyErrno(t, windows.ERROR_ACCESS_DENIED)
 	testErrnoWithOpts(t, windows.ERROR_PRIVILEGE_NOT_HELD, classifyOpts{symlinkCreate: true}, KindLinkUnsupported)
-	// symlinkCreate は ERROR_PRIVILEGE_NOT_HELD 以外の分類を変えない。
+	// リンクを作れないボリューム（exFAT・FAT32。V20）
+	testErrnoWithOpts(t, windows.ERROR_INVALID_FUNCTION, classifyOpts{symlinkCreate: true}, KindLinkUnsupported)
+	// symlinkCreate は ERROR_PRIVILEGE_NOT_HELD・ERROR_INVALID_FUNCTION 以外の分類を変えない。
 	testErrnoWithOpts(t, windows.ERROR_ACCESS_DENIED, classifyOpts{symlinkCreate: true}, KindPermission)
 }
 

@@ -581,6 +581,8 @@ const (
    名前は `.fsops-<ランダム16進>.tmp` の固定長にする（元の名前を含めると、名前の長さの上限を超えることがあるため）。
    名前が既に使われていれば（`KindExist`）、別の乱数で作り直す。
    作成時のパーミッションは `0o600`（Unix）とし、最終的な権限は手順 6 で設定する（他人が読めないファイルのコピー中に、途中の内容が読めるようにならないため）。
+   手順 5・6 で一時ファイルを開き直すときに照合する fileID は、書き込んだ後（閉じる前）に記録する。
+   macOS の exFAT・FAT32 では、空のファイルに最初のデータ領域を割り当てると fileID が変わるため（2026-09-24 に `hdiutil` のイメージで確認）。
 3. 1 MiB のバッファで内容を書き込む。バッファごとに `ctx` を確認し、進捗を報告する。
 4. 同期が必要なら（§10.5）`File.Sync` する。
 5. 閉じて検証する（§10.4）。
@@ -601,6 +603,7 @@ const (
 
 - 書き込み中の容量不足（Windows: `ERROR_DISK_FULL`、`ERROR_HANDLE_DISK_FULL`、Unix: `ENOSPC`、`EDQUOT`）は `KindNoSpace`。
 - 処理中の一時ファイルを削除し、§7.2 に従って残りを Skipped にする。
+  フォルダの途中で容量不足になったら、そのフォルダ（トップレベルの項目）の残りのエントリも処理しない。処理しなかったエントリは、キャンセルと同じく `Details` に 1 件ずつは入れない。
 
 ### 10.4 検証
 
@@ -608,6 +611,7 @@ const (
   さらに、コピー後にコピー元を `Lstat` し直し、fileID・サイズ・更新日時が開始時から変わっていないこと。
   変わっていたら `KindSourceChanged` で失敗にし、一時ファイルを削除する。
 - `VerifyHash`: 上記に加え、読み込み時に計算した SHA-256 と、一時ファイルを読み直して計算した SHA-256 を比べる。
+  一致しなければ（書き込んだ内容が一時ファイルに残っていない）`KindUnknown` で失敗にし、一時ファイルを削除する。読み直しの間の進捗は `StageVerify` とする。
 
 ### 10.5 同期
 
@@ -806,6 +810,7 @@ const (
 
 - ボリュームをまたぐ移動は「コピー → 移動元の削除」なので、コピーの列に従う。リンクや特殊なファイルが Skipped になった項目は、移動元を削除しない（§11.2）。
 - 相対パスのシンボリックリンクは、リンク先の文字列を書き換えない。
+  Windows ではリンク先を `os.Readlink` で読むため、絶対パスのリンク先は `\??\C:\x` の形が `C:\x` の形になる（`CreateSymbolicLink` が同じリンク先として作り直す）。
 - シンボリックリンクは一時名を使わず、最終名（自動リネームでは候補名）に直接作る。リンクの作成は不可分で、名前が存在すれば失敗するため、I1・I3 を満たす。
 - Windows では、リンクのファイル用・フォルダ用の区別をコピー元のリンクの属性（`FILE_ATTRIBUTE_DIRECTORY`）に合わせる。
   `os.Symlink` はリンク先を調べて区別を決めるため使わず、`CreateSymbolicLink` に `SYMBOLIC_LINK_FLAG_DIRECTORY`（必要な場合）と `SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE` を指定する。
@@ -825,6 +830,7 @@ const (
 
 - フォルダのパーミッション・読み取り専用属性・更新日時は、中身をすべて処理した後にまとめて設定する（先に `0o555` などを設定すると中身を作れないため）。
 - マージで既存のフォルダを使った場合、そのフォルダのメタデータは変更しない。
+- キャンセル・容量不足で途中まで処理したフォルダには、メタデータを設定しない（読み取り専用などにすると、残った途中の結果を片付けにくくなるため）。
 - シンボリックリンクにはメタデータを設定しない。`os.Chtimes` と `os.Chmod` はリンクを辿り、操作対象でないリンク先を変更してしまうため。
 
 安全上、保持するもの（V6 で読み書きできることを確認済み。実装はフェーズ8）:
@@ -925,13 +931,15 @@ type OpError struct {
 | NoSpace | `ERROR_DISK_FULL`、`ERROR_HANDLE_DISK_FULL` | `ENOSPC`、`EDQUOT` |
 | NotEmpty | `ERROR_DIR_NOT_EMPTY` | `ENOTEMPTY` |
 | CrossDevice | `ERROR_NOT_SAME_DEVICE` | `EXDEV` |
-| LinkUnsupported | `ERROR_PRIVILEGE_NOT_HELD`（リンク作成時） | — |
+| LinkUnsupported | `ERROR_PRIVILEGE_NOT_HELD`、`ERROR_INVALID_FUNCTION`（リンク作成時） | `EPERM`（リンク作成時。読み取り専用でない場合） |
 | InvalidName | `ERROR_INVALID_NAME`、`ERROR_FILENAME_EXCED_RANGE` | `ENAMETOOLONG`、`EILSEQ` |
 | SourceChanged | — | `ELOOP`（`O_NOFOLLOW` でリンクに当たった場合） |
 
 - 可能な場合は `errors.Is(err, fs.ErrNotExist)` なども使う。ただしエラー番号の対応を先に調べる（Unix では `ENOTEMPTY` も `fs.ErrExist` に当たるため）。
 - 条件付きの対応は、呼び出し側が条件を指定したときだけ適用する。条件を満たさない場合は次のとおり。
   - `ERROR_PRIVILEGE_NOT_HELD`（リンク作成以外）→ Permission
+  - `ERROR_INVALID_FUNCTION`（リンク作成以外）→ Unknown
+  - `EPERM`（リンク作成以外）→ 読み取り専用なら ReadOnly、そうでなければ Permission
   - `ELOOP`（`O_NOFOLLOW` 以外。リンクの循環など）→ Unknown
   - `ERROR_ACCESS_DENIED`・`EPERM` で、対象が読み取り専用でない場合 → Permission
 - `ctx.Err()`（`context.Canceled`、`context.DeadlineExceeded`）は `KindCanceled`。
@@ -1170,6 +1178,8 @@ hdiutil detach /Volumes/fsopstest
 
 - **V20** シンボリックリンクを作れないボリューム（exFAT・FAT32・vfat）でシンボリックリンクを作ったときに返るエラー番号（§14.2、§17）。
   §17 では Unix に `KindLinkUnsupported` の対応がなく、`EPERM` などは `KindPermission` になる。対応を加えるかを、結果を見て決める。
+  - **結果（2026-09-24、windows-latest・macos-latest・ubuntu-latest、Go 1.27.1）:** Windows の exFAT・FAT32 では `ERROR_INVALID_FUNCTION`（1）、Linux の vfat では `EPERM` で失敗した。
+    macOS の exFAT・FAT32（`hdiutil` のイメージ）では作成できた。→ リンクの作成時に限り、どちらも `KindLinkUnsupported` にする（§17）。
 
 ---
 

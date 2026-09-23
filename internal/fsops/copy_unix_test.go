@@ -14,9 +14,8 @@ import (
 )
 
 // symlinkPrivilegeErr は、シンボリックリンクを作れない場合のエラーと、その分類を返す（テストの注入用）。
-// Unix には Windows の ERROR_PRIVILEGE_NOT_HELD にあたる番号がないので、リンクを作れないファイルシステム（Linux の vfat など）が返す EPERM を使う。
-// §17 では、Unix の EPERM は読み取り専用でなければ KindPermission。
-func symlinkPrivilegeErr() (error, Kind) { return unix.EPERM, KindPermission }
+// Unix には Windows の ERROR_PRIVILEGE_NOT_HELD にあたる番号がないので、リンクを作れないファイルシステム（Linux の vfat。V20）が返す EPERM を使う。
+func symlinkPrivilegeErr() (error, Kind) { return unix.EPERM, KindLinkUnsupported }
 
 // noSpaceErr は、書き込み中の容量不足のエラー（§10.3）を返す（テストの注入用）。
 func noSpaceErr() error { return unix.ENOSPC }

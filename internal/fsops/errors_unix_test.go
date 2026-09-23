@@ -36,6 +36,12 @@ func TestClassifyErrnoUnix(t *testing.T) {
 	testErrnoTable(t, cases)
 	testReadOnlyErrno(t, unix.EPERM)
 	testErrnoWithOpts(t, unix.ELOOP, classifyOpts{noFollow: true}, KindSourceChanged)
+	// リンクを作れないボリューム（Linux の vfat。V20）での EPERM は LinkUnsupported。
+	// ただし、対象（リンクを作るフォルダ）が読み取り専用（macOS のロック）なら ReadOnly のまま。
+	testErrnoWithOpts(t, unix.EPERM, classifyOpts{symlinkCreate: true}, KindLinkUnsupported)
+	testErrnoWithOpts(t, unix.EPERM, classifyOpts{symlinkCreate: true, readOnly: func() bool { return true }}, KindReadOnly)
+	// symlinkCreate は EPERM 以外の分類を変えない。
+	testErrnoWithOpts(t, unix.EACCES, classifyOpts{symlinkCreate: true}, KindPermission)
 	// noFollow は ELOOP 以外の分類を変えない。
 	testErrnoWithOpts(t, unix.ENOENT, classifyOpts{noFollow: true}, KindNotFound)
 }

@@ -139,7 +139,8 @@ type classifyOpts struct {
 	// nil なら読み取り専用でないとみなす（KindPermission）。
 	readOnly func() bool
 	// symlinkCreate は、シンボリックリンクの作成で起きたエラーであることを示す。
-	// Windows の ERROR_PRIVILEGE_NOT_HELD は、このときだけ KindLinkUnsupported にする。
+	// Windows の ERROR_PRIVILEGE_NOT_HELD・ERROR_INVALID_FUNCTION と Unix の EPERM（読み取り専用でない場合）は、
+	// このときだけ KindLinkUnsupported にする（§17、V20）。
 	symlinkCreate bool
 	// noFollow は、O_NOFOLLOW などでリンクを辿らずに開いたときのエラーであることを示す。
 	// Unix の ELOOP は、このときだけ KindSourceChanged にする（リンクに置き換えられていたことを示すため）。

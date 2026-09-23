@@ -28,6 +28,10 @@ func classifyErrno(err error, o classifyOpts) (k Kind, ok bool) {
 		if o.readOnly != nil && o.readOnly() {
 			return KindReadOnly, true
 		}
+		// シンボリックリンクを作れないファイルシステム（Linux の vfat。V20）は、リンクの作成に EPERM を返す。
+		if o.symlinkCreate {
+			return KindLinkUnsupported, true
+		}
 		return KindPermission, true
 	case unix.EBUSY:
 		return KindLocked, true

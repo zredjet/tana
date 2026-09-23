@@ -41,6 +41,11 @@ func classifyErrno(err error, o classifyOpts) (k Kind, ok bool) {
 			return KindLinkUnsupported, true
 		}
 		return KindPermission, true
+	case windows.ERROR_INVALID_FUNCTION:
+		// シンボリックリンクを作れないファイルシステム（exFAT・FAT32。V20）は、リンクの作成にこの番号を返す。
+		if o.symlinkCreate {
+			return KindLinkUnsupported, true
+		}
 	case windows.ERROR_INVALID_NAME, windows.ERROR_FILENAME_EXCED_RANGE:
 		return KindInvalidName, true
 	}

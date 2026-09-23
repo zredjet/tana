@@ -207,3 +207,33 @@ func TestCopySymlinkCreateFails(t *testing.T) {
 	}
 	wantFiles(t, dest, map[string]string{"tree/a.txt": "a", "next.txt": "n"})
 }
+
+// TestCopySymlinkToFATVolumes は、exFAT・FAT32 へのシンボリックリンクのコピーを確かめる（V20）。
+// Windows では作れず（ERROR_INVALID_FUNCTION）KindLinkUnsupported で失敗し、ほかは続く。macOS では作れる。
+func TestCopySymlinkToFATVolumes(t *testing.T) {
+	t.Parallel()
+	for _, env := range []string{testfs.ExFATEnv, testfs.FAT32Env} {
+		t.Run(env, func(t *testing.T) {
+			t.Parallel()
+			dest := testfs.EnvDir(t, env)
+			src := testfs.TempDir(t)
+			testfs.Build(t, src, testfs.Tree{"tree/a.txt": testfs.File("a"), "tree/link": testfs.Symlink("a.txt")})
+			res := execPlan(t, context.Background(), mustPlan(t, Request{Op: OpCopy, Sources: []string{filepath.Join(src, "tree")}, DestDir: dest}), ExecOptions{})
+			it := res.Items[0]
+			t.Logf("result: %+v", it)
+			switch runtime.GOOS {
+			case "windows":
+				if it.Outcome != OutcomePartial || len(it.Details) != 1 || it.Details[0].Err == nil || it.Details[0].Err.Kind != KindLinkUnsupported {
+					t.Errorf("result = %+v, want Partial with the link failed by KindLinkUnsupported", it)
+				}
+			case "darwin":
+				if it.Outcome != OutcomeDone || readlink(t, filepath.Join(dest, "tree", "link")) != "a.txt" {
+					t.Errorf("result = %+v, want Done", it)
+				}
+			default:
+				t.Skip("recorded on Windows and macOS (V20)")
+			}
+			wantFiles(t, dest, map[string]string{"tree/a.txt": "a"})
+		})
+	}
+}
