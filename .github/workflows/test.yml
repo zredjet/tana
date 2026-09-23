@@ -1,0 +1,59 @@
+name: test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      # VHD の作成と FSOPS_CROSSVOL_DIR・FSOPS_TEST_TRASH の設定はフェーズ2で追加する（SPEC §19）。
+      - run: go vet ./...
+      - run: go test ./...
+
+  macos:
+    # 非公開リポジトリでは、macOS のジョブは pull_request と workflow_dispatch のときだけ実行する（SPEC §19）。
+    if: ${{ !github.event.repository.private || github.event_name != 'push' }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      # hdiutil によるイメージの作成と FSOPS_CROSSVOL_DIR・FSOPS_TEST_TRASH の設定はフェーズ2で追加する（SPEC §19）。
+      - run: go vet ./...
+      - run: go test -race ./...
+      - run: CGO_ENABLED=0 go vet ./...
+
+  ubuntu:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt が必要なファイル:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - run: go vet ./...
+      - run: GOOS=windows go vet ./...
+      - run: GOOS=darwin CGO_ENABLED=0 go vet ./...
+      # ごみ箱が使えないことを確かめるテストはフェーズ10で追加する（SPEC §19）。
