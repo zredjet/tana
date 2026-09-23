@@ -125,6 +125,7 @@ fsops のすべての操作は、正常終了・失敗・キャンセルのど�
     hooks.go                  テスト用フックの型（testHooks）
     deps_test.go              依存の許可リストの検査
     internal/testfs/          テスト用フィクスチャ
+    internal/probe/           要検証事項のプローブ（テストのみ、フェーズ3）
   cmd/fsopsctl/               動作確認用 CLI（フェーズ11）
   .github/workflows/test.yml
 ```
@@ -333,6 +334,7 @@ type Stage int
 
 const (
 	StageCopy Stage = iota + 1
+	StageMove // 同一ボリュームの移動
 	StageVerify
 	StageRemoveSource
 	StageTrash
@@ -355,6 +357,8 @@ const (
 
 - `Sources` が 1 件以上であること。すべて絶対パスであること（§8.1）。
 - 同じパスの重複、または一方が他方の内側にある組み合わせ（`/a` と `/a/b`）は `KindInvalidRequest`。
+  判定は、各 Source の親を字句的に辿り（リンクは解決しない）、各段をほかの Source と fileID で比べて行う。
+- ボリュームのルート、デバイスパスは `KindInvalidRequest`（§8.1）。
 - `OpCopy` / `OpMove` では、`DestDir` が存在するフォルダであること（`os.Stat` で確認。`DestDir` 自体がリンクの場合は辿ってよい）。
 - `OpTrash` / `OpDelete` では、`DestDir` が空文字であること。
 - 以上を満たさない場合、`NewPlan` は error を返す。`NewPlan` が error を返すのは、この節で挙げたリクエスト全体の問題の場合だけとする。
@@ -388,7 +392,7 @@ const (
 ### 6.4 空き容量
 
 - `OpCopy` と `MethodCopyThenRemove` では、書き込むバイト数とコピー先ボリュームの空き容量を比べ、足りなければ `Warnings` に `KindNoSpace` を加える。実行は妨げない。
-- 空き容量は、Windows では `GetDiskFreeSpaceEx`、Unix では `statfs` の `Bavail * Bsize` で求める。
+- 空き容量は、Windows では `GetDiskFreeSpaceEx`、Unix では `statfs` の `Bavail` × ブロックサイズ（macOS は `Bsize`、Linux は `Frsize`）で求める。
 
 ---
 
@@ -406,7 +410,8 @@ const (
 
 - トップレベルの項目を計画の順に 1 件ずつ処理する（並列化しない）。
 - 1 件が失敗しても、残りの項目の処理は続ける。
-- ただし容量不足（`KindNoSpace`）が起きたら、残りの書き込みを伴う項目はすべて `OutcomeSkipped`（`KindNoSpace`）にして終了する。
+- ただし容量不足（`KindNoSpace`）が起きたら、その後の書き込みを伴う項目（`MethodCopy`・`MethodCopyThenRemove`）はすべて `OutcomeSkipped`（`KindNoSpace`）にする。
+  書き込みを伴わない項目（`MethodRename`）は続ける。
 - キャンセルされたら、処理中の項目を安全に中断し（§16）、残りを `OutcomeSkipped`（`KindCanceled`）にして `StatusCanceled` で返す。
 
 ### 7.3 計画後の変化
@@ -417,6 +422,9 @@ const (
 - 上書き（`DecisionOverwrite`）の直前に上書き先を `Lstat` し、計画時に記録した fileID と種類に一致する場合だけ上書きする。
   一致しなければ計画後に現れた衝突とみなし、`OutcomeSkipped`（`KindExist`）にする（I1）。
   上書き先が消えていれば、衝突なしとして排他リネームで書く。
+- マージ（`DecisionMerge`）の直前にもマージ先を `Lstat` し、計画時の fileID と一致するフォルダ（`TypeDir`）であることを確かめる。
+  一致しない場合（ファイル・リンク・ジャンクションに置き換えられた場合を含む）は `OutcomeSkipped`（`KindExist`）にする。
+  消えていれば、衝突なしとして `os.Mkdir` から始める。
 - 計画時にあったコピー元が消えていたら `OutcomeFailed`（`KindNotFound`）。
 
 ### 7.4 結果
@@ -426,15 +434,18 @@ const (
 
 | 状況 | Outcome | Err |
 |---|---|---|
+| 完了した | Done | nil |
+| `Details` が衝突の決定による Skip だけ（マージ移動で移動元フォルダが残った場合を含む） | Done | nil |
 | `Item.Err` がある（`KindTrashUnavailable` を含む） | Failed | `Item.Err` |
+| 項目が失敗し、途中までの結果も残らなかった（ファイル・リンク、作成できなかったフォルダ） | Failed | そのエラー |
+| 書き込み中に容量不足になった | ファイルは Failed、フォルダは Partial | `KindNoSpace` |
 | 衝突の決定による Skip | Skipped | nil |
 | 計画後に現れた衝突、複製しないリンク・特殊ファイル（§14.2） | Skipped | 該当する Kind |
 | 着手前にキャンセル・容量不足で打ち切られた | Skipped | `KindCanceled` / `KindNoSpace` |
-| 処理中にキャンセルされ、移動先に何も残らなかった | Skipped | `KindCanceled` |
-| 処理中にキャンセルされ、移動先に一部が残った | Partial | `KindCanceled` |
+| 処理中にキャンセルされ、途中までの結果が残らなかった | Skipped | `KindCanceled` |
+| 処理中にキャンセルされ、途中までの結果が残った（コピー・移動では移動先の一部、完全削除では削除済みの一部） | Partial | `KindCanceled` |
 | `Details` に Err 付きのエントリがある | Partial | 最初のエラー |
-| `Details` が衝突の決定による Skip だけ（マージ移動で移動元フォルダが残った場合を含む） | Done | nil |
-| 移動元の削除に一部失敗した、または一部を保護した（§13.3） | CopiedSourceKept | 最初のエラー |
+| 移動元の削除に一部失敗した、一部を保護した、または削除中にキャンセルされた（§13.3） | CopiedSourceKept | 最初のエラー |
 
 - Status: キャンセルされたら `StatusCanceled`。
   それ以外で、Failed・Partial・CopiedSourceKept、または Err 付きの Skipped が 1 件でもあれば `StatusCompletedWithErrors`。それ以外は `StatusCompleted`。
@@ -448,6 +459,8 @@ const (
 - `filepath.IsAbs` が偽のパスは `KindInvalidRequest`。受け取ったパスは `filepath.Clean` する。
 - Windows では `C:\...` と UNC（`\\server\share\...`）を受け付ける。
   ドライブ相対（`C:foo`）、ルート相対（`\foo`）、呼び出し側が付けた `\\?\` は拒否する。
+  デバイスパス（`\\.\`）と NT 形式（`\??\`）も拒否する。
+- ボリュームのルート（`C:\`、`\\server\share\`、`/`）は `Sources` に指定できない（`KindInvalidRequest`）。`DestDir` には指定してよい。
 
 ### 8.2 Windows のパス（`\\?\` 形式）
 
@@ -464,16 +477,18 @@ const (
 ### 8.3 同一性と祖先の判定
 
 - パスの同一性を文字列で比較しない。大文字小文字、NFC/NFD、8.3 形式の短縮名、ジャンクション・`subst` による別名があるため。
-- 同じファイルかどうかは、その場で取得した `FileInfo` 同士なら `os.SameFile` で判定する。
-- 時点をまたいで同一性を比べる場合（計画時と実行時、コピー時と移動元の削除時）は、パッケージ内の fileID を使う。
-  - fileID は、Windows ではボリュームシリアル番号とファイルインデックス、Unix では `Dev` と `Ino`。記録する時点で確定させる。
-  - Windows の `os.SameFile` は、`FileInfo` の取得経路によってはファイル ID を比較時にパスから取り直す（`loadFileId`）。そのため、計画時の `FileInfo` を実行時に比べると、実行時のファイル同士を比べることになる。時点をまたぐ比較には使わない。
+- 同一性の判定はすべてパッケージ内の fileID で行う。`os.SameFile` は使わない。
+  - Windows: `GetFileInformationByHandleEx` の `FileIdInfo`（ボリュームシリアル番号 64 ビットとファイル ID 128 ビット）。構造体は x/sys にないので自前で定義する。
+  - Unix: `Dev` と `Ino`。
+  - fileID は記録する時点で確定させる。
+  - `os.SameFile` を使わない理由: Windows の `os.SameFile` は、`FileInfo` の取得経路によってはファイル ID を比較時にパスから取り直す（`loadFileId`）ため、計画時の `FileInfo` を実行時に比べると実行時のファイル同士を比べることになる。
+    また、比較に使う 64 ビットのファイルインデックスは ReFS（Windows 11 の Dev Drive など）では一意にならない。
 - 「`DestDir` がコピー元の内側か」は次の手順で判定する。
   1. `DestDir` の実パスを求める（リンク・ジャンクション・`subst`・8.3 形式の短縮名を解決する）
      - Unix: `filepath.EvalSymlinks`
      - Windows: `DestDir` をリンクを辿って開き、`GetFinalPathNameByHandle`（`VOLUME_NAME_DOS`、失敗したら `VOLUME_NAME_GUID`）で得たパスを使う。
        Go 1.23 以降の `filepath.EvalSymlinks` はジャンクション（マウントポイント）を解決しないので使わない。
-  2. その実パスから親フォルダを順に辿り、各段でコピー元と同じファイルか（fileID）を調べる
+  2. その実パスの `DestDir` 自身から始めて親フォルダを順に辿り、各段でコピー元と同じファイルか（fileID）を調べる
   3. 一致すれば `KindDestInsideSource`
 
 ### 8.4 排他リネームと置換リネーム
@@ -484,8 +499,8 @@ const (
   - Linux: `renameat2(..., RENAME_NOREPLACE)`
 - **置換リネーム**（ファイル同士の上書き用）: `os.Rename`。フォルダを置き換える用途には使わない。
 - **大文字小文字・正規化の違いだけの名前変更**:
-  `dst` を `Lstat` して `os.SameFile(src, dst)` が真で、名前の文字列が異なり、src と dst の親フォルダが同じで、リンク数が 1 の場合は、「同じファイルの名前変更」とみなして OS の通常のリネームで行う（V1、V2）。
-  親フォルダとリンク数の条件は、ハードリンクを名前の違いと取り違えないため。
+  `dst` を `Lstat` して src と同じ fileID で、名前の文字列が異なり、src と dst の親フォルダが同じで、ファイルの場合はリンク数が 1 のときは、「同じファイルの名前変更」とみなして OS の通常のリネームで行う（V1、V2）。
+  親フォルダとリンク数の条件は、ハードリンクを名前の違いと取り違えないため。フォルダのリンク数は Unix では 2 以上になるため、条件にしない。
 - 排他リネームが「存在する」で失敗した場合は `KindExist`。
 - macOS の `RENAME_EXCL` が APFS 以外のボリュームで使えるか、Linux の `RENAME_NOREPLACE` が `EINVAL` を返す場合の扱いは V12 の結果で決める。
 
@@ -516,7 +531,7 @@ const (
 - 形式は `name (2).ext`。使われていれば `(3)`、`(4)`… と増やす。
 - 拡張子は最後の `.` 以降。先頭が `.` の名前（`.gitignore`）と拡張子のない名前は、末尾に付ける（`.gitignore (2)`）。フォルダは拡張子を区別しない。
 - 元の名前に既に `(2)` などが付いていても解釈しない（`a (2).txt` の次の候補は `a (2) (2).txt`）。
-- 候補の名前の確保も排他的に行う。コピーのファイルは一時ファイルの排他リネーム、コピーのフォルダは `os.Mkdir`、`MethodRename` の移動はファイル・フォルダとも排他リネーム。
+- 候補の名前の確保も排他的に行う。コピーのファイルは一時ファイルの排他リネーム、コピーのフォルダは `os.Mkdir`、コピーのシンボリックリンクは候補名への直接作成（§14.2）、`MethodRename` の移動はファイル・フォルダとも排他リネーム。
   「存在する」で失敗したら次の番号を試す。上限は 9999 回で、見つからなければ `KindExist`。
 - 候補の名前が長すぎる場合（名前の長さの上限を超える）は `KindInvalidName` で失敗にする。名前を切り詰めない（I6）。
 
@@ -539,10 +554,13 @@ const (
 
 ### 10.1 ファイル
 
-1. コピー元を開き、開いたファイルの `Stat` でサイズと更新日時を記録する（Unix は `O_NOFOLLOW` で開く）。
+1. コピー元を開き、開いたファイルの `Stat` でサイズと更新日時を記録する。
+   Unix は `O_NOFOLLOW|O_NONBLOCK` で開き、`fstat` で通常のファイルであることを確かめる（FIFO に置き換えられていた場合に open で止まらないため）。
    走査時の `Lstat` と fileID・種類が違えば `KindSourceChanged` で失敗にする。
 2. コピー先のフォルダに一時ファイルを `O_CREATE|O_EXCL|O_WRONLY` で作る。
    名前は `.fsops-<ランダム16進>.tmp` の固定長にする（元の名前を含めると、名前の長さの上限を超えることがあるため）。
+   名前が既に使われていれば（`KindExist`）、別の乱数で作り直す。
+   作成時のパーミッションは `0o600`（Unix）とし、最終的な権限は手順 6 で設定する（他人が読めないファイルのコピー中に、途中の内容が読めるようにならないため）。
 3. 1 MiB のバッファで内容を書き込む。バッファごとに `ctx` を確認し、進捗を報告する。
 4. 同期が必要なら（§10.5）`File.Sync` する。
 5. 閉じて検証する（§10.4）。
@@ -567,7 +585,7 @@ const (
 ### 10.4 検証
 
 - `VerifySize`（既定）: 書き込んだバイト数、一時ファイルのサイズ、コピー開始時のコピー元のサイズが一致すること。
-  さらに、コピー後にコピー元を `Lstat` し直し、サイズと更新日時が開始時から変わっていないこと。
+  さらに、コピー後にコピー元を `Lstat` し直し、fileID・サイズ・更新日時が開始時から変わっていないこと。
   変わっていたら `KindSourceChanged` で失敗にし、一時ファイルを削除する。
 - `VerifyHash`: 上記に加え、読み込み時に計算した SHA-256 と、一時ファイルを読み直して計算した SHA-256 を比べる。
 
@@ -630,6 +648,9 @@ const (
     それ以外（リムーバブル、ネットワーク、`\\server\share` など）は `KindTrashUnavailable`。
     これらの場所では、Windows のごみ箱操作が確認なしに完全削除になりうるため。
   - パスが `MAX_PATH` を超える場合の扱いは V4 の結果で決める。
+  - パスに Win32 の正規化で変わる名前（末尾の `.` や空白、予約名）が含まれる場合、つまり `GetFullPathNameW` の結果が元のパスと一致しない場合は `KindTrashUnavailable`。
+    `SHFileOperationW` には `\\?\` を渡せないと考えられ、そのまま渡すと別のファイル（`foo.` に対する `foo`）をごみ箱に入れてしまうため。
+    V4 で `\\?\` 付きのパスを正しく扱えると確認できたら、この制限を見直す。
   - ごみ箱の最大サイズを超える項目、およびごみ箱が無効（すぐに削除する設定）のボリュームの扱いは V13 の結果で決める。
     `FOF_NOCONFIRMATION` の下では、これらが確認なしに完全削除される可能性があるため。
 - 実装: shell32.dll の `SHFileOperationW` を `FO_DELETE` で呼ぶ。
@@ -662,11 +683,12 @@ const (
 - `os.ReadDir` と `os.Lstat` を使い、リンクを辿らない。
 - 入り込むのは、§14.1 で `TypeDir` と判定したエントリだけ。`TypeSymlink`、`TypeJunction`、`TypeSpecial` には入り込まない（I4）。
 - 名前順に処理する。
-- 走査はコピーの計画（§6.3）と完全削除（§13.2）の両方で使う。
-- 削除（§13.2、§13.3）のために入り込むフォルダは、パスで `ReadDir` せず、開いたハンドルで確認してから列挙する。
-  `Lstat` でフォルダと判定してから中に入るまでの間に、フォルダがリンクに置き換えられても、リンク先に入り込まないようにするため（I4）。
-  - Unix: `O_RDONLY|O_DIRECTORY|O_NOFOLLOW` で開き、`fstat` の fileID が `Lstat` 時と一致することを確かめる。
-    中身の削除は `unlinkat`（開いたフォルダからの相対）で行う。
+- 走査は、計画（§6.3）、コピー（§10.2）、移動（§11）、完全削除（§13.2）で使う。
+- 削除（§13.2、§13.3）と、同一ボリュームのマージ移動（§11.1）のために入り込むフォルダは、パスで `ReadDir` せず、開いたハンドルで確認してから列挙する。
+  `Lstat` でフォルダと判定してから中に入るまでの間に、フォルダ（またはその途中の階層）がリンクに置き換えられても、リンク先に入り込まないようにするため（I4）。
+  - Unix: トップレベルのフォルダはパスで、それより下は親フォルダのハンドルからの相対（`openat`）で、`O_RDONLY|O_DIRECTORY|O_NOFOLLOW` を付けて開く。
+    `fstat` の fileID が `Lstat` 時と一致することを確かめる。
+    中身の削除は `unlinkat`、マージ移動での中身の移動は `renameatx_np` / `renameat2`（どちらも開いたフォルダからの相対）で行う。
   - Windows: `FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT` で、共有モードに `FILE_SHARE_DELETE` を含めずに開く。
     リパースポイントでないことと、fileID が一致することを確かめる。そのフォルダの処理が終わるまでハンドルを閉じない
     （開いている間、そのフォルダは名前の変更・削除・リンクへの置き換えができない）。フォルダ自体を削除する直前に閉じる。
@@ -683,7 +705,8 @@ const (
 ### 13.3 記録した項目だけの削除（移動元の削除）
 
 - §11.2 で記録した一覧のエントリだけを削除する。
-- 削除の直前に `Lstat` し直し、記録した fileID・種類・サイズ・更新日時と一致するエントリだけを削除する。
+- 削除の直前に `Lstat` し直し、記録と一致するエントリだけを削除する。
+  照合するのは、ファイルとリンクでは fileID・種類・サイズ・更新日時、フォルダでは fileID と種類だけとする（フォルダの更新日時は中身を消すと変わるため）。
   一致しないもの（コピー後に変更・置き換えられたもの）は削除せず、`Details` に `KindSourceChanged` で報告する。
   コピー後・削除前に移動元のファイルが編集・保存された場合に、その変更を失わないため（I2）。
 - ファイルとリンクを先に消し、フォルダは深い順に `os.Remove` する。空でなければ残す（コピー中に追加されたファイルがあると空にならないため、そのファイルは残る）。
@@ -716,6 +739,7 @@ const (
 
 - ボリュームをまたぐ移動は「コピー → 移動元の削除」なので、コピーの列に従う。リンクや特殊なファイルが Skipped になった項目は、移動元を削除しない（§11.2）。
 - 相対パスのシンボリックリンクは、リンク先の文字列を書き換えない。
+- シンボリックリンクは一時名を使わず、最終名（自動リネームでは候補名）に直接作る。リンクの作成は不可分で、名前が存在すれば失敗するため、I1・I3 を満たす。
 - Windows では、リンクのファイル用・フォルダ用の区別をコピー元のリンクの属性（`FILE_ATTRIBUTE_DIRECTORY`）に合わせる。
   `os.Symlink` はリンク先を調べて区別を決めるため使わず、`CreateSymbolicLink` に `SYMBOLIC_LINK_FLAG_DIRECTORY`（必要な場合）と `SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE` を指定する。
 
@@ -723,7 +747,7 @@ const (
 
 ## 15. メタデータ
 
-保持するもの（データの書き込み後、最終名にする前に設定する）:
+保持するもの（ファイルはデータの書き込み後・最終名にする前に、フォルダは中身の処理後に設定する）:
 
 - 更新日時（`os.Chtimes`。アクセス日時は更新日時と同じ値にする）
 - Unix のパーミッション（`0o777` の範囲。setuid・setgid・sticky は保持しない）
@@ -769,8 +793,10 @@ type Progress struct {
   - 処理中の一時ファイルを削除する
   - 処理中の移動の項目は、移動元に手を付けない
   - 完了済みの項目はそのまま残す
-  - 処理中の項目の Outcome は §7.4 の表に従う（移動先に何も残らなければ Skipped、一部が残れば Partial）
+  - 処理中の項目の Outcome は §7.4 の表に従う（途中までの結果が残らなければ Skipped、残れば Partial）
   - 残りの項目は `OutcomeSkipped`（`KindCanceled`）
+- 移動元の削除（§13.3）の途中でキャンセルされたら、削除をそこで止めて `OutcomeCopiedSourceKept`（`KindCanceled`）にする。移動先は完成しているので、データは失われない。
+- `StatusCanceled` にするのは、未処理の項目または処理中の項目があるときにキャンセルを検出した場合だけとする。
 
 ---
 
@@ -831,6 +857,7 @@ type OpError struct {
 | SourceChanged | — | `ELOOP`（`O_NOFOLLOW` でリンクに当たった場合） |
 
 - 可能な場合は `errors.Is(err, fs.ErrNotExist)` なども使う。
+- `ctx.Err()`（`context.Canceled`、`context.DeadlineExceeded`）は `KindCanceled`。
 - `ERROR_ACCESS_DENIED` は原因が複数あるため、対象の属性を調べて ReadOnly か Permission かを決める。
 
 ---
@@ -848,6 +875,8 @@ type OpError struct {
   - 読み取り専用にする
   - 260 文字を超えるパスを作る
   - 日本語・絵文字・NFD と NFC・大文字小文字だけ違う名前を作る
+  - Windows: `\\?\` 経由で、末尾が `.`・空白の名前と予約名のエントリを作る
+  - Unix: FIFO を作る（`TypeSpecial` の確認用）
 - `t.TempDir()` は `filepath.EvalSymlinks` で正規化してから使う。
 - 障害の注入は `ExecOptions` の非公開フィールド `hooks`（例: 書き込みのバッファごとに呼ばれる関数、移動元を消す直前に呼ばれる関数）で行う。
   パッケージレベルの変数にしないので、フックを使うテストも `t.Parallel()` できる。
@@ -891,18 +920,21 @@ hdiutil detach /Volumes/fsopstest
 | I4 | 先に目印ファイルを置いたリンク（ジャンクション・シンボリックリンク）を含むツリーを完全削除 → 目印ファイルが残る | 共通（ジャンクションは Windows） |
 | I4 | 同上をごみ箱・ボリュームをまたぐ移動で | TRASH / CROSSVOL |
 | I4 | リンクを含むツリーのコピー → リンクの先の中身は複製されない | 共通 |
-| I4 | 削除の走査で、フォルダと判定した後・入り込む前にリンクへ置き換える（フックで注入）→ リンク先の目印ファイルが残る | 共通（ジャンクションは Windows） |
+| I4 | 完全削除・同一ボリュームのマージ移動の走査で、フォルダと判定した後・入り込む前にリンクへ置き換える（フックで注入）→ リンク先の目印ファイルが残り、移動もされない | 共通（ジャンクションは Windows） |
 | I5 | `\\localhost\C$\...` 経由のパスでごみ箱 → `KindTrashUnavailable`、ファイルは残る | Windows（V7） |
+| I5 | `foo.` と `foo` が並ぶフォルダで `foo.` をごみ箱へ → `KindTrashUnavailable`、`foo` は残る | Windows（TRASH） |
 | I5 | CGO なしの macOS ビルド・Linux でごみ箱 → `KindTrashUnavailable`（計画時の `Item.Err` と実行結果の両方） | macOS（`CGO_ENABLED=0`）・Linux（§19） |
 | I6 | 日本語・絵文字・NFD の名前をコピー・移動 → 名前がバイト単位で一致 | 共通 |
-| I6 | 大文字小文字だけ違う名前への `Rename` | 共通（V1、V2） |
+| I6 | 大文字小文字だけ違う名前への `Rename`（ファイル・フォルダ） | 共通（V1、V2） |
 | 衝突 | 自動リネームの連番（通常、`(3)` 以降、`.gitignore`、拡張子なし、フォルダ） | 共通 |
 | 衝突 | 同じフォルダへのコピー（`Self`）を自動リネームで複製 | 共通 |
 | 衝突 | マージ（内側の衝突の決定がそれぞれ反映される） | 共通 |
 | 計画 | コピー先がコピー元の内側（リンク経由を含む）→ `KindDestInsideSource` | 共通 |
 | 計画 | コピー先がジャンクション経由でコピー元の内側 → `KindDestInsideSource` | Windows |
 | 計画 | 計画後に上書き先を別のファイルに置き換えてから実行 → Skipped（`KindExist`）、置き換えたファイルは元のまま | 共通 |
+| 計画 | 計画後にマージ先を別の場所へのリンクに置き換えてから実行 → Skipped（`KindExist`）、リンク先に何も書かれない | 共通（ジャンクションは Windows） |
 | 計画 | 重複・入れ子の `Sources` → `KindInvalidRequest` | 共通 |
+| 計画 | ボリュームのルート、`\\.\` 形式の `Sources` → `KindInvalidRequest` | 共通・Windows |
 | 計画 | 計画の作成前後でファイルシステムが変化しない | 共通 |
 | パス | 相対パス、ドライブ相対パス（`C:foo`）、`\\?\` 付きの拒否 | 共通・Windows |
 | パス | 260 文字を超えるパスのコピー・移動・完全削除 | Windows |
@@ -913,6 +945,7 @@ hdiutil detach /Volumes/fsopstest
 | 読み取り専用 | 読み取り専用ファイルのコピー → 属性が保持される | 共通 |
 | メタデータ | ファイル・フォルダの更新日時が保持される | 共通 |
 | メタデータ | リンクを含むツリーのコピー → リンク先の更新日時・権限が変わらない | 共通 |
+| メタデータ | `0o600` のファイルのコピー中（フックで停止）に、一時ファイルの権限が `0o600` である | Unix |
 | メタデータ | 読み取り専用のフォルダ（`0o555`）を含むツリーのコピー → 中身も含めて複製され、フォルダの権限が保持される | 共通 |
 | リンク | Windows でフォルダ用のシンボリックリンク（リンク先がコピー先にない相対リンク）をコピー → フォルダ用のまま | Windows |
 | 検証 | コピー中にコピー元が変更された → `KindSourceChanged`、一時ファイルなし | 共通 |
@@ -955,6 +988,7 @@ hdiutil detach /Volumes/fsopstest
 
 - **V1** Windows: `MoveFileExW(src, dst, 0)` で、大文字小文字だけ違う名前への変更が成功するか。
 - **V2** macOS（APFS）: `renamex_np(RENAME_EXCL)` で、大文字小文字だけ・NFC/NFD だけ違う名前へ変更したときの動作。`golang.org/x/sys/unix` に `RenamexNp` があるか。
+  （x/sys v0.38.0 に `unix.RenamexNp` と `RENAME_EXCL` があることはソースで確認済み。動作は未確認。）
 - **V3** Windows: 使用する Go のバージョンで、ジャンクションとディレクトリのシンボリックリンクが `Lstat` でどう見えるか（`ModeSymlink` / `ModeIrregular` / `ModeDir`）。`os.Remove` でリンク自体だけが消え、リンク先の中身が残ること。
 - **V4** Windows: `SHFileOperationW` の動作。`MAX_PATH` を超えるパス、`\\?\` 付きのパス、固定ドライブ以外のパスでどうなるか（特に、黙って完全削除されないか）。goroutine から呼ぶ際に `runtime.LockOSThread` と `CoInitializeEx` が必要か。
 - **V5** macOS の CI: `trashItemAtURL` が CI 上で成功するか。返されたパスを `Lstat` できるか（プライバシー保護による制限の有無）。
