@@ -1,13 +1,18 @@
 package probe
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/zredjet/tana/internal/fsops/internal/testfs"
@@ -158,6 +163,11 @@ const (
 // ifoTrash は、LockOSThread した goroutine で COM を初期化し、IFileOperation で path をごみ箱へ送る（SPEC §12.2 の手順）。
 // abortIfNotRecycle が真なら、PreDeleteItem でごみ箱に入らない項目を中止する。結果を 1 行で返す。
 func ifoTrash(path string, init coInit, abortIfNotRecycle bool) string {
+	return ifoTrashFlags(path, init, abortIfNotRecycle, defaultIFileOperationFlagsSet|fofxRecycleOnDelete)
+}
+
+// ifoTrashFlags は ifoTrash の、SetOperationFlags に渡すフラグを指定できる版。
+func ifoTrashFlags(path string, init coInit, abortIfNotRecycle bool, flags uint32) string {
 	sinkMu.Lock()
 	defer sinkMu.Unlock()
 	rec := &sinkRecord{abortIfNotRecycle: abortIfNotRecycle}
@@ -166,13 +176,13 @@ func ifoTrash(path string, init coInit, abortIfNotRecycle bool) string {
 	go func() {
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
-		done <- ifoTrashLocked(path, init, rec)
+		done <- ifoTrashLocked(path, init, flags)
 	}()
 	s := <-done
 	return fmt.Sprintf("%s | PreDeleteItem=%v PostDeleteItem=%v FinishOperations=%s", s, rec.preFlags, rec.post, rec.finish)
 }
 
-func ifoTrashLocked(path string, init coInit, rec *sinkRecord) string {
+func ifoTrashLocked(path string, init coInit, flags uint32) string {
 	switch init {
 	case coInitSTA, coInitMTA:
 		mode := uint32(windows.COINIT_APARTMENTTHREADED | 0x4)
@@ -191,7 +201,7 @@ func ifoTrashLocked(path string, init coInit, rec *sinkRecord) string {
 		return fmt.Sprintf("CoCreateInstance hr=%#x", uint32(hr))
 	}
 	defer op.release()
-	if hr := op.call(ifileOperationSetFlags, defaultIFileOperationFlagsSet|fofxRecycleOnDelete); hr != sOK {
+	if hr := op.call(ifileOperationSetFlags, uintptr(flags)); hr != sOK {
 		return fmt.Sprintf("SetOperationFlags hr=%#x", uint32(hr))
 	}
 	p16, err := windows.UTF16PtrFromString(path)
@@ -240,7 +250,8 @@ func TestV18(t *testing.T) {
 	cases := []tc{
 		{"fixed drive file", tmp, 16, same, false},
 		{"nuke volume", env(envTrashNuke), 1024, same, true},
-		{"small volume, over the max size", env(envTrashSmall), 4 << 20, same, true},
+		// PreDeleteItem では「ごみ箱に入れられる」と報告され、防げないことが分かっている（V18）。ログとして記録する。
+		{"small volume, over the max size", env(envTrashSmall), 4 << 20, same, false},
 		{"small volume, within the max size", env(envTrashSmall), 1024, same, false},
 		{"exFAT", env(envExFAT), 16, same, false},
 		{"FAT32", env(envFAT32), 16, same, false},
@@ -259,6 +270,9 @@ func TestV18(t *testing.T) {
 			s := ifoTrash(c.callPath(p), coInitSTA, true)
 			verdict := trashVerdict(t, p, bin, before)
 			t.Logf("V18: %s (%d bytes): %s || %s", c.name, c.size, verdict, s)
+			if !testfs.Exists(t, p) && strings.Contains(verdict, "PERMANENTLY") {
+				t.Logf("V18: %s: NOT PROTECTED: permanently deleted although PreDeleteItem was checked", c.name)
+			}
 			if c.mustRemain && !testfs.Exists(t, p) {
 				t.Errorf("V18: %s: the item was not kept although PreDeleteItem aborted it (I5)", c.name)
 			}
@@ -292,6 +306,42 @@ func TestV18(t *testing.T) {
 		}
 	})
 
+	// 最大サイズを超える項目で、完全削除の警告を求めるフラグ（FOF_WANTNUKEWARNING）などの組み合わせがどう動くか。
+	// ダイアログが出て止まる可能性があるので、別プロセスで実行し、時間切れなら強制終了する。
+	t.Run("nuke warning variants", func(t *testing.T) {
+		const fofWantNukeWarning = 0x4000
+		base := uint32(fofAllowUndo | fofSilent | fofNoErrorUI)
+		for _, v := range []struct {
+			name  string
+			flags uint32
+		}{
+			{"NOCONFIRMATION|RECYCLEONDELETE|WANTNUKEWARNING", base | fofNoConfirmation | fofxRecycleOnDelete | fofWantNukeWarning},
+			{"NOCONFIRMATION|WANTNUKEWARNING (no RECYCLEONDELETE)", base | fofNoConfirmation | fofWantNukeWarning},
+			{"NOCONFIRMATION only (no RECYCLEONDELETE)", base | fofNoConfirmation},
+			{"RECYCLEONDELETE|WANTNUKEWARNING (no NOCONFIRMATION)", base | fofxRecycleOnDelete | fofWantNukeWarning},
+		} {
+			d := testfs.EnvDir(t, envTrashSmall)
+			p := filepath.Join(d, "big.bin")
+			testfs.WriteFile(t, p, strings.Repeat("x", 4<<20))
+			bin := driveRoot(p)
+			before := readBin(t, bin)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestV18Helper$", "-test.v")
+			cmd.Env = append(os.Environ(), "FSOPS_V18_HELPER_PATH="+p, fmt.Sprintf("FSOPS_V18_HELPER_FLAGS=%d", v.flags))
+			out, err := cmd.CombinedOutput()
+			timedOut := ctx.Err() != nil
+			cancel()
+			line := ""
+			for _, l := range strings.Split(string(out), "\n") {
+				if strings.Contains(l, "V18HELPER:") {
+					line = strings.TrimSpace(l)
+				}
+			}
+			t.Logf("V18: over the max size, %s (flags=%#x): timedOut(dialog?)=%v err=%v %s || %s", v.name, v.flags, timedOut, err,
+				trashVerdict(t, p, bin, before), line)
+		}
+	})
+
 	t.Run("COM initialization", func(t *testing.T) {
 		for _, c := range []struct {
 			name string
@@ -305,4 +355,17 @@ func TestV18(t *testing.T) {
 			t.Logf("V18: COM init %s: %s || %s", c.name, trashVerdict(t, p, cRoot, before), s)
 		}
 	})
+}
+
+// TestV18Helper は TestV18 の "nuke warning variants" が別プロセスとして実行する。環境変数がなければ何もしない。
+func TestV18Helper(t *testing.T) {
+	p := os.Getenv("FSOPS_V18_HELPER_PATH")
+	if p == "" {
+		t.Skip("helper process for TestV18")
+	}
+	flags, err := strconv.ParseUint(os.Getenv("FSOPS_V18_HELPER_FLAGS"), 10, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("V18HELPER: %s", ifoTrashFlags(p, coInitSTA, true, uint32(flags)))
 }
