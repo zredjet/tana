@@ -167,17 +167,25 @@ func driveRoot(p string) string {
 	return ""
 }
 
-// binState は、ボリュームのごみ箱（$Recycle.Bin\<SID>）にある $I ファイル名から内容への対応。
+// binState は、ボリュームのごみ箱にある $I ファイルのパスから内容への対応。
 type binState map[string]recycleInfo
 
 // readBin は root のボリュームのごみ箱の $I ファイルをすべて読む（読むだけで変更しない）。
+// NTFS では $Recycle.Bin\<SID> の中に、ACL のない exFAT・FAT32 では $Recycle.Bin の直下に置かれる（V4 で確認）。
 func readBin(t *testing.T, root string) binState {
 	t.Helper()
 	b := binState{}
-	dir := filepath.Join(root, "$Recycle.Bin", currentSID(t))
+	for _, dir := range []string{filepath.Join(root, "$Recycle.Bin", currentSID(t)), filepath.Join(root, "$Recycle.Bin")} {
+		readBinDir(t, dir, b)
+	}
+	return b
+}
+
+func readBinDir(t *testing.T, dir string, b binState) {
+	t.Helper()
 	entries, err := os.ReadDir(testfs.ExtendedPath(dir))
 	if err != nil {
-		return b
+		return
 	}
 	for _, e := range entries {
 		if !strings.HasPrefix(e.Name(), "$I") {
@@ -194,9 +202,8 @@ func readBin(t *testing.T, root string) binState {
 		}
 		r.IFile = p
 		r.RFile = filepath.Join(dir, "$R"+strings.TrimPrefix(e.Name(), "$I"))
-		b[e.Name()] = r
+		b[p] = r
 	}
-	return b
 }
 
 // trashAndDescribe は、callPath を shTrash でごみ箱へ送り、path（元の場所）と、root のごみ箱に増えた $I を 1 行にまとめる。
@@ -212,9 +219,9 @@ func describeTrashResult(t *testing.T, path, root string, before binState, ret u
 	t.Helper()
 	exists := testfs.Exists(t, path)
 	var added []string
-	for name, r := range readBin(t, root) {
-		if _, ok := before[name]; !ok {
-			added = append(added, fmt.Sprintf("%s(v%d size=%d original=%q $R exists=%v)", name, r.Version, r.Size, r.Original, testfs.Exists(t, r.RFile)))
+	for p, r := range readBin(t, root) {
+		if _, ok := before[p]; !ok {
+			added = append(added, fmt.Sprintf("%s(v%d size=%d original=%q $R exists=%v)", filepath.Base(p), r.Version, r.Size, r.Original, testfs.Exists(t, r.RFile)))
 		}
 	}
 	verdict := "trashed"
