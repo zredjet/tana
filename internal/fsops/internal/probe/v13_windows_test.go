@@ -59,14 +59,7 @@ func TestV13(t *testing.T) {
 			t.Logf("V13: %s=%s: settings: %s", c.env, os.Getenv(c.env), bitBucketSettings(t, root))
 			p := filepath.Join(d, "file.bin")
 			testfs.WriteFile(t, p, strings.Repeat("x", c.size))
-			ret, aborted := shTrash(t, p)
-			desc := describeTrash(t, p, root, ret, aborted)
-			t.Logf("V13: %s, %d bytes: %s", c.env, c.size, desc)
-			if !testfs.Exists(t, p) {
-				if _, ok := findInRecycleBin(t, root, p); !ok {
-					t.Logf("V13: %s, %d bytes: PERMANENTLY DELETED without confirmation (ret=%#x aborted=%v)", c.env, c.size, ret, aborted)
-				}
-			}
+			t.Logf("V13: %s, %d bytes: %s", c.env, c.size, trashAndDescribe(t, p, p, root))
 		})
 	}
 }

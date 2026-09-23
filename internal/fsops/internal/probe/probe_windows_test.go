@@ -167,20 +167,64 @@ func driveRoot(p string) string {
 	return ""
 }
 
-// describeTrash は、shTrash の結果と、元の場所・ごみ箱の状態を 1 行にまとめる。
-func describeTrash(t *testing.T, path, binRoot string, ret uintptr, aborted bool) string {
+// binState は、ボリュームのごみ箱（$Recycle.Bin\<SID>）にある $I ファイル名から内容への対応。
+type binState map[string]recycleInfo
+
+// readBin は root のボリュームのごみ箱の $I ファイルをすべて読む（読むだけで変更しない）。
+func readBin(t *testing.T, root string) binState {
 	t.Helper()
-	s := fmt.Sprintf("ret=%#x aborted=%v stillExists=%v", ret, aborted, testfs.Exists(t, path))
-	if binRoot == "" {
-		return s
+	b := binState{}
+	dir := filepath.Join(root, "$Recycle.Bin", currentSID(t))
+	entries, err := os.ReadDir(testfs.ExtendedPath(dir))
+	if err != nil {
+		return b
 	}
-	if r, ok := findInRecycleBin(t, binRoot, path); ok {
-		s += fmt.Sprintf(" inRecycleBin=true ($I version=%d size=%d deleted=%s original=%q; $R exists=%v)",
-			r.Version, r.Size, r.Deleted.Format(time.RFC3339), r.Original, testfs.Exists(t, r.RFile))
-	} else {
-		s += " inRecycleBin=false"
+	for _, e := range entries {
+		if !strings.HasPrefix(e.Name(), "$I") {
+			continue
+		}
+		p := filepath.Join(dir, e.Name())
+		data, err := os.ReadFile(testfs.ExtendedPath(p))
+		if err != nil {
+			continue
+		}
+		r, err := parseIFile(data)
+		if err != nil {
+			continue
+		}
+		r.IFile = p
+		r.RFile = filepath.Join(dir, "$R"+strings.TrimPrefix(e.Name(), "$I"))
+		b[e.Name()] = r
 	}
-	return s
+	return b
+}
+
+// trashAndDescribe は、callPath を shTrash でごみ箱へ送り、path（元の場所）と、root のごみ箱に増えた $I を 1 行にまとめる。
+// 元の場所から消え、ごみ箱にも増えていなければ「PERMANENTLY DELETED」とする。
+func trashAndDescribe(t *testing.T, callPath, path, root string) string {
+	t.Helper()
+	before := readBin(t, root)
+	ret, aborted := shTrash(t, callPath)
+	return describeTrashResult(t, path, root, before, ret, aborted)
+}
+
+func describeTrashResult(t *testing.T, path, root string, before binState, ret uintptr, aborted bool) string {
+	t.Helper()
+	exists := testfs.Exists(t, path)
+	var added []string
+	for name, r := range readBin(t, root) {
+		if _, ok := before[name]; !ok {
+			added = append(added, fmt.Sprintf("%s(v%d size=%d original=%q $R exists=%v)", name, r.Version, r.Size, r.Original, testfs.Exists(t, r.RFile)))
+		}
+	}
+	verdict := "trashed"
+	switch {
+	case exists:
+		verdict = "kept"
+	case len(added) == 0:
+		verdict = "PERMANENTLY DELETED"
+	}
+	return fmt.Sprintf("%s: ret=%#x aborted=%v stillExists=%v newInRecycleBin=%v", verdict, ret, aborted, exists, added)
 }
 
 // errnoOf は err に含まれる Windows のエラー番号を返す（なければ 0）。

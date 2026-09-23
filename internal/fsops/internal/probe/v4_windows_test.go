@@ -23,53 +23,40 @@ func TestV4(t *testing.T) {
 	t.Run("fixed drive file", func(t *testing.T) {
 		p := filepath.Join(root, "fixed", "file.txt")
 		testfs.Build(t, root, testfs.Tree{"fixed/file.txt": testfs.File("data")})
-		ret, aborted := shTrash(t, p)
-		t.Logf("V4: fixed drive file: %s", describeTrash(t, p, cRoot, ret, aborted))
+		t.Logf("V4: fixed drive file: %s", trashAndDescribe(t, p, p, cRoot))
 	})
 
 	t.Run("fixed drive dir", func(t *testing.T) {
 		p := filepath.Join(root, "fixeddir", "dir")
 		testfs.Build(t, root, testfs.Tree{"fixeddir/dir/a.txt": testfs.File("a")})
-		ret, aborted := shTrash(t, p)
-		t.Logf("V4: fixed drive dir: %s", describeTrash(t, p, cRoot, ret, aborted))
+		t.Logf("V4: fixed drive dir: %s", trashAndDescribe(t, p, p, cRoot))
 	})
 
 	t.Run("long path", func(t *testing.T) {
 		long := testfs.LongPath(t, filepath.Join(root, "long"))
 		p := filepath.Join(long, "file.txt")
 		testfs.WriteFile(t, p, "long")
-		ret, aborted := shTrash(t, p)
-		t.Logf("V4: long path (%d chars, no \\\\?\\): %s", len(p), describeTrash(t, p, cRoot, ret, aborted))
+		t.Logf("V4: long path (%d chars, no \\\\?\\): %s", len(p), trashAndDescribe(t, p, p, cRoot))
 	})
 
 	t.Run("long path with prefix", func(t *testing.T) {
 		long := testfs.LongPath(t, filepath.Join(root, "long2"))
 		p := filepath.Join(long, "file.txt")
 		testfs.WriteFile(t, p, "long")
-		ret, aborted := shTrash(t, testfs.ExtendedPath(p))
-		t.Logf("V4: long path (%d chars, with \\\\?\\): %s", len(p), describeTrash(t, p, cRoot, ret, aborted))
+		t.Logf("V4: long path (%d chars, with \\\\?\\): %s", len(p), trashAndDescribe(t, testfs.ExtendedPath(p), p, cRoot))
 	})
 
 	t.Run("short path with prefix", func(t *testing.T) {
 		p := filepath.Join(root, "prefixed", "file.txt")
 		testfs.Build(t, root, testfs.Tree{"prefixed/file.txt": testfs.File("data")})
-		ret, aborted := shTrash(t, testfs.ExtendedPath(p))
-		t.Logf("V4: short path with \\\\?\\: %s", describeTrash(t, p, cRoot, ret, aborted))
+		t.Logf("V4: short path with \\\\?\\: %s", trashAndDescribe(t, testfs.ExtendedPath(p), p, cRoot))
 	})
 
 	t.Run("admin share", func(t *testing.T) {
 		p := filepath.Join(root, "share", "file.txt")
 		testfs.Build(t, root, testfs.Tree{"share/file.txt": testfs.File("data")})
 		unc := `\\localhost\` + strings.ToUpper(p[:1]) + `$` + p[2:]
-		ret, aborted := shTrash(t, unc)
-		t.Logf("V4: %s (DRIVE_REMOTE): %s", unc, describeTrash(t, p, cRoot, ret, aborted))
-		if !testfs.Exists(t, p) {
-			if _, ok := findInRecycleBin(t, cRoot, p); !ok {
-				if _, ok := findInRecycleBin(t, cRoot, unc); !ok {
-					t.Logf("V4: admin share: the file was deleted WITHOUT going to the recycle bin")
-				}
-			}
-		}
+		t.Logf("V4: %s (DRIVE_REMOTE): %s", unc, trashAndDescribe(t, unc, p, cRoot))
 	})
 
 	// Win32 の正規化で変わる名前: foo. を指定したときに、foo と foo. のどちらが消えるか。
@@ -83,9 +70,11 @@ func TestV4(t *testing.T) {
 				testfs.NamePlain: testfs.File("plain"),
 				c.name:           testfs.File("target"),
 			})
+			before := readBin(t, cRoot)
 			ret, aborted := shTrash(t, filepath.Join(dir, c.name))
-			t.Logf("V4: trash %q next to %q: ret=%#x aborted=%v; %q exists=%v, %q exists=%v", c.name, testfs.NamePlain, ret, aborted,
-				c.name, testfs.Exists(t, filepath.Join(dir, c.name)), testfs.NamePlain, testfs.Exists(t, filepath.Join(dir, testfs.NamePlain)))
+			t.Logf("V4: trash %q next to %q: %q: %s; %q exists=%v", c.name, testfs.NamePlain,
+				c.name, describeTrashResult(t, filepath.Join(dir, c.name), cRoot, before, ret, aborted),
+				testfs.NamePlain, testfs.Exists(t, filepath.Join(dir, testfs.NamePlain)))
 		})
 	}
 
@@ -98,12 +87,13 @@ func TestV4(t *testing.T) {
 			aborted bool
 		}
 		done := make(chan result)
+		before := readBin(t, cRoot)
 		go func() {
 			ret, aborted := shTrash(t, p)
 			done <- result{ret, aborted}
 		}()
 		r := <-done
-		t.Logf("V4: goroutine, no LockOSThread/CoInitializeEx: %s", describeTrash(t, p, cRoot, r.ret, r.aborted))
+		t.Logf("V4: goroutine, no LockOSThread/CoInitializeEx: %s", describeTrashResult(t, p, cRoot, before, r.ret, r.aborted))
 	})
 	t.Run("goroutine with COM init", func(t *testing.T) {
 		p := filepath.Join(root, "com", "file.txt")
@@ -114,6 +104,7 @@ func TestV4(t *testing.T) {
 			coInit  error
 		}
 		done := make(chan result)
+		before := readBin(t, cRoot)
 		go func() {
 			runtime.LockOSThread()
 			defer runtime.UnlockOSThread()
@@ -125,7 +116,7 @@ func TestV4(t *testing.T) {
 			done <- result{ret, aborted, err}
 		}()
 		r := <-done
-		t.Logf("V4: goroutine, LockOSThread + CoInitializeEx(STA)=%s: %s", errString(r.coInit), describeTrash(t, p, cRoot, r.ret, r.aborted))
+		t.Logf("V4: goroutine, LockOSThread + CoInitializeEx(STA)=%s: %s", errString(r.coInit), describeTrashResult(t, p, cRoot, before, r.ret, r.aborted))
 	})
 
 	// ボリュームをまたぐテスト用の VHD（NTFS、固定ドライブ）と、exFAT・FAT32 の VHD。
@@ -134,8 +125,13 @@ func TestV4(t *testing.T) {
 			d := testfs.EnvDir(t, env)
 			p := filepath.Join(d, "file.txt")
 			testfs.WriteFile(t, p, "data")
-			ret, aborted := shTrash(t, p)
-			t.Logf("V4: %s=%s: %s", env, os.Getenv(env), describeTrash(t, p, driveRoot(p), ret, aborted))
+			t.Logf("V4: %s=%s: %s", env, os.Getenv(env), trashAndDescribe(t, p, p, driveRoot(p)))
+			entries, err := os.ReadDir(testfs.ExtendedPath(filepath.Join(driveRoot(p), "$Recycle.Bin")))
+			var names []string
+			for _, e := range entries {
+				names = append(names, e.Name())
+			}
+			t.Logf("V4: %s: %s$Recycle.Bin: %+q err=%v", env, driveRoot(p), names, err)
 		})
 	}
 }

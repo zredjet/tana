@@ -78,7 +78,7 @@ func renameCases(t *testing.T, v, label, dir string, rename renameFunc) {
 		if slices.Contains(listNames(t, d), c.to) && err == nil {
 			t.Logf("%s: %s: %s: the new name is stored as given (byte-exact): true", v, label, c.name)
 		}
-		// 作ったときの名前で消しておく。ReadDir が返す名前で消せないボリュームがあるため（macOS の exFAT。V12 の名前のプローブで調べる）。
+		// 作ったときの名前で消しておく。ReadDir が返す名前で消せないボリュームがあるため（macOS の exFAT。V17 で調べる）。
 		for _, n := range []string{c.from, c.to} {
 			os.RemoveAll(testfs.ExtendedPath(filepath.Join(d, n)))
 		}

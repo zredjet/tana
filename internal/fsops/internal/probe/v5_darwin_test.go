@@ -11,28 +11,45 @@ import (
 	"github.com/zredjet/tana/internal/fsops/internal/testfs"
 )
 
-// trashJXA は、NSFileManager の trashItemAtURL:resultingItemURL:error: を呼ぶ JavaScript for Automation のスクリプト。
-// _test.go では cgo を使えないため、SPEC §12.3 と同じ API を osascript の ObjC ブリッジから呼ぶ。
-const trashJXA = `ObjC.import('Foundation');
-function run(argv) {
-  var url = $.NSURL.fileURLWithPath(argv[0]);
-  var result = Ref();
-  var error = Ref();
-  var ok = $.NSFileManager.defaultManager.trashItemAtURLResultingItemURLError(url, result, error);
-  if (!ok) {
-    var e = error[0];
-    return 'ERR ' + ObjC.unwrap(e.domain) + ' ' + e.code + ' ' + ObjC.unwrap(e.localizedDescription);
+// trashHelperSource は、NSFileManager の trashItemAtURL:resultingItemURL:error: を呼ぶ小さな Objective-C のプログラム。
+// _test.go では cgo を使えないため、SPEC §12.3 と同じ API を呼ぶプログラムをテストの中で clang でビルドして使う。
+const trashHelperSource = `#import <Foundation/Foundation.h>
+int main(int argc, char **argv) {
+  @autoreleasepool {
+    NSURL *url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:argv[1]]];
+    NSURL *out = nil;
+    NSError *err = nil;
+    BOOL ok = [[NSFileManager defaultManager] trashItemAtURL:url resultingItemURL:&out error:&err];
+    if (!ok) {
+      printf("ERR %s %ld %s\n", err.domain.UTF8String, (long)err.code, err.localizedDescription.UTF8String);
+      return 0;
+    }
+    printf("OK %s\n", out.path.UTF8String);
   }
-  return 'OK ' + ObjC.unwrap(result[0].path);
-}`
+  return 0;
+}
+`
 
-// trashItem は path をごみ箱へ送り、ごみ箱の中のパスを返す。失敗したら errText にエラーの内容を入れる。
-func trashItem(t *testing.T, path string) (trashed, errText string) {
+// buildTrashHelper は trashHelperSource を dir の中でビルドし、実行ファイルのパスを返す。clang がなければ t.Skip する。
+func buildTrashHelper(t *testing.T, dir string) string {
 	t.Helper()
-	out, err := exec.Command("osascript", "-l", "JavaScript", "-e", trashJXA, path).CombinedOutput()
+	src := filepath.Join(dir, "trash.m")
+	bin := filepath.Join(dir, "trash")
+	testfs.WriteFile(t, src, trashHelperSource)
+	out, err := exec.Command("clang", "-fobjc-arc", "-framework", "Foundation", "-o", bin, src).CombinedOutput()
+	if err != nil {
+		t.Skipf("V5: cannot build the trash helper with clang: %v\n%s", err, out)
+	}
+	return bin
+}
+
+// trashItem は helper で path をごみ箱へ送り、ごみ箱の中のパスを返す。失敗したら errText にエラーの内容を入れる。
+func trashItem(t *testing.T, helper, path string) (trashed, errText string) {
+	t.Helper()
+	out, err := exec.Command(helper, path).CombinedOutput()
 	s := strings.TrimSpace(string(out))
 	if err != nil {
-		return "", "osascript: " + err.Error() + ": " + s
+		return "", "helper: " + err.Error() + ": " + s
 	}
 	if p, ok := strings.CutPrefix(s, "OK "); ok {
 		return p, ""
@@ -44,6 +61,7 @@ func trashItem(t *testing.T, path string) (trashed, errText string) {
 // シンボリックリンクをごみ箱へ送ったときに、リンク先が残ることも確かめる（I4）。FSOPS_TEST_TRASH=1 のときだけ実行する。
 func TestV5(t *testing.T) {
 	testfs.RequireTrash(t)
+	helper := buildTrashHelper(t, testfs.TempDir(t))
 	check := func(t *testing.T, label, dir string) {
 		testfs.Build(t, dir, testfs.Tree{
 			"file.txt":       testfs.File("file content"),
@@ -53,7 +71,7 @@ func TestV5(t *testing.T) {
 		})
 		for _, name := range []string{"file.txt", "dir", "link-to-target"} {
 			p := filepath.Join(dir, name)
-			trashed, errText := trashItem(t, p)
+			trashed, errText := trashItem(t, helper, p)
 			if errText != "" {
 				t.Logf("V5: %s: %s: failed: %s; still exists=%v", label, name, errText, testfs.Exists(t, p))
 				continue
