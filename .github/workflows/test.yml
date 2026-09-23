@@ -22,25 +22,52 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      # ボリュームをまたぐテスト用に、64 MB の VHD を NTFS で作って T: に割り当てる（SPEC §19、V7）。
-      - name: Create cross-volume VHD
+      # テスト用の 64 MB の VHD を作る（SPEC §19、§20。V12〜V14 の分はフェーズ3で承認済み）。
+      #   T: NTFS  ボリュームをまたぐテスト用（FSOPS_CROSSVOL_DIR）
+      #   U: exFAT、V: FAT32  V14 などのプローブ用
+      #   W: NTFS  ごみ箱を「すぐに削除する」設定（V13）
+      #   X: NTFS  ごみ箱の最大サイズを 1 MB に設定（V13）
+      - name: Create test VHDs
         shell: pwsh
         run: |
-          $vhd = Join-Path $env:RUNNER_TEMP "fsopstest.vhd"
-          $script = Join-Path $env:RUNNER_TEMP "diskpart.txt"
+          function New-TestVhd($name, $letter, $fs) {
+            $vhd = Join-Path $env:RUNNER_TEMP "$name.vhd"
+            $script = Join-Path $env:RUNNER_TEMP "diskpart-$name.txt"
+            @(
+              "create vdisk file=`"$vhd`" maximum=64 type=expandable",
+              "select vdisk file=`"$vhd`"",
+              "attach vdisk",
+              "create partition primary",
+              "format fs=$fs quick label=$name",
+              "assign letter=$letter"
+            ) | Set-Content -Encoding ascii $script
+            diskpart /s $script
+            if ($LASTEXITCODE -ne 0) { throw "diskpart failed for $name ($LASTEXITCODE)" }
+          }
+          New-TestVhd "fsopstest" "T" "ntfs"
+          New-TestVhd "fsopsexfat" "U" "exfat"
+          New-TestVhd "FSOPSFAT32" "V" "fat32"
+          New-TestVhd "fsopsnuke" "W" "ntfs"
+          New-TestVhd "fsopssmall" "X" "ntfs"
+          Get-Volume -DriveLetter T,U,V,W,X | Format-Table DriveLetter,FileSystem,FileSystemLabel,DriveType,Size
+          # V13: W: と X: のごみ箱の設定だけを変える（C: と T: は変えない）。
+          $bitBucket = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\BitBucket\Volume"
+          foreach ($v in @(@{Letter="W"; Name="NukeOnDelete"; Value=1}, @{Letter="X"; Name="MaxCapacity"; Value=1})) {
+            $guid = [regex]::Match((Get-Volume -DriveLetter $v.Letter).UniqueId, '\{[^}]+\}').Value
+            $key = Join-Path $bitBucket $guid
+            New-Item -Path $key -Force | Out-Null
+            New-ItemProperty -Path $key -Name $v.Name -PropertyType DWord -Value $v.Value -Force | Out-Null
+            Write-Output "$($v.Letter): $key"
+            Get-ItemProperty -Path $key | Format-List
+          }
           @(
-            "create vdisk file=`"$vhd`" maximum=64 type=expandable",
-            "select vdisk file=`"$vhd`"",
-            "attach vdisk",
-            "create partition primary",
-            "format fs=ntfs quick label=fsopstest",
-            "assign letter=T"
-          ) | Set-Content -Encoding ascii $script
-          diskpart /s $script
-          if ($LASTEXITCODE -ne 0) { throw "diskpart failed: $LASTEXITCODE" }
-          Get-Volume -DriveLetter T | Format-List
-          "FSOPS_CROSSVOL_DIR=T:\" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
-          "FSOPS_TEST_TRASH=1" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+            "FSOPS_CROSSVOL_DIR=T:\",
+            "FSOPS_TEST_TRASH=1",
+            "FSOPS_PROBE_EXFAT_DIR=U:\",
+            "FSOPS_PROBE_FAT32_DIR=V:\",
+            "FSOPS_PROBE_TRASH_NUKE_DIR=W:\",
+            "FSOPS_PROBE_TRASH_SMALL_DIR=X:\"
+          ) | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
       - run: go vet ./...
       - run: go test ./...
       # 要検証事項のプローブと、環境によって Skip しうる Windows 固有のテストは、結果をログに残すため -v で実行する（SPEC §20）。
@@ -66,6 +93,16 @@ jobs:
           hdiutil attach "$RUNNER_TEMP/fsopstest.dmg"
           echo "FSOPS_CROSSVOL_DIR=/Volumes/fsopstest" >> "$GITHUB_ENV"
           echo "FSOPS_TEST_TRASH=1" >> "$GITHUB_ENV"
+      # V12 などのプローブ用に、exFAT と FAT32 の 64 MB のイメージを作ってマウントする（フェーズ3で承認済み）。
+      - name: Create exFAT and FAT32 disk images
+        run: |
+          hdiutil create -size 64m -fs ExFAT -volname FSOPSEXFAT "$RUNNER_TEMP/fsopsexfat.dmg"
+          hdiutil attach "$RUNNER_TEMP/fsopsexfat.dmg"
+          hdiutil create -size 64m -fs "MS-DOS FAT32" -volname FSOPSFAT32 "$RUNNER_TEMP/fsopsfat32.dmg"
+          hdiutil attach "$RUNNER_TEMP/fsopsfat32.dmg"
+          mount | grep -E "FSOPS"
+          echo "FSOPS_PROBE_EXFAT_DIR=/Volumes/FSOPSEXFAT" >> "$GITHUB_ENV"
+          echo "FSOPS_PROBE_FAT32_DIR=/Volumes/FSOPSFAT32" >> "$GITHUB_ENV"
       - run: go vet ./...
       - run: go test -race ./...
       # 要検証事項のプローブは、結果をログに残すため -v で実行する（SPEC §20）。
@@ -92,4 +129,16 @@ jobs:
       - run: go vet ./...
       - run: GOOS=windows go vet ./...
       - run: GOOS=darwin CGO_ENABLED=0 go vet ./...
+      # V12: renameat2(RENAME_NOREPLACE) を vfat でも確かめるため、64 MB の vfat のイメージを loop マウントする（フェーズ3で承認済み）。
+      - name: Mount a vfat image
+        run: |
+          truncate -s 64M "$RUNNER_TEMP/fsopsvfat.img"
+          sudo mkfs.vfat -F 32 "$RUNNER_TEMP/fsopsvfat.img" || { sudo apt-get install -y dosfstools && sudo mkfs.vfat -F 32 "$RUNNER_TEMP/fsopsvfat.img"; }
+          sudo mkdir -p /mnt/fsopsvfat
+          sudo mount -o loop,uid=$(id -u),gid=$(id -g) "$RUNNER_TEMP/fsopsvfat.img" /mnt/fsopsvfat
+          mount | grep fsopsvfat
+          echo "FSOPS_PROBE_FAT32_DIR=/mnt/fsopsvfat" >> "$GITHUB_ENV"
+      # 要検証事項のプローブは、結果をログに残すため -v で実行する（SPEC §20）。
+      - name: Probes (verbose)
+        run: go test -count=1 -v ./internal/fsops/internal/probe/
       # ごみ箱が使えないことを確かめるテストはフェーズ10で追加する（SPEC §19）。

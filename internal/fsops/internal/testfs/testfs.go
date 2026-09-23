@@ -50,17 +50,27 @@ func removeTree(t testing.TB, dir string) {
 // CrossVolEnv は、テスト用の別ボリューム上のフォルダを指定する環境変数（SPEC §18.2）。
 const CrossVolEnv = "FSOPS_CROSSVOL_DIR"
 
+// TrashEnv は、ごみ箱のテストを実行するかを指定する環境変数（SPEC §18.2）。"1" のときだけ実行する。
+const TrashEnv = "FSOPS_TEST_TRASH"
+
 // CrossVolDir は、FSOPS_CROSSVOL_DIR の中にこのテスト専用のフォルダを作って返す。テストの終了時に削除する。
 // FSOPS_CROSSVOL_DIR が未設定なら t.Skip する。
 func CrossVolDir(t testing.TB) string {
 	t.Helper()
-	base := os.Getenv(CrossVolEnv)
+	return EnvDir(t, CrossVolEnv)
+}
+
+// EnvDir は、環境変数 env が指すフォルダの中にこのテスト専用のフォルダを作って返す。テストの終了時に削除する。
+// env が未設定なら t.Skip する。CI が用意した特別なボリューム（SPEC §18.2、§20）を使うテストのためのもの。
+func EnvDir(t testing.TB, env string) string {
+	t.Helper()
+	base := os.Getenv(env)
 	if base == "" {
-		t.Skipf("%s is not set; skipping a cross-volume test (SPEC §18.2)", CrossVolEnv)
+		t.Skipf("%s is not set; skipping (SPEC §18.2, §20)", env)
 	}
 	d, err := os.MkdirTemp(base, "fsops-test-")
 	if err != nil {
-		t.Fatalf("%s=%q: %v", CrossVolEnv, base, err)
+		t.Fatalf("%s=%q: %v", env, base, err)
 	}
 	d, err = filepath.EvalSymlinks(d)
 	if err != nil {
@@ -68,6 +78,14 @@ func CrossVolDir(t testing.TB) string {
 	}
 	t.Cleanup(func() { removeTree(t, d) })
 	return d
+}
+
+// RequireTrash は、FSOPS_TEST_TRASH=1 でなければ t.Skip する（開発者のごみ箱を汚さないため）。
+func RequireTrash(t testing.TB) {
+	t.Helper()
+	if os.Getenv(TrashEnv) != "1" {
+		t.Skipf("%s is not 1; skipping a test that uses the trash (SPEC §18.2)", TrashEnv)
+	}
 }
 
 // ---- ツリー ----

@@ -98,13 +98,3 @@ func TestV3(t *testing.T) {
 		}
 	})
 }
-
-func sanitize(s string) string {
-	b := []byte(s)
-	for i, c := range b {
-		if !('a' <= c && c <= 'z' || '0' <= c && c <= '9') {
-			b[i] = '-'
-		}
-	}
-	return string(b)
-}
