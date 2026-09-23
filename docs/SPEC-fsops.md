@@ -419,7 +419,8 @@ const (
 - 計画から実行までの間にファイルシステムが変わることを前提にする。
 - 「存在確認してから書く」ではなく、OS の排他的な操作（`O_EXCL` での作成、§8.4 の排他リネーム、`os.Mkdir`）で書き込むことで、計画後に現れた衝突を確実に検出する。
 - 計画時になかった衝突が見つかったら、その項目を `OutcomeSkipped`（`KindExist`）にする（I1）。
-- 上書き（`DecisionOverwrite`）の直前に上書き先を `Lstat` し、計画時に記録した fileID と種類に一致する場合だけ上書きする。
+- 上書き（`DecisionOverwrite`）の直前に上書き先を `Lstat` し、計画時に記録した fileID・種類・サイズ・更新日時がすべて一致する場合だけ上書きする。
+  fileID だけで判定しないのは、削除と作り直しで同じ番号が再利用されるファイルシステムがあるため（Linux の ext4。V16）。
   一致しなければ計画後に現れた衝突とみなし、`OutcomeSkipped`（`KindExist`）にする（I1）。
   上書き先が消えていれば、衝突なしとして排他リネームで書く。
 - マージ（`DecisionMerge`）の直前にも（内側の衝突のマージも含め、マージのたびに）マージ先を `Lstat` し、計画時の fileID と一致するフォルダ（`TypeDir`）であることを確かめる。
@@ -479,6 +480,9 @@ const (
 - パスの同一性を文字列で比較しない。大文字小文字、NFC/NFD、8.3 形式の短縮名、ジャンクション・`subst` による別名があるため。
 - 同一性の判定はすべてパッケージ内の fileID で行う。`os.SameFile` は使わない。
   - Windows: `GetFileInformationByHandleEx` の `FileIdInfo`（ボリュームシリアル番号 64 ビットとファイル ID 128 ビット）。構造体は x/sys にないので自前で定義する。
+    `FileIdInfo` が `ERROR_INVALID_PARAMETER` で失敗するボリューム（exFAT・FAT32。V14）では、`GetFileInformationByHandle` のボリュームシリアル番号（32 ビット）とファイルインデックス（64 ビット）を使う。
+    どちらの方法で得た値かを fileID に記録し、同じ方法で得た値どうしだけを比べる。
+    exFAT・FAT32 のファイルインデックスはディレクトリエントリの位置にもとづくため、別のフォルダへ移すと変わる（V16）。そのため、記録から比較までの間に fsops 自身が移動した項目の照合には使えない。
   - Unix: `Dev` と `Ino`。
   - fileID は記録する時点で確定させる。
   - `os.SameFile` を使わない理由: Windows の `os.SameFile` は、`FileInfo` の取得経路によってはファイル ID を比較時にパスから取り直す（`loadFileId`）ため、計画時の `FileInfo` を実行時に比べると実行時のファイル同士を比べることになる。
@@ -502,13 +506,26 @@ const (
   `dst` を `Lstat` して src と同じ fileID で、名前の文字列が異なり、src と dst の親フォルダが同じで、ファイルの場合はリンク数が 1 のときは、「同じファイルの名前変更」とみなして OS の通常のリネームで行う（V1、V2）。
   親フォルダとリンク数の条件は、ハードリンクを名前の違いと取り違えないため。フォルダのリンク数は Unix では 2 以上になるため、条件にしない。
 - 排他リネームが「存在する」で失敗した場合は `KindExist`。
-- macOS の `RENAME_EXCL` が APFS 以外のボリュームで使えるか、Linux の `RENAME_NOREPLACE` が `EINVAL` を返す場合の扱いは V12 の結果で決める。
+- **排他リネームが使えないボリュームでの代わりの手段**（名前を確保してから置き換える）:
+  macOS の `RENAME_EXCL` は exFAT では常に `ENOTSUP` になる（V12）。Linux の `RENAME_NOREPLACE` が `EINVAL` を返す場合も同じ扱いにする。
+  このときだけ、次の手順で排他リネームの代わりにする（ボリュームごとに結果を覚えてはならない。毎回、排他リネームを先に試す）。
+  1. 移動先の名前を確保する。src がファイル・リンク・特殊なファイルなら `dst` を `O_CREAT|O_EXCL|O_WRONLY` で作って閉じる。フォルダなら `os.Mkdir(dst)`。
+     「存在する」で失敗したら `KindExist`（排他リネームと同じ）。
+  2. `dst` を `Lstat` し、手順 1 で作ったもの（fileID が一致し、ファイルならサイズ 0、フォルダなら空）であることを確かめる。
+  3. 確かめられたら、通常の `rename(src, dst)` で置き換える（空のファイル・空のフォルダは `rename` で置き換えられる）。
+     確かめられなければ、src には手を付けずに `KindExist` にする。手順 1 で作ったものが残っていれば、fileID が一致する場合だけ消す。
+  4. 手順 3 の `rename` が失敗したら、手順 1 で作ったものを（fileID が一致する場合だけ）消す。
+  - 残る危険: 手順 2 と 3 の間に、別のプロセスが確保した名前を消して同じ名前で作り直した場合に限り、それを上書きしうる（I1）。
+    排他的な操作がないボリュームで許容する唯一の例外として、ここに明記する。手順と動作は V12 の追加確認で確かめる。
 
 ### 8.5 名前を変換しない
 
 - fsops はファイル名を正規化しない。コピー先の名前はコピー元の名前をバイト単位でそのまま使う（I6）。
 - 衝突の検出は OS の `Lstat` に任せる。APFS は NFC と NFD を同じ名前として扱い、NTFS は別の名前として扱うが、`Lstat` に任せればどちらでも正しく動く。
 - 表示・検索のための正規化は UI 側で行う。
+- 制限事項（V17）: macOS の exFAT では、NFC の名前で保存されたファイル（Windows などで作られたもの）を `ReadDir` が NFD の名前で返し、その名前では削除できない（`ENOENT`。`Lstat` や読み込みはできる）。
+  fsops は名前を変換して探し直さず、その項目を `KindNotFound` の失敗として報告する（データは失われない）。
+- macOS が FAT 系のボリュームに作る AppleDouble ファイル（`._名前`）は、ほかのファイルと同じ通常のファイルとして扱う。
 
 ---
 
@@ -628,6 +645,10 @@ const (
 - Unix（macOS・Linux）では `/` と NUL 文字を `KindInvalidName` にする。
 - 名前の長さの上限を超える場合、ボリュームで使えない名前の場合など、OS が返したエラーは §17 の対応で `KindInvalidName` にする。
 - 排他リネームで行う。上書きは一切しない。大文字小文字だけ・正規化だけの違いは §8.4 に従って許可する。
+- Windows の exFAT・FAT32 では、大文字小文字だけの変更で `MoveFileExW` が成功を返しても名前が変わらない（V1）。
+  そのため、大文字小文字だけ・正規化だけの変更の後は、親フォルダの列挙で新しい名前がバイト単位で現れたことを確かめる。
+  現れなければ、同じフォルダ内の一時名（`.fsops-<ランダム16進>.tmp`）へ排他リネームし、続けて一時名から新しい名前へ排他リネームする。
+  2 回目が失敗したら一時名から元の名前へ戻し、戻せなければ一時名のパスを `OpError` の `Dest` に入れて返す。
 
 ---
 
@@ -643,22 +664,24 @@ const (
 
 ### 12.2 Windows
 
-- 事前確認:
+- 事前確認（`NewPlan` と `Execute` の両方で行う。ファイルシステムを変更しない）:
   - `GetVolumePathName` でボリュームのルートを求め、`GetDriveType` が `DRIVE_FIXED` の場合だけごみ箱を使う。
     それ以外（リムーバブル、ネットワーク、`\\server\share` など）は `KindTrashUnavailable`。
-    これらの場所では、Windows のごみ箱操作が確認なしに完全削除になりうるため。
-  - パスが `MAX_PATH` を超える場合の扱いは V4 の結果で決める。
+    ネットワーク上のパスは、確認なしに完全削除されることを確かめた（V4。`\\localhost\C$` 経由）。
+  - パスの長さが 260 文字（`MAX_PATH`）以上なら `KindTrashUnavailable`。`SHFileOperationW` では確認なしに完全削除された（V4）。
+    V18 で `IFileOperation` が長いパスを安全に扱えると確認できたら、この制限を見直す。
   - パスに Win32 の正規化で変わる名前（末尾の `.` や空白、予約名）が含まれる場合、つまり `GetFullPathNameW` の結果が元のパスと一致しない場合は `KindTrashUnavailable`。
-    `SHFileOperationW` には `\\?\` を渡せないと考えられ、そのまま渡すと別のファイル（`foo.` に対する `foo`）をごみ箱に入れてしまうため。
-    V4 で `\\?\` 付きのパスを正しく扱えると確認できたら、この制限を見直す。
-  - ごみ箱の最大サイズを超える項目、およびごみ箱が無効（すぐに削除する設定）のボリュームの扱いは V13 の結果で決める。
-    `FOF_NOCONFIRMATION` の下では、これらが確認なしに完全削除される可能性があるため。
-- 実装: shell32.dll の `SHFileOperationW` を `FO_DELETE` で呼ぶ。
-  フラグは `FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI`。
-  `pFrom` は NUL 文字 2 つで終わる形式。1 回の呼び出しで 1 項目だけ渡す。
-  `golang.org/x/sys/windows` に定義がなければ `NewLazySystemDLL` で呼ぶ。
-- 戻り値が 0 以外、または `fAnyOperationsAborted` が真なら失敗。戻り値は Win32 のエラー番号と一致しないことがあるので、分類できないものは `KindUnknown` にして値を `Err` に残す。
-- スレッド・COM の初期化の要否は V4 で確認する。
+    `SHFileOperationW` では `foo.` を指定すると隣の別ファイル `foo` がごみ箱に入った（V4）。`\\?\` 付きのパスは受け付けられなかった。
+- 実装: `IFileOperation`（COM）を使う（V13 の結果により、`SHFileOperationW` から移行した）。
+  `SHFileOperationW` は、ごみ箱が「すぐに削除する」設定のボリュームと、ごみ箱の最大サイズを超える項目を、成功を返したまま確認なしに完全削除したため（V13）。
+  1. `runtime.LockOSThread` した goroutine で `CoInitializeEx(COINIT_APARTMENTTHREADED)` を呼ぶ。
+  2. `CoCreateInstance(CLSID_FileOperation)` で `IFileOperation` を作り、`SetOperationFlags` に `FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI`（と、V18 で必要と分かったもの）を設定する。
+  3. `SHCreateItemFromParsingName` でパスから `IShellItem` を作り、自前の `IFileOperationProgressSink` を付けて `DeleteItem` する。1 回の操作で 1 項目だけ渡す。
+  4. 進捗通知の `PreDeleteItem` で、フラグに `TSF_DELETE_RECYCLE_IF_POSSIBLE` がなければ（ごみ箱に入らず完全削除になる場合）、失敗の `HRESULT` を返して中止させ、その項目を `KindTrashUnavailable` にする（I5）。
+  5. `PerformOperations` の後、`GetAnyOperationsAborted` と `PostDeleteItem` の結果で成否を決める。`PostDeleteItem` で渡されるごみ箱内の項目からパスが取れれば `TrashedPath` に入れる。
+  - COM の vtable の呼び出しと進捗通知の実装は、cgo を使わず `syscall.SyscallN` と `syscall.NewCallback`（または x/sys/windows の同等のもの）で行う。
+  - `PreDeleteItem` のフラグ、中止した項目が本当に残るか、長いパス・`\\?\` 付きのパス・ネットワーク上のパスでの動作、スレッドの条件は V18 で確かめる。確かめるまで、この手順は確定しない。
+- 分類できない `HRESULT` は `KindUnknown` にして値を `Err` に残す。
 - 既存ライブラリ（`hymkor/trash-go`、`rafshawn/go2trash` など）は実装の参考にしてよい。依存に加える場合は許可リストの変更になるので確認を取る。
 
 ### 12.3 macOS
@@ -683,7 +706,10 @@ const (
 - リンクを辿らずに列挙する。
   - Unix: `os.ReadDir` と `Lstat`（下記のハンドルで入ったフォルダでは `fstatat(AT_SYMLINK_NOFOLLOW)`）。
   - Windows: フォルダのハンドルに `GetFileInformationByHandleEx` の `FileIdExtdDirectoryInfo` を使い、名前・属性・リパースタグ・ファイル ID・サイズ・更新日時を 1 回の列挙で得る。
-    ボリュームシリアル番号はフォルダのハンドルから取る。対応しないファイルシステムでの扱いは V14 の結果で決める。
+    ボリュームシリアル番号はフォルダのハンドルから取る。
+    `FileIdExtdDirectoryInfo` が `ERROR_INVALID_PARAMETER` で失敗するボリューム（exFAT・FAT32。V14）では、`FileIdBothDirectoryInfo` に切り替える。
+    このとき得られるファイル ID は 64 ビットで、§8.3 の `GetFileInformationByHandle` のファイルインデックスと同じ値になる。ボリュームシリアル番号は、フォルダのハンドルに `GetFileInformationByHandle` を使って得る。
+    リパースタグは、属性に `FILE_ATTRIBUTE_REPARSE_POINT` があるときだけ `EaSize` の位置から読む。
 - fileID は、計画の走査では衝突先と §8.3 の判定に必要なものだけ取得する。実行時の走査では列挙で得たものを使う。
 - 入り込むのは、§14.1 で `TypeDir` と判定したエントリだけ。`TypeSymlink`、`TypeJunction`、`TypeSpecial` には入り込まない（I4）。
 - 名前順に処理する。
@@ -721,7 +747,7 @@ const (
   削除が `ERROR_ACCESS_DENIED`・`ERROR_DIRECTORY`（Unix では `EISDIR`・`ENOTDIR`・`EPERM`）で失敗したら `Lstat` し直し、種類が変わっていれば `KindSourceChanged` とする。
 - 1 件失敗しても残りは続け、トップレベルの結果を `OutcomePartial` にする。
 - Windows の読み取り専用ファイルは削除に失敗する（`DeleteFileW` は `ERROR_ACCESS_DENIED` を返すと想定している。V15 で確認する）。属性を勝手に外さず `KindReadOnly` として報告する。
-- Windows のフォルダの読み取り専用属性は保護を意味しないため、フォルダに限り属性を外してから削除してよい（V15 の結果で決める）。削除に失敗したら属性を元に戻す。
+- Windows のフォルダの読み取り専用属性は保護を意味しないため、フォルダに限り属性を外してから削除する（読み取り専用属性の付いたフォルダは、空でも `RemoveDirectoryW` が `ERROR_ACCESS_DENIED` で失敗する。V15）。削除に失敗したら属性を元に戻す。
 
 ### 13.3 記録した項目だけの削除（移動元の削除）
 
@@ -786,10 +812,14 @@ const (
 - マージで既存のフォルダを使った場合、そのフォルダのメタデータは変更しない。
 - シンボリックリンクにはメタデータを設定しない。`os.Chtimes` と `os.Chmod` はリンクを辿り、操作対象でないリンク先を変更してしまうため。
 
-安全上、保持を検討するもの（V6 の結果を見て扱いを決める。確認はフェーズ3、実装はフェーズ8）:
+安全上、保持するもの（V6 で読み書きできることを確認済み。実装はフェーズ8）:
 
-- Windows の `Zone.Identifier`（インターネットから取得したことを示す代替データストリーム）
-- macOS の `com.apple.quarantine`（同様の拡張属性）
+- Windows の `Zone.Identifier`（インターネットから取得したことを示す代替データストリーム）。
+  コピー元に `\\?\` 形式のパス + `:Zone.Identifier` があれば読み、一時ファイルに同じ内容で書いてから最終名にする。
+  コピー先のファイルシステムが代替データストリームに対応しない場合（exFAT・FAT32 では `ERROR_INVALID_NAME`）は、`Warnings` に `KindMetadata` を加える。
+- macOS の `com.apple.quarantine`（同様の拡張属性）。`Getxattr` で読み、一時ファイルに `Setxattr`（`XATTR_NOFOLLOW`）してから最終名にする。
+  exFAT・FAT32 では AppleDouble ファイル（`._名前`）に保存される。
+- シンボリックリンクには付けない。フォルダには付けない。
 
 これらが失われると、ダウンロードしたファイルをコピーした際に Office の保護ビューなどの警告が出なくなるため。
 
@@ -920,6 +950,10 @@ type OpError struct {
 |---|---|---|
 | `FSOPS_CROSSVOL_DIR` | テスト用の別ボリューム上のフォルダの絶対パス | ボリュームをまたぐテストを Skip |
 | `FSOPS_TEST_TRASH=1` | ごみ箱のテストを実行する | Skip（開発者のごみ箱を汚さないため） |
+| `FSOPS_PROBE_EXFAT_DIR` | exFAT のボリューム上のフォルダ（Windows: VHD、macOS: hdiutil のイメージ） | そのボリュームを使うテスト・プローブを Skip |
+| `FSOPS_PROBE_FAT32_DIR` | FAT32 のボリューム上のフォルダ（Windows: VHD、macOS: hdiutil のイメージ、Linux: loop マウントした vfat） | 同上 |
+| `FSOPS_PROBE_TRASH_NUKE_DIR` | Windows: ごみ箱を「すぐに削除する」設定にしたボリューム上のフォルダ | 同上 |
+| `FSOPS_PROBE_TRASH_SMALL_DIR` | Windows: ごみ箱の最大サイズを 1 MB にしたボリューム上のフォルダ | 同上 |
 
 CI ではどちらも設定する（§19）。
 
@@ -991,6 +1025,11 @@ hdiutil detach /Volumes/fsopstest
 | 容量 | 書き込み中の容量不足 → `KindNoSpace`、残りは Skipped | CROSSVOL（他のテストと並行実行しない） |
 | 容量 | 容量不足の後も、同じボリュームへの移動（`MethodRename`）の項目は続行される | CROSSVOL |
 | ごみ箱 | ごみ箱に入り、元の場所から消えている（Windows: `$I` ファイル、macOS: `TrashedPath`） | TRASH（V5、V10） |
+| I5 | ごみ箱が「すぐに削除する」設定のボリューム、ごみ箱の最大サイズを超える項目 → `KindTrashUnavailable`、ファイルは残る | Windows（TRASH、`FSOPS_PROBE_TRASH_NUKE_DIR`・`FSOPS_PROBE_TRASH_SMALL_DIR`。V13、V18） |
+| I5 | 260 文字以上のパスでごみ箱 → `KindTrashUnavailable`、ファイルは残る | Windows（TRASH。V4） |
+| I1 | 排他リネームの代わりの手段（§8.4）: macOS の exFAT へのコピー・移動・`Rename` ができ、既存のファイルは上書きされない | macOS（`FSOPS_PROBE_EXFAT_DIR`。V12） |
+| I6 | exFAT・FAT32 での大文字小文字だけの `Rename` → 名前が実際に変わる | Windows（`FSOPS_PROBE_EXFAT_DIR`・`FSOPS_PROBE_FAT32_DIR`。V1） |
+| 同一性 | exFAT・FAT32 で fileID が取れ（§8.3 の代わりの方法）、走査（§13.1 の代わりの列挙）の ID と一致する | Windows（V14、V16） |
 | 並行性 | 進捗コールバックまわりにデータ競合がない | macOS（`-race`） |
 
 ---
@@ -1003,13 +1042,15 @@ hdiutil detach /Volumes/fsopstest
   リポジトリが非公開なら、macOS のジョブは `pull_request` と `workflow_dispatch` のときだけ実行する（macOS ランナーは料金が高く、開発者は macOS でテストを実行できるため）。公開なら両方とも毎回実行する。
 - `actions/checkout` と `actions/setup-go` は、作成時点の最新メジャーバージョンを確認して使う。Go は `go-version-file: go.mod`。
 - **windows ジョブ（`windows-latest`）**
-  1. diskpart で 64 MB の VHD を作成・アタッチし、NTFS でフォーマットしてドライブ文字を割り当てる（例: `T:`）
-  2. `FSOPS_CROSSVOL_DIR=T:\` と `FSOPS_TEST_TRASH=1` を `GITHUB_ENV` に設定する
+  1. diskpart で 64 MB の VHD を作成・アタッチしてフォーマットし、ドライブ文字を割り当てる。
+     `T:` NTFS（ボリュームをまたぐテスト）、`U:` exFAT、`V:` FAT32、`W:` NTFS（ごみ箱を「すぐに削除する」設定）、`X:` NTFS（ごみ箱の最大サイズ 1 MB）。
+     `W:`・`X:` の設定は HKCU の `Software\Microsoft\Windows\CurrentVersion\Explorer\BitBucket\Volume\{ボリューム GUID}` の `NukeOnDelete`・`MaxCapacity` で行い、C: と T: の設定は変えない。
+  2. `FSOPS_CROSSVOL_DIR`、`FSOPS_TEST_TRASH=1`、§18.2 の `FSOPS_PROBE_*` を `GITHUB_ENV` に設定する
   3. `go vet ./...`
   4. `go test ./...`
 - **macos ジョブ（`macos-latest`）**
-  1. `hdiutil` で 64 MB の APFS イメージを作成してマウントする（§18.3 と同じ）
-  2. `FSOPS_CROSSVOL_DIR=/Volumes/fsopstest` と `FSOPS_TEST_TRASH=1` を設定する
+  1. `hdiutil` で 64 MB の APFS イメージを作成してマウントする（§18.3 と同じ）。さらに exFAT と FAT32 のイメージを作ってマウントする
+  2. `FSOPS_CROSSVOL_DIR=/Volumes/fsopstest`、`FSOPS_TEST_TRASH=1`、`FSOPS_PROBE_EXFAT_DIR`、`FSOPS_PROBE_FAT32_DIR` を設定する
   3. `go vet ./...`
   4. `go test -race ./...`
   5. `CGO_ENABLED=0 go vet ./...` と、ごみ箱が使えないことを確かめるテスト（§18.4 の I5 の行）の `CGO_ENABLED=0` での実行
@@ -1017,6 +1058,8 @@ hdiutil detach /Volumes/fsopstest
   1. `gofmt -l .` の出力が空であること
   2. `go vet ./...`、`GOOS=windows go vet ./...`、`GOOS=darwin CGO_ENABLED=0 go vet ./...`
   3. ごみ箱が使えないことを確かめるテスト（§18.4 の I5 の行）の実行（フェーズ10で追加）
+  4. 64 MB の vfat のイメージを `sudo mount -o loop` でマウントして `FSOPS_PROBE_FAT32_DIR` に設定し、プローブ（`internal/probe`）を実行する
+- 要検証事項のプローブは、結果をログに残すため、各ジョブで `go test -v ./internal/fsops/internal/probe/` を別の手順として実行する。
 - VHD とディスクイメージの作成はフェーズ2で追加する。フェーズ1では `go vet`・`go test` と ubuntu ジョブだけ。
 
 ---
@@ -1026,15 +1069,27 @@ hdiutil detach /Volumes/fsopstest
 以下は仕様作成時点で確証がない。推測で確定させず、確かめるテストを書いて CI の結果を報告し、それに基づいて方針を決める。結果はこの節に追記する。
 
 - **V1** Windows: `MoveFileExW(src, dst, 0)` で、大文字小文字だけ違う名前への変更が成功するか。
+  - **結果（2026-09-23、windows-latest（Windows 11 build 26100）・macos-latest・ubuntu-latest、Go 1.27.1）:** NTFS では大文字小文字だけの変更が成功し、名前が変わる。exFAT・FAT32 では成功を返すが名前は変わらない（§11.3 で対処）。
+    移動先が既にあれば、NTFS・exFAT・FAT32 とも `ERROR_ALREADY_EXISTS`（183）で失敗し、移動先は変わらない。NTFS では NFC と NFD は別の名前として扱われる。
 - **V2** macOS（APFS）: `renamex_np(RENAME_EXCL)` で、大文字小文字だけ・NFC/NFD だけ違う名前へ変更したときの動作。`golang.org/x/sys/unix` に `RenamexNp` があるか。
   （x/sys v0.38.0 に `unix.RenamexNp` と `RENAME_EXCL` があることはソースで確認済み。動作は未確認。）
+  - **結果（2026-09-23、windows-latest（Windows 11 build 26100）・macos-latest・ubuntu-latest、Go 1.27.1）:** APFS（一時フォルダ・`hdiutil` のイメージ）で、大文字小文字だけ・NFC/NFD だけの変更が成功し、新しい名前がバイト単位で残る。移動先が既にあれば `EEXIST`。
 - **V3** Windows: 使用する Go のバージョンで、ジャンクションとディレクトリのシンボリックリンクが `Lstat` でどう見えるか（`ModeSymlink` / `ModeIrregular` / `ModeDir`）。§13.2 の削除方法（`RemoveDirectoryW`）でリンク自体だけが消え、リンク先の中身が残ること。
   - **結果（2026-09-23、Go 1.27.1、windows-latest）:** ジャンクションは `Lstat` で `ModeIrregular`（`IsDir()` は false、`ModeSymlink` なし）、フォルダ用・ファイル用のシンボリックリンクは `ModeSymlink`。§14.1 の属性とタグによる判定を維持する。
     `RemoveDirectoryW`（ジャンクション・フォルダ用のリンク）と `DeleteFileW`（ファイル用のリンク）でリンク自体だけが消え、リンク先の中身は残った。
     種類に合わない関数では何も消えずに失敗した（ジャンクションに `DeleteFileW` → `ERROR_ACCESS_DENIED`、ファイル用のリンクに `RemoveDirectoryW` → `ERROR_DIRECTORY`）。
 - **V4** Windows: `SHFileOperationW` の動作。`MAX_PATH` を超えるパス、`\\?\` 付きのパス、固定ドライブ以外のパスでどうなるか（特に、黙って完全削除されないか）。goroutine から呼ぶ際に `runtime.LockOSThread` と `CoInitializeEx` が必要か。
+  - **結果（2026-09-23、windows-latest（Windows 11 build 26100）・macos-latest・ubuntu-latest、Go 1.27.1）:** 固定ドライブ（NTFS・exFAT・FAT32 の VHD）ではごみ箱に入る（exFAT・FAT32 では `$Recycle.Bin` の直下）。
+    260 文字を超えるパス（`\\?\` なし）と `\\localhost\C$` 経由のパスは、戻り値 0 のまま確認なしに完全削除された。`\\?\` 付きのパスは `0x7c` で失敗し、何も起きない。
+    `foo.`・`foo ` を指定すると、隣の別ファイル `foo` がごみ箱に入った。goroutine から、`LockOSThread`・`CoInitializeEx` なしで呼んでも動作した。
+    → §12.2 の事前確認（固定ドライブのみ、260 文字以上を拒否、`GetFullPathNameW` の一致）を維持・追加した。
 - **V5** macOS の CI: `trashItemAtURL` が CI 上で成功するか。返されたパスを `Lstat` できるか（プライバシー保護による制限の有無）。
+  - **結果（2026-09-23、windows-latest（Windows 11 build 26100）・macos-latest・ubuntu-latest、Go 1.27.1）:** CI 上で成功し、返されたパス（`~/.Trash/…`、イメージ上では `/Volumes/…/.Trashes/501/…`）を `Lstat` と読み込みで確かめられた。
+    シンボリックリンクはリンク自体だけが入り、リンク先は残る。exFAT・FAT32 のイメージでも成功する。ネットワークボリュームは未確認。
+    （プローブは `_test.go` で cgo を使えないため、同じ API を呼ぶ Objective-C の小さなプログラムを `clang` でビルドして使った。）
 - **V6** Windows の `Zone.Identifier`（`path:Zone.Identifier`）を `os` で読み書きできるか。macOS の `com.apple.quarantine` を `golang.org/x/sys/unix` の `Getxattr` / `Setxattr` で読み書きできるか。
+  - **結果（2026-09-23、windows-latest（Windows 11 build 26100）・macos-latest・ubuntu-latest、Go 1.27.1）:** Windows の `Zone.Identifier` は、NTFS なら `\\?\` 付き・なしとも `os` で読み書きでき、同じボリューム内のリネームで一緒に移る。exFAT・FAT32 では `ERROR_INVALID_NAME`（123）で書けない。
+    macOS の `com.apple.quarantine` は APFS・exFAT・FAT32 とも `Getxattr` / `Setxattr` で読み書きできる（FAT 系では `._名前` が作られる）。`XATTR_NOFOLLOW` でリンク先に付かない。→ §15 で保持する。
 - **V7** CI: Windows ランナーで diskpart による VHD の作成・マウントができるか。macOS ランナーで `hdiutil attach` ができるか。Windows ランナーで `\\localhost\C$` にアクセスでき、`GetDriveType` が `DRIVE_REMOTE` を返すか。
   - **結果（2026-09-23）:** diskpart で 64 MB の VHD を作成・アタッチでき、NTFS・`DRIVE_FIXED`・C: と別のシリアル番号になった。macOS では `hdiutil attach` で APFS のイメージをマウントできた。
     ボリュームをまたぐ `os.Rename` は Windows で `ERROR_NOT_SAME_DEVICE`、macOS で `EXDEV` になる。
@@ -1044,17 +1099,41 @@ hdiutil detach /Volumes/fsopstest
     リンクを使うテストは Windows の CI で Skip されずに実行される。権限不足（`KindLinkUnsupported`）は CI で再現できないため、フックで注入して確かめる（§18.4）。
 - **V9** OneDrive の未ダウンロードファイルの扱い。CI では確認できないため、実機（仮想マシンの Windows など）での確認項目として記録するだけにする。
 - **V10** Windows の `$Recycle.Bin\<SID>\` にある `$I` ファイルの形式（先頭から、版番号 8 バイト、元のサイズ 8 バイト、削除日時 8 バイト、版 2 ではパスの文字数 4 バイト、UTF-16 の元のパス）が想定どおりか。
+  - **結果（2026-09-23、windows-latest（Windows 11 build 26100）・macos-latest・ubuntu-latest、Go 1.27.1）:** 想定どおり（版 2）。フォルダのサイズは中身の合計。`$R` に内容がある。
 - **V11** Windows: 末尾が `.` や空白の名前、予約名（`CON` など）のエントリを `\\?\` 経由で作り、走査・コピー・移動・完全削除が同名の別ファイルに影響しないこと。
   `os` の各関数（`Lstat`、`ReadDir`、`Mkdir`、`Remove`、`Rename`、`Chtimes`、`Readlink`）が `\\?\` 形式のパスをそのまま扱えること（§8.2）。
+  - **結果（2026-09-23、windows-latest（Windows 11 build 26100）・macos-latest・ubuntu-latest、Go 1.27.1）:** `\\?\` 付きのパスで、`Lstat`・`ReadDir`・`Mkdir`・`Remove`・`Rename`・`Chtimes`・`Readlink` が `foo.`・`foo `・`CON` を正しく扱い、`foo` に影響しない。`\\?\` なしの `Lstat(foo.)` は `foo` を返した。
 - **V12** macOS: `renamex_np(RENAME_EXCL)` が APFS 以外（`hdiutil` で作る exFAT・FAT32 のイメージ、可能なら SMB）で使えるか。
   使えない場合の方式は結果を見て決める。Linux の `RENAME_NOREPLACE` が `EINVAL` を返す場合も同じ方針で扱う（§8.4）。
+  - **結果（2026-09-23、windows-latest（Windows 11 build 26100）・macos-latest・ubuntu-latest、Go 1.27.1）:** macOS の FAT32 では `RENAME_EXCL` が使える。exFAT では新しい名前への変更でも常に `ENOTSUP`（移動先が既にあれば `EEXIST`）。
+    Linux の `RENAME_NOREPLACE` は ext4 と vfat で使える（vfat では大文字小文字だけの変更が `EEXIST`）。SMB は CI で用意できず未確認。
+    → §8.4 に「名前を確保してから置き換える」代わりの手段を加えた。その動作（exFAT での手順 1〜4）は追加のプローブで確かめる。
 - **V13** Windows: ごみ箱の最大サイズを超える項目、およびボリュームのごみ箱が「ごみ箱にファイルを移動しないで、削除と同時にファイルを消去する」設定のときに、
   `SHFileOperationW`（`FOF_ALLOWUNDO | FOF_NOCONFIRMATION`）が確認なしに完全削除するか。
   完全削除する場合は、`IFileOperation` の進捗通知（`PreDeleteItem` のフラグ `TSF_DELETE_RECYCLE_IF_POSSIBLE`）で完全削除になる項目を中止する方式（§21 の移行を前倒しする）と、
   設定の事前確認のどちらにするかを、結果を見て決める（§12.2）。
+  - **結果（2026-09-23、windows-latest（Windows 11 build 26100）・macos-latest・ubuntu-latest、Go 1.27.1）:** `SHFileOperationW`（`FOF_ALLOWUNDO | FOF_NOCONFIRMATION`）は、「すぐに削除する」設定のボリューム（`NukeOnDelete=1`）と、最大サイズ（1 MB）を超える項目（4 MiB）を、戻り値 0・`fAnyOperationsAborted` 偽のまま確認なしに完全削除した。
+    最大サイズ以内の項目はごみ箱に入った。→ `IFileOperation` と `PreDeleteItem` による方式に移行する（§12.2）。その動作は V18 で確かめる。
 - **V14** Windows: `FileIdExtdDirectoryInfo` による列挙が NTFS・exFAT・FAT32 の VHD で使えるか。得られるファイル ID・リパースタグが `FileIdInfo`・`FileAttributeTagInfo` と一致するか。
   使えないファイルシステムでは `FileIdBothDirectoryInfo` などに切り替えるかを、結果を見て決める（§13.1）。
+  - **結果（2026-09-23、windows-latest（Windows 11 build 26100）・macos-latest・ubuntu-latest、Go 1.27.1）:** NTFS では使え、ファイル ID・リパースタグが `FileIdInfo`・`FileAttributeTagInfo` と一致する。
+    exFAT・FAT32 では `FileIdExtdDirectoryInfo` も `FileIdInfo` も `ERROR_INVALID_PARAMETER` で失敗する。`FileIdBothDirectoryInfo` は使え、その 64 ビットのファイル ID は `GetFileInformationByHandle` のファイルインデックスと一致する。
+    → §8.3・§13.1 に代わりの方法を加えた。
 - **V15** Windows: 読み取り専用属性の付いた空のフォルダを `RemoveDirectoryW` で削除できるか。読み取り専用属性の付いたファイルに `DeleteFileW` が `ERROR_ACCESS_DENIED` を返し、ファイルと属性がそのまま残るか（POSIX 形式の削除を使う新しい Windows でも同じか）（§13.2）。
+  - **結果（2026-09-23、windows-latest（Windows 11 build 26100）・macos-latest・ubuntu-latest、Go 1.27.1）:** 読み取り専用属性の付いたフォルダは、空でも `RemoveDirectoryW` が `ERROR_ACCESS_DENIED` で失敗する。
+    読み取り専用属性の付いたファイルは `DeleteFileW` が `ERROR_ACCESS_DENIED` で失敗し、ファイルと属性が残る。→ §13.2 を確定した。
+- **V16** fileID の取得可否と安定性（V14 の確認中に見つかった）。ボリュームの種類ごとに、fileID が取れるか、名前の変更・別フォルダへの移動・書き換え・削除して同じ名前で作り直した前後で変わるか。
+  - **結果（2026-09-23、windows-latest（Windows 11 build 26100）・macos-latest・ubuntu-latest、Go 1.27.1）:** NTFS・APFS・macOS の exFAT/FAT32・Linux の vfat では、名前の変更・移動・書き換えで変わらず、作り直すと変わる。
+    Windows の exFAT・FAT32 では `FileIdInfo` が取れず、`GetFileInformationByHandle` のファイルインデックスは同じフォルダ内の名前の変更では変わらないが、別のフォルダへ移すと変わる。
+    Linux の ext4 では、削除して作り直すと同じ inode 番号が再利用された。→ §7.3 の照合を強め、§8.3 に注意を加えた。
+- **V17** APFS・NTFS 以外での名前の扱い（V12 の確認中に見つかった）。NFC・NFD の名前がどう列挙されるか、列挙された名前で `Lstat`・削除ができるか。
+  - **結果（2026-09-23、windows-latest（Windows 11 build 26100）・macos-latest・ubuntu-latest、Go 1.27.1）:** macOS の exFAT では、NFC の名前で作ったファイルを `ReadDir` が NFD の名前で返し、その名前での削除は `ENOENT`（`Lstat` はできる。作ったときの名前でなら削除できる）。
+    macOS の FAT32 も NFD の名前で返すが、その名前で削除できる。→ §8.5 に制限事項として記録した。
+- **V18** Windows: `IFileOperation`（§12.2）の動作。
+  通常の固定ドライブで `PreDeleteItem` のフラグに `TSF_DELETE_RECYCLE_IF_POSSIBLE` があるか。
+  「すぐに削除する」設定のボリュームと、ごみ箱の最大サイズを超える項目で、そのフラグがないか。`PreDeleteItem` で中止した項目が完全に残るか。
+  `PostDeleteItem` でごみ箱内の項目のパスが取れるか。260 文字を超えるパス、`\\?\` 付きのパス、`\\localhost\C$` 経由のパス、`foo.` を `SHCreateItemFromParsingName` に渡したときの動作。
+  STA での初期化と `LockOSThread` が必要か。
 
 ---
 
@@ -1069,4 +1148,3 @@ hdiutil detach /Volumes/fsopstest
 - ジャンクションの複製
 - 読み取り専用属性を外して削除するオプション
 - Linux のごみ箱（FreeDesktop.org Trash 仕様）
-- Windows のごみ箱操作を `IFileOperation`（COM）に移行する
