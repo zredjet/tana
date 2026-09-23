@@ -75,30 +75,42 @@ fsops のすべての操作は、正常終了・失敗・キャンセルのど�
 
 ## 4. 構成と依存
 
-ファイル構成の案（フェーズ0で改善提案してよい）:
+ファイル構成:
 
 ```
 <repo>/
   CLAUDE.md
   docs/SPEC-fsops.md
+  docs/PROMPTS.md
   go.mod
+  .gitignore
   internal/fsops/
     doc.go
-    types.go                  リクエスト・計画・結果などの型
-    errors.go                 Kind・OpError・共通の分類
+    types.go                  公開型（Request、Plan、Item、Conflict、Result など）
+    errors.go                 Kind・OpError・KindOf・共通の分類
     errors_windows.go         Windows のエラー番号の分類
-    errors_unix.go            Unix の errno の分類
-    path.go                   絶対パスの検査、祖先の判定
-    longpath_windows.go       \\?\ の付与
+    errors_unix.go            //go:build unix。errno の分類
+    path.go                   絶対パスの検査、祖先の判定（§8.3）
+    path_windows.go           \\?\ 形式への変換（§8.2）、実パスの取得（GetFinalPathNameByHandle）
+    path_unix.go              //go:build unix
+    name.go                   新しい名前の検査の共通部（§11.3）
+    name_windows.go
+    name_unix.go              //go:build unix
+    fileid.go                 同一性の記録と比較（§8.3）
+    fileid_windows.go
+    fileid_unix.go            //go:build unix
     entry.go                  エントリ種類の判定（共通部）
     entry_windows.go          属性・リパースタグによる判定
-    entry_unix.go
+    entry_unix.go             //go:build unix
     rename.go                 排他リネーム・置換リネームの共通部
     rename_windows.go
     rename_darwin.go
     rename_linux.go
-    walk.go                   リンクに入り込まない走査
+    volume_windows.go         ボリュームの識別、空き容量
+    volume_unix.go            //go:build unix
+    walk.go                   リンクに入り込まない走査（§13.1）
     plan.go                   NewPlan
+    conflict.go               決定の検査（§9.1）、自動リネームの名前（§9.2）
     execute.go                Execute
     copy.go
     move.go
@@ -109,29 +121,36 @@ fsops のすべての操作は、正常終了・失敗・キャンセルのど�
     trash_darwin_nocgo.go     //go:build darwin && !cgo（KindTrashUnavailable）
     trash_other.go            //go:build !windows && !darwin
     meta.go / meta_windows.go / meta_unix.go
-    space_windows.go / space_unix.go
     progress.go
+    hooks.go                  テスト用フックの型（testHooks）
     deps_test.go              依存の許可リストの検査
     internal/testfs/          テスト用フィクスチャ
-  cmd/fsopsctl/               動作確認用 CLI（フェーズ9）
+  cmd/fsopsctl/               動作確認用 CLI（フェーズ11）
   .github/workflows/test.yml
 ```
+
+ビルドのルール:
+
+- 対応する GOOS は windows・darwin・linux の 3 つだけとする。
+- ファイル名の `_unix`・`_other`・`_cgo`・`_nocgo` は Go のビルド条件として認識されないため、それらのファイルには必ず `//go:build` を書く（例: `//go:build unix`）。
 
 依存のルール:
 
 - `internal/fsops` が import してよいのは、標準ライブラリ、`golang.org/x/sys/...`、`golang.org/x/text/...`、および `internal/fsops` 配下のパッケージだけ。
-- `deps_test.go` で `go list -deps` を実行し、許可リスト外の依存があればテストを失敗させる。
+- `golang.org/x/text` は、必要になるまで `go.mod` に入れない（I6 により、ファイル名の正規化には使わない）。
+- `deps_test.go` は、`GOOS` を windows・darwin・linux に、darwin ではさらに `CGO_ENABLED` を 0 と 1 に変えて `go list -deps` を実行し、どの組み合わせでも許可リスト外の依存があればテストを失敗させる。
 - 将来ほかのプロジェクトから使う必要が出たら、`internal/` の外へ移動するか別モジュールに切り出す。それまでは `internal/` に置く。
 
 ---
 
-## 5. API（案）
+## 5. API
 
-型名・関数名はフェーズ0で改善提案してよい。ただし次の性質は変えない。
+次の性質は変えない。
 
 - 計画（ファイルシステムを変更しない）と実行の 2 段階に分かれている
 - 衝突の決定のゼロ値は Skip 扱いである
 - 実行結果を項目ごとに返す
+- 計画の内容は、決定を除いて呼び出し側から変更できない
 
 ```go
 package fsops
@@ -150,25 +169,34 @@ const (
 type Request struct {
 	Op      OpKind
 	Sources []string // 絶対パス。1 件以上
-	DestDir string   // OpCopy / OpMove のみ。存在するフォルダの絶対パス
+	DestDir string   // OpCopy / OpMove のみ。存在するフォルダの絶対パス。OpTrash / OpDelete では空
 }
 
 // NewPlan は計画を作る。ファイルシステムは一切変更しない。
+// error を返すのはリクエスト全体が不正な場合だけ（§6.1）。項目ごとの問題は Item.Err に入れる。
 func NewPlan(ctx context.Context, req Request) (*Plan, error)
 
-type Plan struct {
-	Req        Request
-	Items      []Item      // トップレベル（Sources 1 件ごと）
-	Conflicts  []*Conflict // 呼び出し側が Decision を書き込んでから Execute に渡す
-	TotalFiles int
-	TotalBytes int64
-	Warnings   []*OpError // 空き容量不足の見込みなど。実行は妨げない
-}
+// Plan のフィールドはすべて非公開。NewPlan 以外では作れない。変更できるのは決定だけ。
+type Plan struct{ /* 非公開 */ }
+
+func (p *Plan) Request() Request
+func (p *Plan) Items() []Item         // トップレベル（Sources 1 件ごと）。コピーを返す
+func (p *Plan) Conflicts() []Conflict // コピーを返す
+func (p *Plan) TotalFiles() int
+func (p *Plan) TotalBytes() int64
+func (p *Plan) Warnings() []*OpError // 空き容量不足の見込み、フォルダ内の走査エラーなど。実行は妨げない
+
+// Decide は衝突の決定を設定する。
+// §9.1 で許されない決定、存在しない ID、Execute の開始後の呼び出しは error を返す。
+func (p *Plan) Decide(id ConflictID, d Decision) error
 
 type Item struct {
 	Src, Dst string // Dst は OpTrash / OpDelete では空
 	Info     EntryInfo
 	Method   Method
+	// Err は計画の時点で実行できないと分かった理由（KindNotFound、KindDestInsideSource、
+	// KindSameFile、KindTrashUnavailable など）。Execute はこの項目を処理せず OutcomeFailed にする。
+	Err *OpError
 }
 
 type Method int
@@ -193,19 +221,22 @@ const (
 
 type EntryInfo struct {
 	Type    EntryType
-	Size    int64
+	Size    int64 // TypeFile のときだけ意味を持つ
 	ModTime time.Time
 }
 
 // ---- 衝突 ----
 
+type ConflictID int // 1 から始まる
+
 type Conflict struct {
-	Src, Dst string
-	SrcInfo  EntryInfo
-	DstInfo  EntryInfo
-	Self     bool      // コピー先がコピー元そのもの（同じフォルダへのコピー）
-	Parent   *Conflict // フォルダ同士の衝突の内側で見つかった場合、その親
-	Decision Decision
+	ID               ConflictID
+	Parent           ConflictID // フォルダ同士の衝突の内側で見つかった場合、その親。0 ならトップレベル
+	Item             int        // 対応する Items() の添字
+	Src, Dst         string
+	SrcInfo, DstInfo EntryInfo
+	Self             bool     // コピー先がコピー元そのもの（同じフォルダへのコピー）
+	Decision         Decision // 読み取り専用。変更は Plan.Decide で行う
 }
 
 type Decision int
@@ -225,6 +256,7 @@ type ExecOptions struct {
 	Verify   VerifyMode     // ゼロ値 = VerifySize
 	Sync     SyncMode       // ゼロ値 = SyncMoveOnly
 	Progress func(Progress) // §16。すぐに戻ること。nil 可
+	hooks    *testHooks     // 障害の注入用。パッケージ内のテストからだけ設定できる。nil なら何もしない
 }
 
 type LinkPolicy int
@@ -248,13 +280,13 @@ const (
 	SyncAlways
 )
 
-// Execute は計画を実行する。
-// error が返るのは、計画が不正で何も実行しなかった場合だけ（§7.1）。
-func Execute(ctx context.Context, p *Plan, opt ExecOptions) (*Result, error)
+// Execute は計画を実行する。開始時に決定を固定する。
+// error を返すのは、何も実行しなかった場合だけ（§7.1）。
+func (p *Plan) Execute(ctx context.Context, opt ExecOptions) (*Result, error)
 
 type Result struct {
 	Status Status
-	Items  []ItemResult // トップレベルの結果と、フォルダ内で失敗・スキップした項目
+	Items  []ItemResult // Items() と同じ順・同じ件数
 }
 
 type Status int
@@ -266,11 +298,18 @@ const (
 )
 
 type ItemResult struct {
-	Src, Dst    string
+	Src, Dst    string          // Dst は自動リネーム後の実際のパス
 	Outcome     Outcome
-	Err         *OpError   // Outcome が Done 以外のとき
-	Warnings    []*OpError // メタデータを保持できなかった等（データ自体は無事）
-	TrashedPath string     // ごみ箱に入った後のパス（取得できた場合）
+	Err         *OpError        // §7.4 の表に従う。衝突の決定による Skip では nil
+	Warnings    []*OpError      // メタデータを保持できなかった等（データ自体は無事）
+	TrashedPath string          // ごみ箱に入った後のパス（取得できた場合）
+	Details     []EntryResult   // フォルダ内で Done 以外になったエントリ（名前順）
+}
+
+type EntryResult struct {
+	Src, Dst string
+	Outcome  Outcome  // OutcomeSkipped / OutcomeFailed / OutcomeCopiedSourceKept（移動元に残したもの）
+	Err      *OpError // 衝突の決定による Skip では nil
 }
 
 type Outcome int
@@ -287,7 +326,24 @@ const (
 
 // Rename は path の名前を newName に変える。上書きは一切しない（§11.3）。
 func Rename(path, newName string) error
+
+// ---- 進捗 ----
+
+type Stage int
+
+const (
+	StageCopy Stage = iota + 1
+	StageVerify
+	StageRemoveSource
+	StageTrash
+	StageDelete
+)
+
+// Progress は §16。
 ```
+
+- `Kind`・`Outcome`・`Status`・`Stage` は `String()` を実装する（テストの失敗表示と `OpError.Error()` で使う。英語の識別子でよい）。
+- エラーの分類を取り出す `func KindOf(err error) Kind` を用意する（§17）。
 
 ---
 
@@ -300,13 +356,17 @@ func Rename(path, newName string) error
 - `Sources` が 1 件以上であること。すべて絶対パスであること（§8.1）。
 - 同じパスの重複、または一方が他方の内側にある組み合わせ（`/a` と `/a/b`）は `KindInvalidRequest`。
 - `OpCopy` / `OpMove` では、`DestDir` が存在するフォルダであること（`os.Stat` で確認。`DestDir` 自体がリンクの場合は辿ってよい）。
+- `OpTrash` / `OpDelete` では、`DestDir` が空文字であること。
+- 以上を満たさない場合、`NewPlan` は error を返す。`NewPlan` が error を返すのは、この節で挙げたリクエスト全体の問題の場合だけとする。
+  §6.2 以降の項目ごとの問題は `Item.Err` に入れ、ほかの項目の計画は続ける。
 
 ### 6.2 項目ごとの判定
 
-- 各 `Source` は `os.Lstat` で調べる（リンクを辿らない）。種類の判定は §14.1。
+- 各 `Source` は `os.Lstat` で調べる（リンクを辿らない）。種類の判定は §14.1。取得できなければ `Item.Err`（`KindNotFound` など）。
 - `OpCopy` / `OpMove` の `Dst` は `DestDir` + コピー元の名前（バイト単位でそのまま、I6）。
 - コピー元がフォルダで、`DestDir` がその内側にある場合は `KindDestInsideSource`（判定方法は §8.3）。
-- `OpMove` で `DestDir` がコピー元の親フォルダそのものなら `KindSameFile`。
+- `OpMove` で `DestDir` がコピー元の親フォルダそのもの（fileID で判定、§8.3）なら `KindSameFile`。
+- `OpTrash` では、ごみ箱が使えるかの事前確認（§12）を行い、使えなければ `KindTrashUnavailable`。
 - `OpCopy` で `Dst` がコピー元そのものなら、`Self: true` の衝突として扱う。
 - `OpMove` の方式: コピー元と `DestDir` のボリュームが同じなら `MethodRename`、違えば `MethodCopyThenRemove`。
   ボリュームの判定は、Windows ではボリュームシリアル番号、Unix では `Stat_t.Dev` を使う。
@@ -314,10 +374,15 @@ func Rename(path, newName string) error
 
 ### 6.3 走査と衝突の検出
 
-- フォルダは §13.1 の走査で中身を数え、`TotalFiles` と `TotalBytes` を求める。
-  `MethodRename` の項目はバイト数を数えない（データを書かないため）。
-- `Dst` が既に存在すれば `Conflict` を作る。
-- フォルダ同士の衝突では、中身も走査して内側の衝突を `Parent` 付きで `Conflicts` に加える。
+- `OpCopy`・`MethodCopyThenRemove`・`OpDelete` のフォルダは、§13.1 の走査で中身を数え、`TotalFiles` と `TotalBytes` を求める。
+- `OpTrash` は走査しない（§12.1）。`TotalFiles` はトップレベルの項目数、`TotalBytes` は 0 とする。
+- `MethodRename` の項目は、フォルダ同士の衝突がある場合だけ走査する（内側の衝突の検出のため）。バイト数は数えない（データを書かないため）。
+  衝突がなければ走査せず、1 項目として数える。実行時に §11.1 のボリューム違いで §11.2 に切り替えた場合は、その時点で走査し、進捗の合計を増やす。
+- フォルダ内の走査エラー（読み取り権限がないなど）は `Warnings` に入れ、計画は続ける。
+- 計画時の走査結果は、数えることと衝突の検出にだけ使う。実行時はフォルダを改めて列挙する。
+  計画後に追加されたエントリも処理し、その衝突は計画後に現れた衝突として扱う（§7.3）。計画後に消えたエントリは何もしない。
+- `Dst` が既に存在すれば `Conflict` を作る。衝突ごとに、上書き先の fileID と種類を記録する（§7.3）。
+- フォルダ同士の衝突では、中身も走査して内側の衝突を、親の `ConflictID` を `Parent` に入れて加える。
   内側の衝突は、親の決定が `DecisionMerge` のときだけ意味を持つ。
 
 ### 6.4 空き容量
@@ -333,9 +398,9 @@ func Rename(path, newName string) error
 
 次の場合は何も実行せず error を返す。
 
-- 同じ `Plan` を 2 回実行しようとした
-- 許されない決定がある（§9.1 の表）
-- 計画が `NewPlan` 以外で作られた、または必要なフィールドが欠けている
+- 同じ `Plan` を 2 回実行しようとした（並行して呼ばれた場合を含む）
+- 許されない決定がある（§9.1 の表。`Decide` でも検査するが、実行前にもう一度確かめる）
+- `Plan` が nil、またはゼロ値（`NewPlan` 以外で作られた）
 
 ### 7.2 処理順と失敗時の扱い
 
@@ -349,12 +414,30 @@ func Rename(path, newName string) error
 - 計画から実行までの間にファイルシステムが変わることを前提にする。
 - 「存在確認してから書く」ではなく、OS の排他的な操作（`O_EXCL` での作成、§8.4 の排他リネーム、`os.Mkdir`）で書き込むことで、計画後に現れた衝突を確実に検出する。
 - 計画時になかった衝突が見つかったら、その項目を `OutcomeSkipped`（`KindExist`）にする（I1）。
+- 上書き（`DecisionOverwrite`）の直前に上書き先を `Lstat` し、計画時に記録した fileID と種類に一致する場合だけ上書きする。
+  一致しなければ計画後に現れた衝突とみなし、`OutcomeSkipped`（`KindExist`）にする（I1）。
+  上書き先が消えていれば、衝突なしとして排他リネームで書く。
 - 計画時にあったコピー元が消えていたら `OutcomeFailed`（`KindNotFound`）。
 
 ### 7.4 結果
 
-- `Result.Items` には、トップレベルの全項目の結果と、フォルダ内で失敗・スキップしたエントリの結果を入れる。
-- 1 件以上の Failed / Partial / CopiedSourceKept があれば `StatusCompletedWithErrors`。
+- `Result.Items` は `Items()` と同じ順・同じ件数とする。フォルダ内で Done 以外になったエントリは `ItemResult.Details` に入れる。
+- トップレベルの Outcome は次のとおり。
+
+| 状況 | Outcome | Err |
+|---|---|---|
+| `Item.Err` がある（`KindTrashUnavailable` を含む） | Failed | `Item.Err` |
+| 衝突の決定による Skip | Skipped | nil |
+| 計画後に現れた衝突、複製しないリンク・特殊ファイル（§14.2） | Skipped | 該当する Kind |
+| 着手前にキャンセル・容量不足で打ち切られた | Skipped | `KindCanceled` / `KindNoSpace` |
+| 処理中にキャンセルされ、移動先に何も残らなかった | Skipped | `KindCanceled` |
+| 処理中にキャンセルされ、移動先に一部が残った | Partial | `KindCanceled` |
+| `Details` に Err 付きのエントリがある | Partial | 最初のエラー |
+| `Details` が衝突の決定による Skip だけ（マージ移動で移動元フォルダが残った場合を含む） | Done | nil |
+| 移動元の削除に一部失敗した、または一部を保護した（§13.3） | CopiedSourceKept | 最初のエラー |
+
+- Status: キャンセルされたら `StatusCanceled`。
+  それ以外で、Failed・Partial・CopiedSourceKept、または Err 付きの Skipped が 1 件でもあれば `StatusCompletedWithErrors`。それ以外は `StatusCompleted`。
 
 ---
 
@@ -366,20 +449,31 @@ func Rename(path, newName string) error
 - Windows では `C:\...` と UNC（`\\server\share\...`）を受け付ける。
   ドライブ相対（`C:foo`）、ルート相対（`\foo`）、呼び出し側が付けた `\\?\` は拒否する。
 
-### 8.2 長いパス（Windows）
+### 8.2 Windows のパス（`\\?\` 形式）
 
-- `os` パッケージは Windows の長いパス（260 文字超）を内部で処理するので、`os` の関数はそのまま使える。
-- `golang.org/x/sys/windows` の関数（`MoveFileEx` など）を直接呼ぶときは、自前の helper で `\\?\` を付ける。
+- Windows では、fsops の内部で OS に渡すパスを、`os` パッケージの関数に渡すものも含めて、すべて自前の helper で `\\?\` 形式に変換してから使う。
   UNC は `\\?\UNC\server\share\...` の形にする。
+- 理由: `\\?\` のないパスは Win32 のパス正規化を受け、末尾の `.` と空白が取り除かれ、`CON` などの予約名がデバイスとして解釈される。
+  NTFS 上には WSL などで作られたこうした名前のエントリが存在しうるため、走査で得た名前をそのまま結合すると、別のファイル（`foo.` に対する `foo`）やデバイスを操作してしまう。
+  また、`os` パッケージは 248 文字未満のパスには `\\?\` を付けない。
+- 呼び出し側から受け取るパスと、結果・エラーで返すパスは、`\\?\` の付かない形とする（§8.1）。
+- シンボリックリンクのリンク先の文字列は変換しない（§14.2）。
 - `\\?\` を受け付けない API（`SHFileOperationW` など）では、長いパスを扱えない場合がある（§12.2、V4）。
+- `os` の各関数が `\\?\` 形式のパスを期待どおりに扱えることは V11 で確かめる。
 
 ### 8.3 同一性と祖先の判定
 
 - パスの同一性を文字列で比較しない。大文字小文字、NFC/NFD、8.3 形式の短縮名、ジャンクション・`subst` による別名があるため。
-- 同じファイルかどうかは `os.SameFile` で判定する。
+- 同じファイルかどうかは、その場で取得した `FileInfo` 同士なら `os.SameFile` で判定する。
+- 時点をまたいで同一性を比べる場合（計画時と実行時、コピー時と移動元の削除時）は、パッケージ内の fileID を使う。
+  - fileID は、Windows ではボリュームシリアル番号とファイルインデックス、Unix では `Dev` と `Ino`。記録する時点で確定させる。
+  - Windows の `os.SameFile` は、`FileInfo` の取得経路によってはファイル ID を比較時にパスから取り直す（`loadFileId`）。そのため、計画時の `FileInfo` を実行時に比べると、実行時のファイル同士を比べることになる。時点をまたぐ比較には使わない。
 - 「`DestDir` がコピー元の内側か」は次の手順で判定する。
-  1. `DestDir` を `filepath.EvalSymlinks` で実パスにする（リンク経由の指定を見抜くため）
-  2. その実パスから親フォルダを順に辿り、各段で `os.SameFile(コピー元, 祖先)` を調べる
+  1. `DestDir` の実パスを求める（リンク・ジャンクション・`subst`・8.3 形式の短縮名を解決する）
+     - Unix: `filepath.EvalSymlinks`
+     - Windows: `DestDir` をリンクを辿って開き、`GetFinalPathNameByHandle`（`VOLUME_NAME_DOS`、失敗したら `VOLUME_NAME_GUID`）で得たパスを使う。
+       Go 1.23 以降の `filepath.EvalSymlinks` はジャンクション（マウントポイント）を解決しないので使わない。
+  2. その実パスから親フォルダを順に辿り、各段でコピー元と同じファイルか（fileID）を調べる
   3. 一致すれば `KindDestInsideSource`
 
 ### 8.4 排他リネームと置換リネーム
@@ -390,8 +484,10 @@ func Rename(path, newName string) error
   - Linux: `renameat2(..., RENAME_NOREPLACE)`
 - **置換リネーム**（ファイル同士の上書き用）: `os.Rename`。フォルダを置き換える用途には使わない。
 - **大文字小文字・正規化の違いだけの名前変更**:
-  `dst` を `Lstat` して `os.SameFile(src, dst)` が真で、かつ名前の文字列が異なる場合は、「同じファイルの名前変更」とみなして OS の通常のリネームで行う（V1、V2）。
+  `dst` を `Lstat` して `os.SameFile(src, dst)` が真で、名前の文字列が異なり、src と dst の親フォルダが同じで、リンク数が 1 の場合は、「同じファイルの名前変更」とみなして OS の通常のリネームで行う（V1、V2）。
+  親フォルダとリンク数の条件は、ハードリンクを名前の違いと取り違えないため。
 - 排他リネームが「存在する」で失敗した場合は `KindExist`。
+- macOS の `RENAME_EXCL` が APFS 以外のボリュームで使えるか、Linux の `RENAME_NOREPLACE` が `EINVAL` を返す場合の扱いは V12 の結果で決める。
 
 ### 8.5 名前を変換しない
 
@@ -407,25 +503,29 @@ func Rename(path, newName string) error
 
 | 衝突の種類 | Skip | Overwrite | AutoRename | Merge |
 |---|---|---|---|---|
-| ファイル → 既存ファイル | ○ | ○ | ○ | × |
+| ファイル（`TypeFile`）→ 既存のファイル（`TypeFile`） | ○ | ○ | ○ | × |
 | フォルダ → 既存フォルダ | ○ | × | ○ | ○ |
 | 種類が違う（ファイル ↔ フォルダ、リンクを含む） | ○ | × | ○ | × |
 | 自分自身（`Self`） | ○ | × | ○ | × |
 
-`DecisionUnset` はすべての種類で Skip として扱う。表の × を設定した計画は、実行前の検査でエラーにする（§7.1）。
+`TypeFile` 同士以外の組み合わせ（リンク同士、特殊なファイルを含むもの）は「種類が違う」の行に従う。
+`DecisionUnset` はすべての種類で Skip として扱う。表の × は `Decide` が error を返し、実行前の検査でもエラーにする（§7.1）。
 
 ### 9.2 自動リネーム
 
 - 形式は `name (2).ext`。使われていれば `(3)`、`(4)`… と増やす。
 - 拡張子は最後の `.` 以降。先頭が `.` の名前（`.gitignore`）と拡張子のない名前は、末尾に付ける（`.gitignore (2)`）。フォルダは拡張子を区別しない。
-- 候補の名前の確保も排他的に行う（ファイルは排他リネーム、フォルダは `os.Mkdir`）。「存在する」で失敗したら次の番号を試す。上限は 9999 回。
+- 元の名前に既に `(2)` などが付いていても解釈しない（`a (2).txt` の次の候補は `a (2) (2).txt`）。
+- 候補の名前の確保も排他的に行う。コピーのファイルは一時ファイルの排他リネーム、コピーのフォルダは `os.Mkdir`、`MethodRename` の移動はファイル・フォルダとも排他リネーム。
+  「存在する」で失敗したら次の番号を試す。上限は 9999 回で、見つからなければ `KindExist`。
+- 候補の名前が長すぎる場合（名前の長さの上限を超える）は `KindInvalidName` で失敗にする。名前を切り詰めない（I6）。
 
 ### 9.3 上書き
 
 - 一時ファイルに書き込んだあと、置換リネームで既存ファイルと入れ替える。
 - 上書き先が読み取り専用なら、上書きせず `OutcomeFailed`（`KindReadOnly`）にする。
-  読み取り専用とは、Windows では読み取り専用属性、macOS ではオーナーの書き込み権限がないこと、またはロック（`UF_IMMUTABLE`）を指す。
-  （macOS の rename はファイル自身の権限を見ないため、両 OS で結果をそろえるために事前に確認する。）
+  読み取り専用とは、Windows では読み取り専用属性、Unix（macOS・Linux）ではオーナーの書き込み権限がないこと、または macOS のロック（`UF_IMMUTABLE`）を指す。
+  （Unix の rename はファイル自身の権限を見ないため、両 OS で結果をそろえるために事前に確認する。）
 - 上書き先が他のプロセスに使用されていて置き換えられない場合は `KindLocked`。上書き先は元のまま、一時ファイルは削除する。
 - 上書きされた元のファイルはどこにも退避しない（退避は §21 の将来の検討事項）。
 
@@ -439,7 +539,8 @@ func Rename(path, newName string) error
 
 ### 10.1 ファイル
 
-1. コピー元を開き、`Lstat` でサイズと更新日時を記録する。
+1. コピー元を開き、開いたファイルの `Stat` でサイズと更新日時を記録する（Unix は `O_NOFOLLOW` で開く）。
+   走査時の `Lstat` と fileID・種類が違えば `KindSourceChanged` で失敗にする。
 2. コピー先のフォルダに一時ファイルを `O_CREATE|O_EXCL|O_WRONLY` で作る。
    名前は `.fsops-<ランダム16進>.tmp` の固定長にする（元の名前を含めると、名前の長さの上限を超えることがあるため）。
 3. 1 MiB のバッファで内容を書き込む。バッファごとに `ctx` を確認し、進捗を報告する。
@@ -448,12 +549,14 @@ func Rename(path, newName string) error
 6. メタデータを設定する（§15）。
 7. 最終名にする。衝突なしは排他リネーム、上書きは置換リネーム、自動リネームは §9.2。
 8. 2〜7 のどこかで失敗・キャンセルしたら、一時ファイルを削除する（I3）。
+   一時ファイルに読み取り専用属性を設定した後で削除する場合は、属性を外してから削除する。
+   一時ファイルは fsops が作ったものなので、§13.2 の「属性を勝手に外さない」は適用しない（Windows では読み取り専用のファイルを削除できず、一時ファイルが残るため）。
 
 ### 10.2 フォルダ
 
 - コピー先のフォルダを `os.Mkdir` で作る（マージのときは既存のものを使う）。
 - 中身を名前順に処理する。ファイルは §10.1、フォルダは再帰、リンクと特殊なファイルは §14。
-- フォルダの更新日時は、中身をすべて処理した後に設定する。
+- フォルダのメタデータ（更新日時・パーミッション・読み取り専用属性）は、中身をすべて処理した後に設定する（§15）。
 - 一部のエントリが失敗しても残りは続け、トップレベルの結果を `OutcomePartial` にする。
 
 ### 10.3 容量不足
@@ -470,8 +573,12 @@ func Rename(path, newName string) error
 
 ### 10.5 同期
 
-- 移動（`MethodCopyThenRemove`）では、移動元を消す前に必ず `File.Sync` する。移動元を消した直後に電源が落ちても、移動先のデータが残るようにするため。
-- コピーでは `SyncAlways` のときだけ同期する（USB メモリなどで遅くなるため）。
+- 移動（`MethodCopyThenRemove`）では、移動元を消す前に次を必ず行う。移動元を消した直後に電源が落ちても、移動先にデータと名前が残るようにするため。
+  - 各ファイルを、最終名にする前に `File.Sync` する（macOS の Go は `F_FULLFSYNC` を使う）。
+  - Unix: 最終名へのリネームやフォルダの作成を行ったフォルダを開いて `Sync` する（ディレクトリエントリの永続化）。
+    トップレベルの項目ごとに、移動元を消す前にまとめて行ってよい。
+  - Windows: 同じフォルダを `FILE_FLAG_BACKUP_SEMANTICS` で書き込み可能に開いて `FlushFileBuffers` する。失敗しても処理は続け、警告にもしない。
+- コピーでは `SyncAlways` のときだけ、同じ手順で同期する（USB メモリなどで遅くなるため）。
 
 ---
 
@@ -483,22 +590,25 @@ func Rename(path, newName string) error
 - 上書き（ファイル同士）: 置換リネーム（§9.3 の事前確認を行う）。
 - 自動リネーム: §9.2 の候補名へ排他リネーム。
 - マージ（フォルダ同士）: 中身を 1 件ずつ移動する（内側の衝突はそれぞれの決定に従う）。
-  最後に移動元のフォルダが空なら `os.Remove` で削除する。空でなければ残して報告する。
-- リネームがボリューム違いのエラー（Windows: `ERROR_NOT_SAME_DEVICE`、Unix: `EXDEV`）で失敗したら、その項目を §11.2 の方式でやり直す。
+  最後に移動元のフォルダが空なら `os.Remove` で削除する。空でなければ残して報告する（Outcome は §7.4）。
+- トップレベルの項目のリネームがボリューム違いのエラー（Windows: `ERROR_NOT_SAME_DEVICE`、Unix: `EXDEV`）で失敗したら、その項目を §11.2 の方式でやり直す。
+  マージの途中で内側のエントリがこのエラーになった場合は、そのエントリを失敗とする。
 
 ### 11.2 ボリュームをまたぐ移動（`MethodCopyThenRemove`）
 
-1. §10 の手順でコピーする。同期は必ず行う。コピーしたエントリの一覧を記録する。
-2. トップレベルの項目の中身が 1 件でも失敗・スキップ・キャンセルになったら、移動元に一切手を付けない（I2）。
+1. §10 の手順でコピーする。同期は必ず行う（§10.5）。コピーしたエントリの一覧を、エントリごとの fileID・種類・サイズ・更新日時とともに記録する。
+2. トップレベルの項目の中に、失敗・キャンセル、または決定によらない Skip（計画後に現れた衝突、`LinkSkip`、`KindLinkUnsupported`、`KindUnsupportedType`）が 1 件でもあれば、移動元に一切手を付けない（I2）。
    結果は `OutcomePartial` または `OutcomeFailed`。移動先に途中までコピーされたものは削除せず、そのまま報告する。
-3. すべて成功したら、記録した一覧に沿って移動元を削除する（§13.3）。削除は完全削除（移動先で検証済みのため）。
-4. 移動元の削除に一部でも失敗したら（使用中など）、`OutcomeCopiedSourceKept` にして、残ったパスを報告する。
+   衝突の決定（`DecisionSkip`・`DecisionUnset`）による Skip は妨げにならない。スキップしたエントリはコピーした一覧に入らないので、§13.3 により移動元に残る。
+3. 手順 2 に当たらなければ、記録した一覧に沿って移動元を削除する（§13.3）。削除は完全削除（移動先で検証済みのため）。
+4. 移動元の削除に一部でも失敗した場合（使用中など）、または §13.3 の照合で削除しなかったエントリがある場合は、`OutcomeCopiedSourceKept` にして、残ったパスを `Details` で報告する。
 
 ### 11.3 名前の変更（`Rename`）
 
 - `newName` はフォルダ区切りを含まない名前であること。`.`、`..`、空文字は `KindInvalidName`。
 - Windows では、使えない文字（`< > : " / \ | ? *` と制御文字）、末尾の `.` と空白、予約名（`CON`、`PRN`、`AUX`、`NUL`、`COM1`〜`COM9`、`LPT1`〜`LPT9`。拡張子付きも含む）を `KindInvalidName` にする。
-- macOS では `/` と NUL 文字を `KindInvalidName` にする。
+- Unix（macOS・Linux）では `/` と NUL 文字を `KindInvalidName` にする。
+- 名前の長さの上限を超える場合、ボリュームで使えない名前の場合など、OS が返したエラーは §17 の対応で `KindInvalidName` にする。
 - 排他リネームで行う。上書きは一切しない。大文字小文字だけ・正規化だけの違いは §8.4 に従って許可する。
 
 ---
@@ -509,7 +619,9 @@ func Rename(path, newName string) error
 
 - `OpTrash` はトップレベルの項目だけを扱い、中身を走査しない（項目ごとごみ箱へ移すため）。
 - 1 項目ずつ処理し、結果を項目ごとに返す。
-- ごみ箱が使えないと判断したら、何もせず `KindTrashUnavailable` を返す（I5）。
+- ごみ箱が使えないと判断したら、その項目には何もせず、`OutcomeFailed`（`KindTrashUnavailable`）にする（I5）。
+- `NewPlan` は、ごみ箱が使えるかの事前確認（§12.2 の `GetDriveType` など、ファイルシステムを変更しないもの）を行い、使えない項目の `Item.Err` に `KindTrashUnavailable` を入れる。
+  UI は実行前に「この項目はごみ箱に入りません」と示して、完全削除に切り替えるかを利用者に確認できる。`Execute` でも同じ確認をもう一度行う。
 
 ### 12.2 Windows
 
@@ -518,6 +630,8 @@ func Rename(path, newName string) error
     それ以外（リムーバブル、ネットワーク、`\\server\share` など）は `KindTrashUnavailable`。
     これらの場所では、Windows のごみ箱操作が確認なしに完全削除になりうるため。
   - パスが `MAX_PATH` を超える場合の扱いは V4 の結果で決める。
+  - ごみ箱の最大サイズを超える項目、およびごみ箱が無効（すぐに削除する設定）のボリュームの扱いは V13 の結果で決める。
+    `FOF_NOCONFIRMATION` の下では、これらが確認なしに完全削除される可能性があるため。
 - 実装: shell32.dll の `SHFileOperationW` を `FO_DELETE` で呼ぶ。
   フラグは `FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI`。
   `pFrom` は NUL 文字 2 つで終わる形式。1 回の呼び出しで 1 項目だけ渡す。
@@ -549,19 +663,31 @@ func Rename(path, newName string) error
 - 入り込むのは、§14.1 で `TypeDir` と判定したエントリだけ。`TypeSymlink`、`TypeJunction`、`TypeSpecial` には入り込まない（I4）。
 - 名前順に処理する。
 - 走査はコピーの計画（§6.3）と完全削除（§13.2）の両方で使う。
+- 削除（§13.2、§13.3）のために入り込むフォルダは、パスで `ReadDir` せず、開いたハンドルで確認してから列挙する。
+  `Lstat` でフォルダと判定してから中に入るまでの間に、フォルダがリンクに置き換えられても、リンク先に入り込まないようにするため（I4）。
+  - Unix: `O_RDONLY|O_DIRECTORY|O_NOFOLLOW` で開き、`fstat` の fileID が `Lstat` 時と一致することを確かめる。
+    中身の削除は `unlinkat`（開いたフォルダからの相対）で行う。
+  - Windows: `FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT` で、共有モードに `FILE_SHARE_DELETE` を含めずに開く。
+    リパースポイントでないことと、fileID が一致することを確かめる。そのフォルダの処理が終わるまでハンドルを閉じない
+    （開いている間、そのフォルダは名前の変更・削除・リンクへの置き換えができない）。フォルダ自体を削除する直前に閉じる。
+  - 確認できなければ、そのフォルダには入らず `KindSourceChanged` で失敗にする。
 
 ### 13.2 完全削除（`OpDelete`）
 
 - 後順（中身を先、フォルダを後）で削除する。
 - ファイル・リンク・特殊なファイルは `os.Remove`。リンクはリンク自体だけが消えることを確認する（V3）。
-- フォルダは中身を消した後に `os.Remove`（空でなければ失敗するので、消し残しがあれば自然に残る）。
+- フォルダは中身を消した後に `os.Remove`（空でなければ失敗するので、消し残しがあれば自然に残る。`KindNotEmpty`）。
 - 1 件失敗しても残りは続け、トップレベルの結果を `OutcomePartial` にする。
 - Windows の読み取り専用ファイルは削除に失敗する。属性を勝手に外さず `KindReadOnly` として報告する。
 
 ### 13.3 記録した項目だけの削除（移動元の削除）
 
 - §11.2 で記録した一覧のエントリだけを削除する。
+- 削除の直前に `Lstat` し直し、記録した fileID・種類・サイズ・更新日時と一致するエントリだけを削除する。
+  一致しないもの（コピー後に変更・置き換えられたもの）は削除せず、`Details` に `KindSourceChanged` で報告する。
+  コピー後・削除前に移動元のファイルが編集・保存された場合に、その変更を失わないため（I2）。
 - ファイルとリンクを先に消し、フォルダは深い順に `os.Remove` する。空でなければ残す（コピー中に追加されたファイルがあると空にならないため、そのファイルは残る）。
+- フォルダへの入り方は §13.1 に従う。
 
 ---
 
@@ -588,8 +714,10 @@ func Rename(path, newName string) error
 | `TypeJunction` | 複製しない。Skipped（`KindLinkUnsupported`） | 同左 | リンク自体を移動 | リンク自体だけ |
 | `TypeSpecial` | 複製しない。Skipped（`KindUnsupportedType`） | 同左 | そのまま移動 | エントリ自体だけ |
 
-- ボリュームをまたぐ移動は「コピー → 移動元の削除」なので、コピーの列に従う。Skipped が 1 件でもあれば、I2 により移動元は削除しない。
+- ボリュームをまたぐ移動は「コピー → 移動元の削除」なので、コピーの列に従う。リンクや特殊なファイルが Skipped になった項目は、移動元を削除しない（§11.2）。
 - 相対パスのシンボリックリンクは、リンク先の文字列を書き換えない。
+- Windows では、リンクのファイル用・フォルダ用の区別をコピー元のリンクの属性（`FILE_ATTRIBUTE_DIRECTORY`）に合わせる。
+  `os.Symlink` はリンク先を調べて区別を決めるため使わず、`CreateSymbolicLink` に `SYMBOLIC_LINK_FLAG_DIRECTORY`（必要な場合）と `SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE` を指定する。
 
 ---
 
@@ -602,7 +730,13 @@ func Rename(path, newName string) error
 - Windows の読み取り専用属性（`os.Chmod`）と隠し属性（`SetFileAttributes`）
 - フォルダの更新日時（§10.2）
 
-安全上、保持を検討するもの（V6 の結果を見てから、フェーズ5で扱いを決める）:
+設定の規則:
+
+- フォルダのパーミッション・読み取り専用属性・更新日時は、中身をすべて処理した後にまとめて設定する（先に `0o555` などを設定すると中身を作れないため）。
+- マージで既存のフォルダを使った場合、そのフォルダのメタデータは変更しない。
+- シンボリックリンクにはメタデータを設定しない。`os.Chtimes` と `os.Chmod` はリンクを辿り、操作対象でないリンク先を変更してしまうため。
+
+安全上、保持を検討するもの（V6 の結果を見て扱いを決める。確認はフェーズ3、実装はフェーズ8）:
 
 - Windows の `Zone.Identifier`（インターネットから取得したことを示す代替データストリーム）
 - macOS の `com.apple.quarantine`（同様の拡張属性）
@@ -619,7 +753,7 @@ func Rename(path, newName string) error
 
 ```go
 type Progress struct {
-	Stage      Stage  // StageCopy / StageVerify / StageRemoveSource / StageTrash / StageDelete
+	Stage      Stage  // §5
 	Current    string // 処理中のパス
 	DoneFiles  int
 	TotalFiles int
@@ -629,12 +763,13 @@ type Progress struct {
 ```
 
 - `Execute` は同期的に動く（呼び出し側が goroutine で動かす）。`Progress` は `Execute` を実行している goroutine から呼ぶ。
-- 呼び出しは 100 ミリ秒に 1 回までに間引く。ただし、項目の区切りと終了時には必ず呼ぶ。
+- 呼び出しは 100 ミリ秒に 1 回までに間引く。ただし、トップレベルの項目の区切りと終了時には必ず呼ぶ。
 - キャンセルは、バッファ（1 MiB）ごとと、エントリごとに `ctx` を確認する。
 - キャンセル時:
   - 処理中の一時ファイルを削除する
   - 処理中の移動の項目は、移動元に手を付けない
   - 完了済みの項目はそのまま残す
+  - 処理中の項目の Outcome は §7.4 の表に従う（移動先に何も残らなければ Skipped、一部が残れば Partial）
   - 残りの項目は `OutcomeSkipped`（`KindCanceled`）
 
 ---
@@ -652,7 +787,8 @@ const (
 	KindLocked           // 他のプロセスが使用中
 	KindReadOnly         // 読み取り専用のファイル・ボリューム、macOS のロック
 	KindNoSpace
-	KindCrossDevice      // 内部用（移動方式の切り替えに使う）
+	KindNotEmpty         // 空でないフォルダを削除できなかった
+	KindCrossDevice      // 内部用（移動方式の切り替えに使う）。結果には現れない
 	KindLinkUnsupported  // リンクを作れない・扱えない
 	KindUnsupportedType  // FIFO、未知のリパースポイントなど
 	KindTrashUnavailable
@@ -675,6 +811,7 @@ type OpError struct {
 ```
 
 - `OpError` は `Error()` と `Unwrap()` を実装する。`Error()` は英語の技術的な文字列でよい（ログ用）。
+- `KindOf(err error) Kind` は `errors.As` で `*OpError` を探し、見つからなければ `KindUnknown` を返す。
 - UI は `Kind` から日本語のメッセージを作る。fsops はメッセージを作らない。
 
 主な対応:
@@ -687,8 +824,11 @@ type OpError struct {
 | Locked | `ERROR_SHARING_VIOLATION`、`ERROR_LOCK_VIOLATION` | `EBUSY` |
 | ReadOnly | `ERROR_ACCESS_DENIED` かつ読み取り専用属性、`ERROR_WRITE_PROTECT` | `EROFS`、`EPERM` かつ `UF_IMMUTABLE` |
 | NoSpace | `ERROR_DISK_FULL`、`ERROR_HANDLE_DISK_FULL` | `ENOSPC`、`EDQUOT` |
+| NotEmpty | `ERROR_DIR_NOT_EMPTY` | `ENOTEMPTY` |
 | CrossDevice | `ERROR_NOT_SAME_DEVICE` | `EXDEV` |
 | LinkUnsupported | `ERROR_PRIVILEGE_NOT_HELD`（リンク作成時） | — |
+| InvalidName | `ERROR_INVALID_NAME`、`ERROR_FILENAME_EXCED_RANGE` | `ENAMETOOLONG`、`EILSEQ` |
+| SourceChanged | — | `ELOOP`（`O_NOFOLLOW` でリンクに当たった場合） |
 
 - 可能な場合は `errors.Is(err, fs.ErrNotExist)` なども使う。
 - `ERROR_ACCESS_DENIED` は原因が複数あるため、対象の属性を調べて ReadOnly か Permission かを決める。
@@ -709,7 +849,9 @@ type OpError struct {
   - 260 文字を超えるパスを作る
   - 日本語・絵文字・NFD と NFC・大文字小文字だけ違う名前を作る
 - `t.TempDir()` は `filepath.EvalSymlinks` で正規化してから使う。
-- 障害の注入は非公開のテスト用フック（例: 書き込みのバッファごとに呼ばれる関数、移動元を消す直前に呼ばれる関数）で行う。
+- 障害の注入は `ExecOptions` の非公開フィールド `hooks`（例: 書き込みのバッファごとに呼ばれる関数、移動元を消す直前に呼ばれる関数）で行う。
+  パッケージレベルの変数にしないので、フックを使うテストも `t.Parallel()` できる。
+- キャンセルのテストは、フックの中で `ctx` をキャンセルして時点を決める。スリープで時点を合わせない。
 
 ### 18.2 環境変数で有効にするテスト
 
@@ -741,29 +883,38 @@ hdiutil detach /Volumes/fsopstest
 | I2 | ボリュームをまたぐ移動の途中で障害を注入 → 移動元が完全に残る | CROSSVOL |
 | I2 | ボリュームをまたぐ移動の途中でキャンセル → 移動元が完全に残る | CROSSVOL |
 | I2 | コピー完了後・移動元の削除前に移動元へファイルを追加 → 追加したファイルは消えない | CROSSVOL |
+| I2 | コピー完了後・移動元の削除前に移動元のファイルを書き換える → そのファイルは消えない、`OutcomeCopiedSourceKept` | CROSSVOL |
+| I2 | ボリュームをまたぐマージ移動で、内側の衝突を Skip に決定 → スキップしたものだけ移動元に残り、ほかは移動される | CROSSVOL |
 | I2 | 移動元の削除に失敗（ロック）→ `OutcomeCopiedSourceKept`、移動先は完全 | CROSSVOL・Windows |
 | I3 | ファイルの途中でキャンセル（5 MiB 以上のファイル）→ 最終名のファイルも一時ファイルも残らない | 共通 |
 | I3 | 書き込み途中に障害を注入 → 同上 | 共通 |
 | I4 | 先に目印ファイルを置いたリンク（ジャンクション・シンボリックリンク）を含むツリーを完全削除 → 目印ファイルが残る | 共通（ジャンクションは Windows） |
 | I4 | 同上をごみ箱・ボリュームをまたぐ移動で | TRASH / CROSSVOL |
 | I4 | リンクを含むツリーのコピー → リンクの先の中身は複製されない | 共通 |
+| I4 | 削除の走査で、フォルダと判定した後・入り込む前にリンクへ置き換える（フックで注入）→ リンク先の目印ファイルが残る | 共通（ジャンクションは Windows） |
 | I5 | `\\localhost\C$\...` 経由のパスでごみ箱 → `KindTrashUnavailable`、ファイルは残る | Windows（V7） |
-| I5 | CGO なしの macOS ビルド・Linux でごみ箱 → `KindTrashUnavailable` | 共通 |
+| I5 | CGO なしの macOS ビルド・Linux でごみ箱 → `KindTrashUnavailable`（計画時の `Item.Err` と実行結果の両方） | macOS（`CGO_ENABLED=0`）・Linux（§19） |
 | I6 | 日本語・絵文字・NFD の名前をコピー・移動 → 名前がバイト単位で一致 | 共通 |
 | I6 | 大文字小文字だけ違う名前への `Rename` | 共通（V1、V2） |
 | 衝突 | 自動リネームの連番（通常、`(3)` 以降、`.gitignore`、拡張子なし、フォルダ） | 共通 |
 | 衝突 | 同じフォルダへのコピー（`Self`）を自動リネームで複製 | 共通 |
 | 衝突 | マージ（内側の衝突の決定がそれぞれ反映される） | 共通 |
 | 計画 | コピー先がコピー元の内側（リンク経由を含む）→ `KindDestInsideSource` | 共通 |
+| 計画 | コピー先がジャンクション経由でコピー元の内側 → `KindDestInsideSource` | Windows |
+| 計画 | 計画後に上書き先を別のファイルに置き換えてから実行 → Skipped（`KindExist`）、置き換えたファイルは元のまま | 共通 |
 | 計画 | 重複・入れ子の `Sources` → `KindInvalidRequest` | 共通 |
 | 計画 | 計画の作成前後でファイルシステムが変化しない | 共通 |
 | パス | 相対パス、ドライブ相対パス（`C:foo`）、`\\?\` 付きの拒否 | 共通・Windows |
 | パス | 260 文字を超えるパスのコピー・移動・完全削除 | Windows |
+| パス | 末尾が `.`・空白の名前、予約名（`CON`）を含むツリーのコピー・移動・完全削除 → 同名の別ファイル（`foo`）に影響しない | Windows（V11） |
 | ロック | コピー元が共有なしで開かれている → その項目は `KindLocked`、他の項目は続行 | Windows |
 | ロック | 上書き先が使用中 → `KindLocked`、上書き先は元のまま、一時ファイルなし | Windows |
 | 読み取り専用 | 読み取り専用の上書き先 → `KindReadOnly`（両 OS で同じ結果） | 共通 |
 | 読み取り専用 | 読み取り専用ファイルのコピー → 属性が保持される | 共通 |
 | メタデータ | ファイル・フォルダの更新日時が保持される | 共通 |
+| メタデータ | リンクを含むツリーのコピー → リンク先の更新日時・権限が変わらない | 共通 |
+| メタデータ | 読み取り専用のフォルダ（`0o555`）を含むツリーのコピー → 中身も含めて複製され、フォルダの権限が保持される | 共通 |
+| リンク | Windows でフォルダ用のシンボリックリンク（リンク先がコピー先にない相対リンク）をコピー → フォルダ用のまま | Windows |
 | 検証 | コピー中にコピー元が変更された → `KindSourceChanged`、一時ファイルなし | 共通 |
 | 容量 | 空き容量不足の見込みが `Warnings` に入る | CROSSVOL |
 | 容量 | 書き込み中の容量不足 → `KindNoSpace`、残りは Skipped | CROSSVOL（他のテストと並行実行しない） |
@@ -789,9 +940,12 @@ hdiutil detach /Volumes/fsopstest
   2. `FSOPS_CROSSVOL_DIR=/Volumes/fsopstest` と `FSOPS_TEST_TRASH=1` を設定する
   3. `go vet ./...`
   4. `go test -race ./...`
-  5. `CGO_ENABLED=0 go vet ./...`
-- 必要なら ubuntu のジョブで `GOOS=linux` のコンパイル確認を行う（安価）。
-- VHD とディスクイメージの作成はフェーズ2で追加する。フェーズ1では `go vet` と `go test` だけ。
+  5. `CGO_ENABLED=0 go vet ./...` と、ごみ箱が使えないことを確かめるテスト（§18.4 の I5 の行）の `CGO_ENABLED=0` での実行
+- **ubuntu ジョブ（`ubuntu-latest`、公開・非公開に関わらず毎回実行）**
+  1. `gofmt -l .` の出力が空であること
+  2. `go vet ./...`、`GOOS=windows go vet ./...`、`GOOS=darwin CGO_ENABLED=0 go vet ./...`
+  3. ごみ箱が使えないことを確かめるテスト（§18.4 の I5 の行）の実行
+- VHD とディスクイメージの作成はフェーズ2で追加する。フェーズ1では `go vet`・`go test` と ubuntu ジョブだけ。
 
 ---
 
@@ -809,6 +963,14 @@ hdiutil detach /Volumes/fsopstest
 - **V8** Windows ランナーでシンボリックリンクの作成権限があるか。`mklink /J` が使えるか。
 - **V9** OneDrive の未ダウンロードファイルの扱い。CI では確認できないため、実機（仮想マシンの Windows など）での確認項目として記録するだけにする。
 - **V10** Windows の `$Recycle.Bin\<SID>\` にある `$I` ファイルの形式（先頭から、版番号 8 バイト、元のサイズ 8 バイト、削除日時 8 バイト、版 2 ではパスの文字数 4 バイト、UTF-16 の元のパス）が想定どおりか。
+- **V11** Windows: 末尾が `.` や空白の名前、予約名（`CON` など）のエントリを `\\?\` 経由で作り、走査・コピー・移動・完全削除が同名の別ファイルに影響しないこと。
+  `os` の各関数（`Lstat`、`ReadDir`、`Mkdir`、`Remove`、`Rename`、`Chtimes`、`Readlink`）が `\\?\` 形式のパスをそのまま扱えること（§8.2）。
+- **V12** macOS: `renamex_np(RENAME_EXCL)` が APFS 以外（`hdiutil` で作る exFAT・FAT32 のイメージ、可能なら SMB）で使えるか。
+  使えない場合の方式は結果を見て決める。Linux の `RENAME_NOREPLACE` が `EINVAL` を返す場合も同じ方針で扱う（§8.4）。
+- **V13** Windows: ごみ箱の最大サイズを超える項目、およびボリュームのごみ箱が「ごみ箱にファイルを移動しないで、削除と同時にファイルを消去する」設定のときに、
+  `SHFileOperationW`（`FOF_ALLOWUNDO | FOF_NOCONFIRMATION`）が確認なしに完全削除するか。
+  完全削除する場合は、`IFileOperation` の進捗通知（`PreDeleteItem` のフラグ `TSF_DELETE_RECYCLE_IF_POSSIBLE`）で完全削除になる項目を中止する方式（§21 の移行を前倒しする）と、
+  設定の事前確認のどちらにするかを、結果を見て決める（§12.2）。
 
 ---
 
@@ -819,6 +981,7 @@ hdiutil detach /Volumes/fsopstest
 - 上書きされるファイルをごみ箱へ退避するオプション
 - 元に戻す（Undo）
 - ACL・所有者・作成日時の保持
+- シンボリックリンク自体の更新日時の保持
 - ジャンクションの複製
 - 読み取り専用属性を外して削除するオプション
 - Linux のごみ箱（FreeDesktop.org Trash 仕様）
