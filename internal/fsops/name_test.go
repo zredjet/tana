@@ -114,8 +114,9 @@ func TestRename(t *testing.T) {
 		if KindOf(err) != c.want {
 			t.Errorf("Rename(%q, %q) = %v, want %v", c.path, c.name, err, c.want)
 		}
-		// 使えない名前からは Dest のパスを作らない（"../x" などが別のパスに見えないように）。
-		if oe, ok := err.(*OpError); ok && c.want == KindInvalidName && oe.Dest != "" {
+		// validateName で拒否した名前からは Dest のパスを作らない（"../x" などが別のパスに見えないように）。
+		// 長すぎる名前などは OS が拒否するので、Dest にはパスが入る。
+		if oe, ok := err.(*OpError); ok && validateName(c.name) != nil && oe.Dest != "" {
 			t.Errorf("Rename(%q, %q): Dest = %q, want empty", c.path, c.name, oe.Dest)
 		}
 	}
