@@ -217,6 +217,13 @@ func trashAndDescribe(t *testing.T, callPath, path, root string) string {
 
 func describeTrashResult(t *testing.T, path, root string, before binState, ret uintptr, aborted bool) string {
 	t.Helper()
+	return fmt.Sprintf("ret=%#x aborted=%v %s", ret, aborted, trashVerdict(t, path, root, before))
+}
+
+// trashVerdict は、path（元の場所）が残っているかと、root のごみ箱に増えた $I を 1 行にまとめる。
+// 元の場所から消え、ごみ箱にも増えていなければ「PERMANENTLY DELETED」とする。
+func trashVerdict(t *testing.T, path, root string, before binState) string {
+	t.Helper()
 	exists := testfs.Exists(t, path)
 	var added []string
 	for p, r := range readBin(t, root) {
@@ -231,7 +238,7 @@ func describeTrashResult(t *testing.T, path, root string, before binState, ret u
 	case len(added) == 0:
 		verdict = "PERMANENTLY DELETED"
 	}
-	return fmt.Sprintf("%s: ret=%#x aborted=%v stillExists=%v newInRecycleBin=%v", verdict, ret, aborted, exists, added)
+	return fmt.Sprintf("%s: stillExists=%v newInRecycleBin=%v", verdict, exists, added)
 }
 
 // errnoOf は err に含まれる Windows のエラー番号を返す（なければ 0）。
