@@ -42,7 +42,7 @@ func TestV6(t *testing.T) {
 		lbuf := make([]byte, 1024)
 		n, err = unix.Listxattr(p, lbuf)
 		t.Logf("V6: %s: Listxattr: %q err=%v", label, lbuf[:max(n, 0)], err)
-		t.Logf("V6: %s: names in the dir: %+q", label, listNames(t, dir))
+		t.Logf("V6: %s: names in the dir: %+q", label, testfs.ListNames(t, dir))
 
 		// シンボリックリンク自体には付けない（XATTR_NOFOLLOW で リンク先に付かないこと）の確認。
 		link := filepath.Join(dir, "link")

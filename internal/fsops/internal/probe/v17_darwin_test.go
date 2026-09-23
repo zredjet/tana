@@ -16,9 +16,9 @@ func TestV17(t *testing.T) {
 			{"created as NFC", testfs.NameNFC, testfs.NameNFD},
 			{"created as NFD", testfs.NameNFD, testfs.NameNFC},
 		} {
-			d := filepath.Join(dir, sanitize(c.name))
+			d := filepath.Join(dir, testfs.Sanitize(c.name))
 			testfs.Build(t, d, testfs.Tree{c.created: testfs.File("x")})
-			listed := listNames(t, d)
+			listed := testfs.ListNames(t, d)
 			t.Logf("V17: %s: %s %+q: ReadDir=%+q", label, c.name, c.created, listed)
 			for _, n := range []string{c.created, c.other} {
 				_, err := os.Lstat(filepath.Join(d, n))
@@ -26,11 +26,11 @@ func TestV17(t *testing.T) {
 			}
 			if len(listed) == 1 {
 				err := os.Remove(filepath.Join(d, listed[0]))
-				t.Logf("V17: %s: %s: Remove(listed name %+q): err=%v; names after=%+q", label, c.name, listed[0], err, listNames(t, d))
+				t.Logf("V17: %s: %s: Remove(listed name %+q): err=%v; names after=%+q", label, c.name, listed[0], err, testfs.ListNames(t, d))
 			}
-			if names := listNames(t, d); len(names) > 0 {
+			if names := testfs.ListNames(t, d); len(names) > 0 {
 				err := os.Remove(filepath.Join(d, c.created))
-				t.Logf("V17: %s: %s: Remove(created name %+q): err=%v; names after=%+q", label, c.name, c.created, err, listNames(t, d))
+				t.Logf("V17: %s: %s: Remove(created name %+q): err=%v; names after=%+q", label, c.name, c.created, err, testfs.ListNames(t, d))
 			}
 		}
 	}

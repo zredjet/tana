@@ -9,19 +9,6 @@ import (
 	"github.com/zredjet/tana/internal/fsops/internal/testfs"
 )
 
-func names(t *testing.T, dir string) []string {
-	t.Helper()
-	entries, err := os.ReadDir(testfs.ExtendedPath(dir))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var ns []string
-	for _, e := range entries {
-		ns = append(ns, e.Name())
-	}
-	return ns
-}
-
 // testExclusiveRename は、排他リネームの関数 rename が §8.4 を満たすことを dir の中で確かめる。
 // 既存の移動先を上書きしないこと（I1）、名前をバイト単位でそのまま使うこと（I6）を含む。
 func testExclusiveRename(t *testing.T, dir string, rename func(src, dst string) error) {
@@ -35,7 +22,7 @@ func testExclusiveRename(t *testing.T, dir string, rename func(src, dst string) 
 		if err := rename(filepath.Join(d, "dir"), filepath.Join(d, "dir2")); err != nil {
 			t.Fatal(err)
 		}
-		if got := names(t, d); !slices.Equal(got, []string{"b.txt", "dir2"}) {
+		if got := testfs.ListNames(t, d); !slices.Equal(got, []string{"b.txt", "dir2"}) {
 			t.Errorf("names = %+q", got)
 		}
 		if testfs.ReadFile(t, filepath.Join(d, "dir2", "x")) != "x" {
@@ -55,7 +42,7 @@ func testExclusiveRename(t *testing.T, dir string, rename func(src, dst string) 
 		{"dir onto existing file", testfs.Tree{"a/x": testfs.File("x"), "b": testfs.File("b")}, "a", "b"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			d := filepath.Join(dir, sanitizeName(c.name))
+			d := filepath.Join(dir, testfs.Sanitize(c.name))
 			testfs.Build(t, d, c.tree)
 			before := testfs.Take(t, d)
 			err := rename(filepath.Join(d, c.src), filepath.Join(d, c.dst))
@@ -84,23 +71,13 @@ func testExclusiveRename(t *testing.T, dir string, rename func(src, dst string) 
 			}
 		}
 		want := []string{testfs.NameJapanese, testfs.NameEmoji, testfs.NameNFD}
-		got := names(t, d)
+		got := testfs.ListNames(t, d)
 		for _, w := range want {
 			if !slices.Contains(got, w) {
 				t.Errorf("names = %+q, want %+q among them", got, w)
 			}
 		}
 	})
-}
-
-func sanitizeName(s string) string {
-	b := []byte(s)
-	for i, c := range b {
-		if !('a' <= c && c <= 'z' || '0' <= c && c <= '9') {
-			b[i] = '-'
-		}
-	}
-	return string(b)
 }
 
 func TestRenameExclusive(t *testing.T) {
@@ -140,7 +117,7 @@ func TestRenameExclusiveSameFile(t *testing.T) {
 			t.Errorf("%s: renameExclusive(%q, %q): %v", c.dir, c.src, c.dst, err)
 			continue
 		}
-		if got := names(t, d); !slices.Equal(got, []string{c.dst}) {
+		if got := testfs.ListNames(t, d); !slices.Equal(got, []string{c.dst}) {
 			t.Errorf("%s: names = %+q, want [%+q]", c.dir, got, c.dst)
 		}
 	}
@@ -159,7 +136,7 @@ func TestRenameExclusiveHardLink(t *testing.T) {
 	if classify(err, classifyOpts{}) != KindExist {
 		t.Errorf("renameExclusive between hard links: err = %v, want KindExist", err)
 	}
-	if got := names(t, root); !slices.Equal(got, []string{"a", "b"}) {
+	if got := testfs.ListNames(t, root); !slices.Equal(got, []string{"a", "b"}) {
 		t.Errorf("names = %+q, want [a b]", got)
 	}
 }
@@ -172,7 +149,7 @@ func TestRenameReplace(t *testing.T) {
 	if err := renameReplace(filepath.Join(root, "a"), filepath.Join(root, "b")); err != nil {
 		t.Fatal(err)
 	}
-	if got := names(t, root); !slices.Equal(got, []string{"b"}) || testfs.ReadFile(t, filepath.Join(root, "b")) != "new" {
+	if got := testfs.ListNames(t, root); !slices.Equal(got, []string{"b"}) || testfs.ReadFile(t, filepath.Join(root, "b")) != "new" {
 		t.Errorf("names = %+q, content = %q", got, testfs.ReadFile(t, filepath.Join(root, "b")))
 	}
 }
@@ -211,7 +188,7 @@ func TestRenameHelpersWin32UnsafeNames(t *testing.T) {
 	if got := testfs.Take(t, root)["foo"]; got != before || testfs.ReadFile(t, plain) != "plain" {
 		t.Errorf("foo changed: %+v -> %+v", before, got)
 	}
-	if got := names(t, root); !slices.Equal(got, []string{"foo", "renamed."}) {
+	if got := testfs.ListNames(t, root); !slices.Equal(got, []string{"foo", "renamed."}) {
 		t.Errorf("names = %+q, want [foo renamed.]", got)
 	}
 }
@@ -224,7 +201,7 @@ func TestRenameLongPath(t *testing.T) {
 	if err := renameExclusive(filepath.Join(long, "a"), filepath.Join(long, "b")); err != nil {
 		t.Fatal(err)
 	}
-	if got := names(t, long); !slices.Equal(got, []string{"b"}) {
+	if got := testfs.ListNames(t, long); !slices.Equal(got, []string{"b"}) {
 		t.Errorf("names = %+q", got)
 	}
 }

@@ -17,14 +17,3 @@ func errString(err error) string {
 	}
 	return err.Error()
 }
-
-// sanitize は、ラベルを小文字の英数字と - だけのフォルダ名にする。
-func sanitize(s string) string {
-	b := []byte(s)
-	for i, c := range b {
-		if !('a' <= c && c <= 'z' || '0' <= c && c <= '9') {
-			b[i] = '-'
-		}
-	}
-	return string(b)
-}

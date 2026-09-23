@@ -59,7 +59,7 @@ func TestV3(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := filepath.Join(root, sanitize(tt.name))
+			dir := filepath.Join(root, testfs.Sanitize(tt.name))
 			testfs.Build(t, dir, testfs.Tree{"link": tt.entry})
 			link := filepath.Join(dir, "link")
 			t.Logf("V3: %s: %s", tt.name, describe(link))

@@ -197,5 +197,5 @@ func listNamesIfExists(t *testing.T, dir string) []string {
 	if !testfs.Exists(t, dir) {
 		return nil
 	}
-	return listNames(t, dir)
+	return testfs.ListNames(t, dir)
 }

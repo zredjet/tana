@@ -80,11 +80,11 @@ func Rename(path, newName string) error {
 	if isVolumeRoot(p) {
 		return &OpError{Op: "rename", Path: p, Kind: KindInvalidRequest}
 	}
+	if err := validateName(newName); err != nil {
+		return &OpError{Op: "rename", Path: p, Kind: KindInvalidName} // 使えない名前からは Dest のパスを作らない
+	}
 	dir := filepath.Dir(p)
 	dst := filepath.Join(dir, newName)
-	if err := validateName(newName); err != nil {
-		return &OpError{Op: "rename", Path: p, Dest: dst, Kind: KindInvalidName}
-	}
 	s, err := sysPath(p)
 	if err != nil {
 		return err
@@ -97,17 +97,16 @@ func Rename(path, newName string) error {
 		return &OpError{Op: "rename", Path: p, Dest: dest, Kind: classify(err, classifyOpts{readOnly: readOnlySys(s)}),
 			Err: withUserPaths(err, p, dest)}
 	}
-	if !sameFileRename(s, d) {
-		if err := renameExclusiveSys(s, d); err != nil {
-			return fail(err, dst)
-		}
-		return nil
-	}
-	// 大文字小文字・正規化の違いだけの変更。成功を返しても名前が変わらないボリュームがある（Windows の exFAT・FAT32。V1）ので、
-	// 親フォルダの列挙で新しい名前がバイト単位で現れたことを確かめ、現れなければ一時名を経由して 2 回で変える（§11.3）。
-	if err := renamePlainSys(s, d); err != nil {
+	// 大文字小文字・正規化の違いだけの変更か（名前の変更の後の確認が要るか）を先に調べる。変更の方法自体は renameExclusiveSysSame が決める。
+	same := sameFileRename(s, d)
+	if err := renameExclusiveSysSame(s, d); err != nil {
 		return fail(err, dst)
 	}
+	if !same {
+		return nil
+	}
+	// 成功を返しても名前が変わらないボリュームがある（Windows の exFAT・FAT32。V1）ので、
+	// 親フォルダの列挙で新しい名前がバイト単位で現れたことを確かめ、現れなければ一時名を経由して 2 回で変える（§11.3）。
 	if ok, err := dirHasName(dir, newName); err != nil || ok {
 		return nil // 列挙に失敗した場合は、名前の変更自体は成功しているので成功とする
 	}

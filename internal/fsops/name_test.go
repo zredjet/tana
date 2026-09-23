@@ -75,7 +75,7 @@ func TestRename(t *testing.T) {
 	if err := Rename(p("emoji.txt"), testfs.NameEmoji); err != nil {
 		t.Errorf("Rename to emoji: %v", err)
 	}
-	got := names(t, root)
+	got := testfs.ListNames(t, root)
 	for _, w := range []string{"c.txt", "dir2", testfs.NameJapanese, testfs.NameEmoji} {
 		if !slices.Contains(got, w) {
 			t.Errorf("names = %+q, want %+q among them (I6)", got, w)
@@ -107,10 +107,16 @@ func TestRename(t *testing.T) {
 		{"relative/path", "x", KindInvalidRequest},
 		{p("b.txt"), "", KindInvalidName},
 		{p("b.txt"), "a/b", KindInvalidName},
+		{p("b.txt"), "../x", KindInvalidName},
 		{p("b.txt"), strings.Repeat("n", 300), KindInvalidName},
 	} {
-		if err := Rename(c.path, c.name); KindOf(err) != c.want {
+		err := Rename(c.path, c.name)
+		if KindOf(err) != c.want {
 			t.Errorf("Rename(%q, %q) = %v, want %v", c.path, c.name, err, c.want)
+		}
+		// 使えない名前からは Dest のパスを作らない（"../x" などが別のパスに見えないように）。
+		if oe, ok := err.(*OpError); ok && c.want == KindInvalidName && oe.Dest != "" {
+			t.Errorf("Rename(%q, %q): Dest = %q, want empty", c.path, c.name, oe.Dest)
 		}
 	}
 	root2 := "/"
@@ -156,7 +162,7 @@ func testRenameCaseOnly(t *testing.T, root string) {
 			t.Errorf("Rename(%+q -> %+q): %v", c.src, c.dst, err)
 			continue
 		}
-		if got := names(t, d); !slices.Equal(got, []string{c.dst}) {
+		if got := testfs.ListNames(t, d); !slices.Equal(got, []string{c.dst}) {
 			t.Errorf("%s: names = %+q, want [%+q]", c.dir, got, c.dst)
 		}
 	}

@@ -21,7 +21,7 @@ func TestV11(t *testing.T) {
 
 	// 各操作の前に作り直し、操作の後に「操作対象以外が変わっていないこと」を確かめる。
 	setup := func(t *testing.T, name string) (dir string, before testfs.Snapshot) {
-		dir = filepath.Join(root, sanitize(name))
+		dir = filepath.Join(root, testfs.Sanitize(name))
 		testfs.Build(t, dir, testfs.Tree{
 			testfs.NamePlain:          testfs.File("plain").At(mt),
 			testfs.NameTrailingDot:    testfs.File("dot").At(mt),
@@ -64,7 +64,7 @@ func TestV11(t *testing.T) {
 
 	t.Run("ReadDir", func(t *testing.T) {
 		dir, _ := setup(t, "readdir")
-		names := listNames(t, dir)
+		names := testfs.ListNames(t, dir)
 		t.Logf("V11: ReadDir(\\\\?\\...): %+q", names)
 		entries, err := os.ReadDir(dir)
 		var plain []string
@@ -77,7 +77,7 @@ func TestV11(t *testing.T) {
 	t.Run("Mkdir", func(t *testing.T) {
 		dir, before := setup(t, "mkdir")
 		err := os.Mkdir(x(filepath.Join(dir, "sub.")), 0o755)
-		t.Logf("V11: Mkdir(\\\\?\\...\\sub.): err=%v names=%+q", err, listNames(t, dir))
+		t.Logf("V11: Mkdir(\\\\?\\...\\sub.): err=%v names=%+q", err, testfs.ListNames(t, dir))
 		if err != nil {
 			t.Error("V11: Mkdir with \\\\?\\ failed")
 		}
@@ -99,7 +99,7 @@ func TestV11(t *testing.T) {
 	t.Run("Rename", func(t *testing.T) {
 		dir, before := setup(t, "rename")
 		err := os.Rename(x(filepath.Join(dir, testfs.NameTrailingDot)), x(filepath.Join(dir, "renamed.")))
-		t.Logf("V11: Rename(\\\\?\\...\\foo., \\\\?\\...\\renamed.): err=%v names=%+q", err, listNames(t, dir))
+		t.Logf("V11: Rename(\\\\?\\...\\foo., \\\\?\\...\\renamed.): err=%v names=%+q", err, testfs.ListNames(t, dir))
 		if err != nil || testfs.ReadFile(t, filepath.Join(dir, "renamed.")) != "dot" {
 			t.Error("V11: Rename with \\\\?\\ did not move foo. to renamed.")
 		}

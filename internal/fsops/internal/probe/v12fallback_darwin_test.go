@@ -76,7 +76,7 @@ func TestV12Fallback(t *testing.T) {
 		d := filepath.Join(dir, "dir-with-contents")
 		testfs.Build(t, d, testfs.Tree{"src/a.txt": testfs.File("a"), "src/sub/b.txt": testfs.File("b")})
 		err := reserveThenRename(filepath.Join(d, "src"), filepath.Join(d, "dst"))
-		t.Logf("V12: %s: reserve-then-rename a non-empty dir: err=%v names=%+q dst/a.txt=%v", label, err, listNames(t, d),
+		t.Logf("V12: %s: reserve-then-rename a non-empty dir: err=%v names=%+q dst/a.txt=%v", label, err, testfs.ListNames(t, d),
 			testfs.Exists(t, filepath.Join(d, "dst", "a.txt")))
 		if err != nil {
 			t.Errorf("V12: %s: reserve-then-rename of a directory failed: %v", label, err)
@@ -86,7 +86,7 @@ func TestV12Fallback(t *testing.T) {
 		d = filepath.Join(dir, "case-plain-rename")
 		testfs.Build(t, d, testfs.Tree{testfs.NameLower: testfs.File("c")})
 		err = unix.Rename(filepath.Join(d, testfs.NameLower), filepath.Join(d, testfs.NameUpper))
-		t.Logf("V12: %s: plain rename(2) case only: err=%v names=%+q", label, err, listNames(t, d))
+		t.Logf("V12: %s: plain rename(2) case only: err=%v names=%+q", label, err, testfs.ListNames(t, d))
 	}
 	check(t, "APFS (temp dir)", testfs.TempDir(t))
 	for _, env := range []string{envExFAT, envFAT32} {

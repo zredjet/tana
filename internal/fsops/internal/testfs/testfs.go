@@ -237,6 +237,31 @@ func Exists(t testing.TB, path string) bool {
 	return false
 }
 
+// ListNames は dir の中の名前を（ReadDir の順に）返す。
+func ListNames(t testing.TB, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(ExtendedPath(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	return names
+}
+
+// Sanitize は、テストのラベルを小文字の英数字と - だけのフォルダ名にする。
+func Sanitize(label string) string {
+	b := []byte(label)
+	for i, c := range b {
+		if !('a' <= c && c <= 'z' || '0' <= c && c <= '9') {
+			b[i] = '-'
+		}
+	}
+	return string(b)
+}
+
 // ---- 長いパスと名前 ----
 
 // LongPath は、root の中に、全体の長さが 260 文字（Windows の MAX_PATH）を超えるフォルダを作って返す。

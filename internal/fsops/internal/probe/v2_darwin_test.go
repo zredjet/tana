@@ -33,9 +33,9 @@ func logPlainRename(t *testing.T, v, label, dir string) {
 		{"case only (file)", testfs.NameLower, testfs.NameUpper},
 		{"NFC to NFD (file)", testfs.NameNFC, testfs.NameNFD},
 	} {
-		d := dir + "/" + sanitize(c.name)
+		d := dir + "/" + testfs.Sanitize(c.name)
 		testfs.Build(t, d, testfs.Tree{c.from: testfs.File("x")})
 		err := os.Rename(d+"/"+c.from, d+"/"+c.to)
-		t.Logf("%s: %s: %s: %+q -> %+q: err=%v; names after=%+q", v, label, c.name, c.from, c.to, err, listNames(t, d))
+		t.Logf("%s: %s: %s: %+q -> %+q: err=%v; names after=%+q", v, label, c.name, c.from, c.to, err, testfs.ListNames(t, d))
 	}
 }

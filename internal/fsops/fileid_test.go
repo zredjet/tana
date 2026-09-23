@@ -45,9 +45,10 @@ func TestFileID(t *testing.T) {
 		t.Errorf("nlink of a.txt = %d, want 1", a.nlink)
 	}
 
-	// 同じエントリを別のパス（. と .. を含む書き方）で指しても一致する。
-	if got := mustID(t, fileIDOf, filepath.Join(root, "dir", "..", "a.txt")); got.id != a.id {
-		t.Errorf("fileID via .. differs")
+	// 同じエントリを別のパス（途中にフォルダ用のシンボリックリンクを含むパス）で指しても一致する。
+	x := mustID(t, fileIDOf, filepath.Join(root, "dir", "x"))
+	if got := mustID(t, fileIDOf, filepath.Join(root, "dirlink", "x")); got.id != x.id {
+		t.Errorf("fileID via a symlinked ancestor differs")
 	}
 
 	// fileIDOf はリンクを辿らず、fileIDFollow は辿る。

@@ -14,20 +14,6 @@ import (
 // renameFunc は、排他リネームの候補（MoveFileExW(0)、renamex_np(RENAME_EXCL)、renameat2(RENAME_NOREPLACE)）。
 type renameFunc func(from, to string) error
 
-// listNames は dir の中の名前を返す。
-func listNames(t *testing.T, dir string) []string {
-	t.Helper()
-	entries, err := os.ReadDir(testfs.ExtendedPath(dir))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var names []string
-	for _, e := range entries {
-		names = append(names, e.Name())
-	}
-	return names
-}
-
 func errnoNum(err error) int {
 	var e syscall.Errno
 	if errors.As(err, &e) {
@@ -55,12 +41,12 @@ func renameCases(t *testing.T, v, label, dir string, rename renameFunc) {
 		{"NFC to NFD (dir)", testfs.Tree{"dir-é/x": testfs.File("x")}, "dir-é", "dir-é"},
 	}
 	for _, c := range cases {
-		d := filepath.Join(dir, sanitize(c.name))
+		d := filepath.Join(dir, testfs.Sanitize(c.name))
 		testfs.Build(t, d, c.tree)
 		before := testfs.Take(t, d)
 		err := rename(filepath.Join(d, c.from), filepath.Join(d, c.to))
 		t.Logf("%s: %s: %s: %+q -> %+q: err=%v (errno %d); names after=%+q",
-			v, label, c.name, c.from, c.to, err, errnoNum(err), listNames(t, d))
+			v, label, c.name, c.from, c.to, err, errnoNum(err), testfs.ListNames(t, d))
 		if c.name == "existing file" || c.name == "existing dir" {
 			after := testfs.Take(t, d)
 			// 移動先（b.txt / b/y）の内容が変わっていないこと（I1）。
@@ -75,7 +61,7 @@ func renameCases(t *testing.T, v, label, dir string, rename renameFunc) {
 				t.Errorf("%s: %s: %s: the exclusive rename onto an existing entry succeeded", v, label, c.name)
 			}
 		}
-		if slices.Contains(listNames(t, d), c.to) && err == nil {
+		if slices.Contains(testfs.ListNames(t, d), c.to) && err == nil {
 			t.Logf("%s: %s: %s: the new name is stored as given (byte-exact): true", v, label, c.name)
 		}
 		// 作ったときの名前で消しておく。ReadDir が返す名前で消せないボリュームがあるため（macOS の exFAT。V17 で調べる）。

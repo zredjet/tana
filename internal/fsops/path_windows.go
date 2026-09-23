@@ -23,7 +23,7 @@ func checkPathOS(p string) (string, error) {
 		}
 	case strings.HasPrefix(q, `\\`):
 		parts := strings.SplitN(q[2:], `\`, 3)
-		if len(parts) < 2 || parts[0] == "" || parts[1] == "" || strings.ContainsRune(q, ':') {
+		if len(parts) < 2 || !validUNCPart(parts[0]) || !validUNCPart(parts[1]) || strings.ContainsRune(q, ':') {
 			return "", invalidPath(p)
 		}
 	default:
@@ -31,6 +31,10 @@ func checkPathOS(p string) (string, error) {
 	}
 	return filepath.Clean(q), nil
 }
+
+// validUNCPart は、UNC のサーバー名・共有名として受け付けるかを返す。
+// . と .. は \\?\ 形式では解決されず、名前として扱われるため拒否する。
+func validUNCPart(s string) bool { return s != "" && s != "." && s != ".." }
 
 // isVolumeRoot は、checkPath を通ったパス p がボリュームのルート（C:\、\\server\share）かを返す。
 func isVolumeRoot(p string) bool {
@@ -55,7 +59,12 @@ func sysPath(p string) (string, error) {
 	case len(c) >= 3 && isDriveLetter(c[0]) && c[1] == ':' && c[2] == '\\':
 		return `\\?\` + c, nil
 	case strings.HasPrefix(c, `\\`) && !strings.HasPrefix(c, `\\?\`) && !strings.HasPrefix(c, `\\.\`):
-		return `\\?\UNC\` + c[2:], nil
+		s := `\\?\UNC\` + c[2:]
+		if isVolumeRoot(c) && !strings.HasSuffix(s, `\`) {
+			// 共有のルートは末尾の \ が必要（\\?\ 形式では補われず、共有そのものを指してしまう）。C:\ と同じ形にそろえる。
+			s += `\`
+		}
+		return s, nil
 	}
 	return "", invalidPath(p)
 }

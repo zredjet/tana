@@ -12,10 +12,11 @@ func TestSysPathWindows(t *testing.T) {
 		{`c:\foo`, `\\?\c:\foo`},
 		{`C:/foo/bar`, `\\?\C:\foo\bar`},
 		{`C:\foo\..\bar`, `\\?\C:\bar`},
-		{`C:\foo\bar.`, `\\?\C:\foo\bar.`}, // 末尾の . を残す
-		{`C:\foo\bar `, `\\?\C:\foo\bar `}, // 末尾の空白を残す
-		{`C:\dir\CON`, `\\?\C:\dir\CON`},   // 予約名もそのまま
-		{`\\server\share`, `\\?\UNC\server\share`},
+		{`C:\foo\bar.`, `\\?\C:\foo\bar.`},          // 末尾の . を残す
+		{`C:\foo\bar `, `\\?\C:\foo\bar `},          // 末尾の空白を残す
+		{`C:\dir\CON`, `\\?\C:\dir\CON`},            // 予約名もそのまま
+		{`\\server\share`, `\\?\UNC\server\share\`}, // 共有のルートには末尾の \ を付ける
+		{`\\server\share\`, `\\?\UNC\server\share\`},
 		{`\\server\share\a\b`, `\\?\UNC\server\share\a\b`},
 	}
 	for _, tt := range tests {
@@ -62,6 +63,7 @@ func TestCheckPathWindows(t *testing.T) {
 		`\??\C:\a`,                                            // NT 形式
 		`C:\a:stream`, `C:\a\b:x:$DATA`, `\\server\share\a:b`, // 代替データストリーム
 		`\\server`, `\\server\`, `\\\share`, // 共有名のない UNC
+		`\\server\..\x`, `\\server\.\x`, `\\..\share\x`, // . と .. はサーバー名・共有名にできない
 		"C:\\a\x00b",
 	}
 	for _, in := range bad {

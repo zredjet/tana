@@ -65,7 +65,7 @@ func TestV4(t *testing.T) {
 		{"trailing space", testfs.NameTrailingSpace},
 	} {
 		t.Run(c.label, func(t *testing.T) {
-			dir := filepath.Join(root, sanitize(c.label))
+			dir := filepath.Join(root, testfs.Sanitize(c.label))
 			testfs.Build(t, dir, testfs.Tree{
 				testfs.NamePlain: testfs.File("plain"),
 				c.name:           testfs.File("target"),
