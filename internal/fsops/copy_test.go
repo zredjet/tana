@@ -29,14 +29,14 @@ func TestCopyTree(t *testing.T) {
 	t.Parallel()
 	root := testfs.TempDir(t)
 	testfs.Build(t, root, testfs.Tree{
-		"src/top.txt":                     testfs.File("top"),
-		"src/tree/a.txt":                  testfs.File("a"),
-		"src/tree/empty":                  testfs.Dir(),
-		"src/tree/sub/b.txt":              testfs.File(strings.Repeat("b", copyBufSize+7)), // バッファ 2 つ分
-		"src/tree/sub/zero":               testfs.File(""),
-		"src/tree/" + testfs.NameJapanese: testfs.File("ja"),
-		"src/tree/" + testfs.NameEmoji:    testfs.File("emoji"),
-		"src/tree/" + testfs.NameNFD:      testfs.File("nfd"),
+		"src/top.txt":                         testfs.File("top"),
+		"src/tree/a.txt":                      testfs.File("a"),
+		"src/tree/empty":                      testfs.Dir(),
+		"src/tree/sub/b.txt":                  testfs.File(strings.Repeat("b", copyBufSize+7)), // バッファ 2 つ分
+		"src/tree/sub/zero":                   testfs.File(""),
+		"src/tree/" + testfs.NameJapanese:     testfs.File("ja"),
+		"src/tree/" + testfs.NameEmoji:        testfs.File("emoji"),
+		"src/tree/" + testfs.NameNFD:          testfs.File("nfd"),
 		"src/tree/日本語のフォルダ/" + testfs.NameNFC: testfs.File("nfc"),
 		"dest": testfs.Dir(),
 	})
@@ -314,8 +314,14 @@ func TestCopyOverwriteLocked(t *testing.T) {
 	dst := filepath.Join(root, "dest", "t.txt")
 	plan := mustPlan(t, Request{Op: OpCopy, Sources: []string{filepath.Join(root, "src", "t.txt")}, DestDir: filepath.Join(root, "dest")})
 	decide(t, plan, dst, DecisionOverwrite)
-	testfs.Lock(t, dst)
-	res := execPlan(t, context.Background(), plan, ExecOptions{})
+	var res *Result
+	t.Run("locked", func(t *testing.T) { // サブテストの終了時にロックを外し、その後で上書き先の内容を確かめる
+		testfs.Lock(t, dst)
+		res = execPlan(t, context.Background(), plan, ExecOptions{})
+	})
+	if res == nil {
+		return // Lock が Skip した（Windows 以外）
+	}
 	it := res.Items[0]
 	t.Logf("result: %+v, err: %v", it, it.Err) // 置換リネームが返したエラー番号を CI のログに残す
 	if it.Outcome != OutcomeFailed || it.Err == nil || it.Err.Kind != KindLocked {

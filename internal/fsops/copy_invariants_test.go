@@ -22,11 +22,16 @@ func execPlan(t *testing.T, ctx context.Context, plan *Plan, opt ExecOptions) *R
 }
 
 // noTempFiles は、dir 以下に一時ファイル（.fsops-*.tmp）が残っていないことを確かめる（I3）。
+// ファイルを開かずに名前だけを調べる（ロックしたファイルがあっても調べられるように）。
 func noTempFiles(t *testing.T, dir string) {
 	t.Helper()
-	for rel := range testfs.Take(t, dir) {
-		if strings.HasPrefix(filepath.Base(rel), ".fsops-") {
-			t.Errorf("I3 violated: temporary file %s is left", rel)
+	for _, name := range testfs.ListNames(t, dir) {
+		p := filepath.Join(dir, name)
+		if strings.HasPrefix(name, ".fsops-") {
+			t.Errorf("I3 violated: temporary file %s is left", p)
+		}
+		if fi, err := os.Lstat(testfs.ExtendedPath(p)); err == nil && fi.IsDir() {
+			noTempFiles(t, p)
 		}
 	}
 }
