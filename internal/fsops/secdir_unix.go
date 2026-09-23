@@ -104,3 +104,15 @@ func isMismatchRemoveErr(err error) bool {
 	}
 	return false
 }
+
+// renameOut は、中の name を d（パス）へリネームする（§13.1 のマージ移動。開いたフォルダからの相対）。
+// replace が偽なら排他リネーム（§8.4）、真なら置換リネーム（ファイルの上書き）。
+func (d *secDir) renameOut(name, dst string, replace bool) error {
+	if !replace {
+		return renameAtExclusiveSys(d.fd, name, dst)
+	}
+	if err := unix.Renameat(d.fd, name, unix.AT_FDCWD, dst); err != nil {
+		return &os.LinkError{Op: "renameat", Old: name, New: dst, Err: err}
+	}
+	return nil
+}

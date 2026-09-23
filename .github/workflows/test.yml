@@ -75,7 +75,7 @@ jobs:
       - name: Probes (verbose)
         run: |
           go test -count=1 -v ./internal/fsops/internal/probe/
-          go test -count=1 -v -run 'TestLstatEntryWOF|OtherVolumes|ShortName|Junction|ReadOnly|TrashPrecheck|NoSpace|MoveMethod|TestDelete|TestRemoveRecorded|TestCopy' ./internal/fsops/
+          go test -count=1 -v -run 'TestLstatEntryWOF|OtherVolumes|ShortName|Junction|ReadOnly|TrashPrecheck|NoSpace|MoveMethod|TestDelete|TestRemoveRecorded|TestCopy|TestMove' ./internal/fsops/
 
   macos:
     # 非公開リポジトリでは、macOS のジョブは pull_request と workflow_dispatch のときだけ実行する（SPEC §19）。
@@ -111,7 +111,7 @@ jobs:
       - name: Probes (verbose)
         run: |
           go test -count=1 -v ./internal/fsops/internal/probe/
-          go test -count=1 -v -run 'OtherVolumes|ReadOnly|NoSpace|MoveMethod|Warnings|TestDelete|TestRemoveRecorded|TestCopy' ./internal/fsops/
+          go test -count=1 -v -run 'OtherVolumes|ReadOnly|NoSpace|MoveMethod|Warnings|TestDelete|TestRemoveRecorded|TestCopy|TestMove' ./internal/fsops/
       - run: CGO_ENABLED=0 go vet ./...
 
   ubuntu:

@@ -3,6 +3,7 @@ package fsops
 import (
 	"context"
 	"path/filepath"
+	"slices"
 )
 
 // remover は、完全削除（§13.2）と記録した項目だけの削除（§13.3）の作業状態。
@@ -213,6 +214,9 @@ type recordEntry struct {
 	info     EntryInfo     // 記録した時点の種類・サイズ・更新日時
 	id       fileID        // 記録した時点の fileID
 	children []recordEntry // フォルダのとき、コピーした中身（名前順）
+	// skipped は、フォルダのとき、衝突の決定による Skip でコピーしなかった中身の名前（§11.2 の手順 2）。
+	// 移動元に残るので、フォルダがそれだけを残して空にならなくてもエラーにしない（§7.4）。
+	skipped []string
 }
 
 // matches は、今のエントリ now が記録 rec と一致するかを返す（§13.3）。
@@ -230,6 +234,26 @@ type removeOutcome struct {
 	canceled   bool
 	firstErr   *OpError
 	removedTop bool // トップレベルの項目まで削除できた
+	keptBySkip bool // トップレベルのフォルダを、衝突の決定による Skip で残したものだけのために残した（エラーではない）
+}
+
+// onlyNames は、開いたフォルダ d に残っているのが keep の名前だけか（1 件以上）を返す。
+// 衝突の決定による Skip で移動元に残したものだけでフォルダが空にならない場合を、エラーと区別するために使う（§7.4、§11.2）。
+// 名前は、同じフォルダの列挙で得たもの同士を比べる。
+func onlyNames(d *secDir, keep []string) bool {
+	if len(keep) == 0 {
+		return false
+	}
+	entries, err := d.list()
+	if err != nil || len(entries) == 0 {
+		return false
+	}
+	for _, e := range entries {
+		if !slices.Contains(keep, e.name) {
+			return false
+		}
+	}
+	return true
 }
 
 // removeRecorded は、path にある項目のうち、記録 rec と照合して一致するエントリだけを削除する（§13.3、I2）。
@@ -253,7 +277,11 @@ func removeRecorded(ctx context.Context, path string, rec recordEntry, h *testHo
 		r.fail(path, &OpError{Op: "remove", Path: path, Kind: KindSourceChanged})
 	case rec.info.Type == TypeDir:
 		if d, _ := r.enter(nil, path, filepath.Base(path), rec.id); d != nil {
-			ok := r.removeRecordedContents(d, rec.children)
+			ok, kept := r.removeRecordedContents(d, rec.children)
+			if ok && !r.canceled && onlyNames(d, append(kept, rec.skipped...)) {
+				out.keptBySkip = true
+				ok = false
+			}
 			d.close()
 			if ok && !r.canceled {
 				out.removedTop = r.removeTopEntry(path, now) // 空でなければ KindNotEmpty で残る
@@ -266,12 +294,14 @@ func removeRecorded(ctx context.Context, path string, rec recordEntry, h *testHo
 	return out
 }
 
-// removeRecordedContents は、開いたフォルダ d の中の、記録 recs のエントリだけを削除する。記録したものをすべて削除できたら真。
-func (r *remover) removeRecordedContents(d *secDir, recs []recordEntry) bool {
-	all := true
+// removeRecordedContents は、開いたフォルダ d の中の、記録 recs のエントリだけを削除する。
+// 記録したものをすべて削除できた（衝突の決定による Skip で残したものだけのために残したフォルダを除く）なら all が真。
+// kept は、衝突の決定による Skip で残したものだけのために残したフォルダの名前。
+func (r *remover) removeRecordedContents(d *secDir, recs []recordEntry) (all bool, kept []string) {
+	all = true
 	for _, rec := range recs {
 		if r.checkCanceled() {
-			return false
+			return false, kept
 		}
 		path := filepath.Join(d.path, rec.name)
 		now, err := d.stat(rec.name)
@@ -298,10 +328,15 @@ func (r *remover) removeRecordedContents(d *secDir, recs []recordEntry) bool {
 				all = false
 				continue
 			}
-			ok := r.removeRecordedContents(cd, rec.children)
+			ok, childKept := r.removeRecordedContents(cd, rec.children)
+			if ok && !r.canceled && onlyNames(cd, append(childKept, rec.skipped...)) {
+				cd.close()
+				kept = append(kept, rec.name)
+				continue
+			}
 			cd.close()
 			if r.canceled {
-				return false
+				return false, kept
 			}
 			if !ok {
 				all = false
@@ -310,10 +345,10 @@ func (r *remover) removeRecordedContents(d *secDir, recs []recordEntry) bool {
 		}
 		if !r.removeIn(d, now) {
 			if r.canceled {
-				return false
+				return false, kept
 			}
 			all = false
 		}
 	}
-	return all
+	return all, kept
 }

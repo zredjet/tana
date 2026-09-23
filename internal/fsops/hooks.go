@@ -20,6 +20,12 @@ type testHooks struct {
 	beforeSymlink func(link string) error
 	// beforeVerify は、コピーの検証（§10.4）の直前に、書き終えて閉じた一時ファイルのパスで呼ばれる（書き込みの破損の注入用）。
 	beforeVerify func(tmp string)
+	// beforeRemoveSource は、ボリュームをまたぐ移動（§11.2）で、コピーと同期・検証が済み、移動元の削除（§13.3）を始める直前に呼ばれる。
+	// src はトップレベルの項目の移動元のパス。移動元への追加・書き換え・ロックの注入（§18.4 の I2）に使う。
+	beforeRemoveSource func(src string)
+	// beforeMoveRename は、同一ボリュームの移動（§11.1）でリネームする直前に呼ばれる。error を返すと、リネームせずにそのエラーで失敗させる
+	// （ボリューム違いのエラーの注入用。§11.1 の §11.2 への切り替えを確かめるため）。
+	beforeMoveRename func(src, dst string) error
 }
 
 func (h *testHooks) enterDir(path string) {
@@ -58,4 +64,17 @@ func (h *testHooks) verify(tmp string) {
 	if h != nil && h.beforeVerify != nil {
 		h.beforeVerify(tmp)
 	}
+}
+
+func (h *testHooks) removeSource(src string) {
+	if h != nil && h.beforeRemoveSource != nil {
+		h.beforeRemoveSource(src)
+	}
+}
+
+func (h *testHooks) moveRename(src, dst string) error {
+	if h != nil && h.beforeMoveRename != nil {
+		return h.beforeMoveRename(src, dst)
+	}
+	return nil
 }

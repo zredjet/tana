@@ -170,3 +170,15 @@ func removeSys(s string, e dirEntry, clearReadOnly bool) error {
 func isMismatchRemoveErr(err error) bool {
 	return errors.Is(err, windows.ERROR_ACCESS_DENIED) || errors.Is(err, windows.ERROR_DIRECTORY)
 }
+
+// renameOut は、中の name を dst（\\?\ 形式のパス）へリネームする（§13.1 のマージ移動）。
+// Windows に開いたフォルダからの相対のリネームはないので、パスで行う。祖先のハンドルを共有モードに FILE_SHARE_DELETE を含めずに
+// 開いたままにしているので、途中の階層を名前の変更・リンクへの置き換えで差し替えられることはない（§13.1）。
+// replace が偽なら排他リネーム（§8.4）、真なら置換リネーム（ファイルの上書き）。
+func (d *secDir) renameOut(name, dst string, replace bool) error {
+	s := d.sys + `\` + name
+	if !replace {
+		return renameExclusiveSys(s, dst)
+	}
+	return os.Rename(s, dst)
+}

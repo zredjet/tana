@@ -57,6 +57,11 @@ type copier struct {
 	canceled bool
 	noSpace  *OpError // 書き込み中の容量不足（§10.3）。起きたら、この項目の残りを処理しない
 	wrote    bool     // コピー先に何かを残した（最終名にしたファイル、作ったフォルダ）
+	// move は、ボリュームをまたぐ移動（§11.2）のコピーか。真なら必ず同期し（§10.5）、コピーしたエントリを記録する。
+	move bool
+	// cur は、記録を加えるフォルダ（move のとき。§11.2 の手順 1）。トップレベルの項目の記録は root.children に入る。
+	cur  *recordEntry
+	root recordEntry
 	// syncDirs は、SyncAlways のとき、最終名へのリネームやフォルダの作成を行ったフォルダ（§10.5）。
 	// 同じフォルダを何度も同期しないためだけに使い、同一性の判定には使わない。
 	syncDirs map[string]bool
@@ -97,10 +102,20 @@ func (cp *copier) canceledErr(path string) *OpError {
 	return &OpError{Op: "copy", Path: path, Kind: KindCanceled, Err: cp.ex.ctx.Err()}
 }
 
+// sync は、同期するか（§10.5。移動では必ず、コピーでは SyncAlways のときだけ）を返す。
+func (cp *copier) sync() bool { return cp.move || cp.ex.opt.Sync == SyncAlways }
+
+// record は、コピーしたエントリを記録する（移動のとき。§11.2 の手順 1）。
+func (cp *copier) record(rec recordEntry) {
+	if cp.move {
+		cp.cur.children = append(cp.cur.children, rec)
+	}
+}
+
 // changed は、フォルダ dir の中の名前を変えた（最終名へのリネーム、フォルダの作成）ことを記録する（§10.5 の同期用）。
 func (cp *copier) changed(dir string) {
 	cp.wrote = true
-	if cp.ex.opt.Sync != SyncAlways {
+	if !cp.sync() {
 		return
 	}
 	if cp.syncDirs == nil {
@@ -112,37 +127,56 @@ func (cp *copier) changed(dir string) {
 	}
 }
 
-// syncChanged は、名前を変えたフォルダを同期する（§10.5）。データは最終名で書き終えているので、失敗は Warnings にする。
+// syncChanged は、名前を変えたフォルダを同期する（§10.5）。
+// コピーでは、データは最終名で書き終えているので、失敗は Warnings にする。
+// 移動では、同期できなければ移動元を消さない（I2）ので、失敗として記録する。
 func (cp *copier) syncChanged() {
 	for _, dir := range cp.dirOrder {
 		s, err := sysPath(dir)
 		if err == nil {
 			err = syncDirSys(s)
 		}
-		if err != nil {
-			cp.warnings = append(cp.warnings, &OpError{Op: "sync", Path: dir, Kind: classify(err, classifyOpts{}), Err: withUserPaths(err, dir, "")})
+		if err == nil {
+			continue
+		}
+		oe := &OpError{Op: "sync", Path: dir, Kind: classify(err, classifyOpts{}), Err: withUserPaths(err, dir, "")}
+		if cp.move {
+			if cp.firstErr == nil {
+				cp.firstErr = oe
+			}
+		} else {
+			cp.warnings = append(cp.warnings, oe)
 		}
 	}
 }
 
 // copyItem は、コピー（MethodCopy）のトップレベルの 1 項目を処理する（§10）。i は Items() の添字。
 func (ex *executor) copyItem(i int, it Item) ItemResult {
+	res, _ := ex.copyTop(i, it, false)
+	return res
+}
+
+// copyTop は、トップレベルの 1 項目をコピーする。move が真なら、ボリュームをまたぐ移動（§11.2）のコピーとして、
+// 必ず同期し、コピーしたエントリを記録して返す（コピーしたものがなければ nil）。
+func (ex *executor) copyTop(i int, it Item, move bool) (ItemResult, *recordEntry) {
 	res := ItemResult{Src: it.Src, Dst: it.Dst}
 	pc := ex.conflictIdx.top[i]
 	if pc != nil && (pc.c.Decision == DecisionUnset || pc.c.Decision == DecisionSkip) {
 		res.Outcome = OutcomeSkipped // 衝突の決定による Skip（I1）。コピー元が変わっていても何もしないので調べない
-		return res
+		return res, nil
 	}
 	e, err := statTop(it.Src)
 	if err != nil {
 		res.Outcome, res.Err = OutcomeFailed, &OpError{Op: "copy", Path: it.Src, Kind: classify(err, classifyOpts{}), Err: err}
-		return res
+		return res, nil
 	}
 	if e.info.Type != it.Info.Type {
 		res.Outcome, res.Err = OutcomeFailed, &OpError{Op: "copy", Path: it.Src, Kind: KindSourceChanged}
-		return res
+		return res, nil
 	}
-	cp := &copier{ex: ex}
+	e.name = filepath.Base(it.Src)
+	cp := &copier{ex: ex, move: move}
+	cp.cur = &cp.root
 	dst, out, oe := cp.copyEntry(it.Src, it.Dst, e, pc)
 	cp.syncChanged()
 	res.Dst, res.Details, res.Warnings = dst, cp.details, cp.warnings
@@ -164,7 +198,11 @@ func (ex *executor) copyItem(i int, it Item) ItemResult {
 	default:
 		res.Outcome = OutcomeDone
 	}
-	return res
+	var rec *recordEntry
+	if len(cp.root.children) == 1 {
+		rec = &cp.root.children[0]
+	}
+	return res, rec
 }
 
 // copyEntry は、エントリ e（src）を dst にコピーする。pc は計画時に検出した衝突（なければ nil）。
@@ -228,6 +266,7 @@ func (cp *copier) copySymlink(src, dst string, e dirEntry, pc *planned) (string,
 	}
 	if oe == nil {
 		cp.changed(filepath.Dir(final))
+		cp.record(recordEntry{name: e.name, info: e.info, id: e.id})
 		cp.ex.progress.fileDone(src)
 	}
 	return final, out, oe
@@ -267,7 +306,7 @@ func (cp *copier) copyFile(src, dst string, e dirEntry, pc *planned) (string, Ou
 			return dst, out, oe
 		}
 	}
-	tmp, warnings, oe := cp.writeTemp(src, dst, e)
+	tmp, m, warnings, oe := cp.writeTemp(src, dst, e)
 	if oe != nil {
 		if oe.Kind == KindCanceled {
 			return dst, OutcomeSkipped, oe
@@ -281,6 +320,8 @@ func (cp *copier) copyFile(src, dst string, e dirEntry, pc *planned) (string, Ou
 	}
 	cp.warnings = append(cp.warnings, warnings...)
 	cp.changed(filepath.Dir(final))
+	// 記録するのは、コピーして検証した時点のコピー元（§10.4 で開いた時点から変わっていないことを確かめたもの）。
+	cp.record(recordEntry{name: e.name, info: EntryInfo{Type: TypeFile, Size: m.size, ModTime: m.mtime}, id: e.id})
 	cp.ex.progress.fileDone(src)
 	return final, OutcomeDone, nil
 }
@@ -396,21 +437,21 @@ func autoRenameName(name string, isDir bool, n int) string {
 // writeTemp は、src の内容をコピー先のフォルダの一時ファイルに書き込む（§10.1 の手順 1〜6）。
 // 書き込み・同期（§10.5）・検証（§10.4）・メタデータの設定（§15）を済ませた一時ファイルのパスと、メタデータの警告を返す。
 // 失敗・キャンセルしたら一時ファイルを削除する（I3）。
-func (cp *copier) writeTemp(src, dst string, e dirEntry) (string, []*OpError, *OpError) {
+func (cp *copier) writeTemp(src, dst string, e dirEntry) (string, srcMeta, []*OpError, *OpError) {
 	// エラーのパスは、一時ファイルではなくコピー元とコピー先で返す（一時ファイルのパスは Err の中にだけ現れる）。
 	fail := func(err error) *OpError {
 		return &OpError{Op: "copy", Path: src, Dest: dst, Kind: classify(err, classifyOpts{}), Err: err}
 	}
 	s, err := sysPath(src)
 	if err != nil {
-		return "", nil, fail(err)
+		return "", srcMeta{}, nil, fail(err)
 	}
 	in, m, err := openSourceSys(s, e.id)
 	if err != nil {
 		if oe, ok := err.(*OpError); ok {
-			return "", nil, &OpError{Op: "copy", Path: src, Dest: dst, Kind: oe.Kind, Err: oe.Err}
+			return "", srcMeta{}, nil, &OpError{Op: "copy", Path: src, Dest: dst, Kind: oe.Kind, Err: oe.Err}
 		}
-		return "", nil, sourceErr(src, dst, e, withUserPaths(err, src, ""))
+		return "", srcMeta{}, nil, sourceErr(src, dst, e, withUserPaths(err, src, ""))
 	}
 	defer in.Close()
 	var warnings []*OpError
@@ -420,7 +461,7 @@ func (cp *copier) writeTemp(src, dst string, e dirEntry) (string, []*OpError, *O
 
 	tmp, out, err := createTemp(filepath.Dir(dst))
 	if err != nil {
-		return "", nil, fail(err)
+		return "", srcMeta{}, nil, fail(err)
 	}
 	closed, keep := false, false
 	defer func() {
@@ -440,12 +481,12 @@ func (cp *copier) writeTemp(src, dst string, e dirEntry) (string, []*OpError, *O
 	var written int64
 	for {
 		if cp.checkCanceled() {
-			return "", nil, cp.canceledErr(src)
+			return "", srcMeta{}, nil, cp.canceledErr(src)
 		}
 		n, rerr := in.Read(buf)
 		if n > 0 {
 			if _, err := out.Write(buf[:n]); err != nil {
-				return "", nil, fail(withUserPaths(err, tmp, ""))
+				return "", srcMeta{}, nil, fail(withUserPaths(err, tmp, ""))
 			}
 			if sum != nil {
 				sum.Write(buf[:n])
@@ -453,38 +494,38 @@ func (cp *copier) writeTemp(src, dst string, e dirEntry) (string, []*OpError, *O
 			written += int64(n)
 			cp.ex.progress.addBytes(int64(n))
 			if err := cp.ex.opt.hooks.write(dst, written); err != nil {
-				return "", nil, fail(err)
+				return "", srcMeta{}, nil, fail(err)
 			}
 		}
 		if rerr == io.EOF {
 			break
 		}
 		if rerr != nil {
-			return "", nil, fail(withUserPaths(rerr, src, ""))
+			return "", srcMeta{}, nil, fail(withUserPaths(rerr, src, ""))
 		}
 	}
-	if cp.ex.opt.Sync == SyncAlways {
+	if cp.sync() {
 		if err := out.Sync(); err != nil {
-			return "", nil, fail(withUserPaths(err, tmp, ""))
+			return "", srcMeta{}, nil, fail(withUserPaths(err, tmp, ""))
 		}
 	}
 	fi, err := out.Stat()
 	if err != nil {
-		return "", nil, fail(withUserPaths(err, tmp, ""))
+		return "", srcMeta{}, nil, fail(withUserPaths(err, tmp, ""))
 	}
 	// 一時ファイルの fileID は、書き込んだ後に記録する。macOS の exFAT・FAT32 では、空のファイルに最初のデータ領域を
 	// 割り当てると fileID が変わる（2026-09-24 に手元の hdiutil のイメージで確認）。
 	tmpID, err := fileIDOfFile(out)
 	if err != nil {
-		return "", nil, fail(withUserPaths(err, tmp, ""))
+		return "", srcMeta{}, nil, fail(withUserPaths(err, tmp, ""))
 	}
 	closed = true
 	if err := out.Close(); err != nil {
-		return "", nil, fail(withUserPaths(err, tmp, ""))
+		return "", srcMeta{}, nil, fail(withUserPaths(err, tmp, ""))
 	}
 	cp.ex.opt.hooks.verify(tmp)
 	if oe := cp.verify(src, dst, tmp, e, m, written, fi.Size(), tmpID, sum); oe != nil {
-		return "", nil, oe
+		return "", srcMeta{}, nil, oe
 	}
 	if ts, err := sysPath(tmp); err == nil {
 		if err := setMetaSys(ts, tmpID, m, false); err != nil {
@@ -492,7 +533,7 @@ func (cp *copier) writeTemp(src, dst string, e dirEntry) (string, []*OpError, *O
 		}
 	}
 	keep = true
-	return tmp, warnings, nil
+	return tmp, m, warnings, nil
 }
 
 // verify は、書き終えて閉じた一時ファイル tmp を検証する（§10.4）。
@@ -678,6 +719,13 @@ func (cp *copier) copyDir(src, dst string, e dirEntry, pc *planned) (string, Out
 	if err != nil {
 		return dst, OutcomeFailed, sourceErr(src, dst, e, err)
 	}
+	rec := &recordEntry{name: e.name, info: EntryInfo{Type: TypeDir}, id: e.id}
+	parent := cp.cur
+	cp.cur = rec
+	defer func() {
+		cp.cur = parent
+		cp.record(*rec) // マージで既存のフォルダを使った場合も、移動元のフォルダは記録する（中身を消した後に消す）
+	}()
 	for _, ce := range entries {
 		if cp.checkCanceled() || cp.stopped() {
 			return dst, OutcomeDone, nil
@@ -685,6 +733,9 @@ func (cp *copier) copyDir(src, dst string, e dirEntry, pc *planned) (string, Out
 		childSrc, childDst := filepath.Join(src, ce.name), filepath.Join(dst, ce.name)
 		final, out, oe := cp.copyEntry(childSrc, childDst, ce, inner[ce.name])
 		cp.entry(childSrc, final, out, oe)
+		if out == OutcomeSkipped && oe == nil {
+			rec.skipped = append(rec.skipped, ce.name) // 衝突の決定による Skip。移動元に残す（§11.2 の手順 2）
+		}
 		if cp.stopped() {
 			return dst, OutcomeDone, nil // 途中までのフォルダにはメタデータ（読み取り専用など）を設定しない
 		}

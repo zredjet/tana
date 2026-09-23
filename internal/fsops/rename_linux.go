@@ -19,3 +19,15 @@ func renameExclusiveSys(s, d string) error {
 	}
 	return nil
 }
+
+// renameAtExclusiveSys は、フォルダ fd の中の name を d へ排他リネームする（§13.1 のマージ移動。renameat2(RENAME_NOREPLACE)）。
+func renameAtExclusiveSys(fd int, name, d string) error {
+	err := unix.Renameat2(fd, name, unix.AT_FDCWD, d, unix.RENAME_NOREPLACE)
+	if errors.Is(err, unix.EINVAL) || errors.Is(err, unix.ENOSYS) {
+		return reserveThenRenameAt(fd, name, d)
+	}
+	if err != nil {
+		return &os.LinkError{Op: "renameat2", Old: name, New: d, Err: err}
+	}
+	return nil
+}

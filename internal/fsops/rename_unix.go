@@ -24,10 +24,14 @@ func reserveThenRename(src, dst string) error {
 }
 
 // reserveThenRenameSys は、名前を確保してから置き換える（§8.4 の手順 1〜4）。
-func reserveThenRenameSys(s, d string) error {
+func reserveThenRenameSys(s, d string) error { return reserveThenRenameAt(unix.AT_FDCWD, s, d) }
+
+// reserveThenRenameAt は reserveThenRenameSys の、移動元をフォルダ fd からの相対の名前 s で指定する形（§13.1 のマージ移動用）。
+// fd が AT_FDCWD なら s はパス。d はパス。
+func reserveThenRenameAt(fd int, s, d string) error {
 	linkErr := func(err error) error { return &os.LinkError{Op: "rename", Old: s, New: d, Err: err} }
 	var src unix.Stat_t
-	if err := unix.Lstat(s, &src); err != nil {
+	if err := unix.Fstatat(fd, s, &src, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return linkErr(err)
 	}
 	isDir := src.Mode&unix.S_IFMT == unix.S_IFDIR
@@ -68,7 +72,7 @@ func reserveThenRenameSys(s, d string) error {
 	}
 
 	// 3. 置き換える。4. 失敗したら確保したものを消す。
-	if err := unix.Rename(s, d); err != nil {
+	if err := unix.Renameat(fd, s, unix.AT_FDCWD, d); err != nil {
 		removeIfSame(d, &reserved, isDir)
 		return linkErr(err)
 	}

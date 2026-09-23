@@ -135,3 +135,6 @@ func TestCopyZoneIdentifier(t *testing.T) {
 		})
 	}
 }
+
+// crossDeviceErr は、ボリューム違いのリネームのエラー（§11.1）を返す（テストの注入用）。
+func crossDeviceErr() error { return windows.ERROR_NOT_SAME_DEVICE }

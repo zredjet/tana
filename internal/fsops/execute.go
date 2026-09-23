@@ -97,11 +97,16 @@ func (ex *executor) do(i int, it Item) ItemResult {
 	case MethodCopy:
 		ex.progress.start(StageCopy, it.Src)
 		return ex.copyItem(i, it)
+	case MethodRename:
+		ex.progress.start(StageMove, it.Src)
+		return ex.moveItem(i, it)
+	case MethodCopyThenRemove:
+		return ex.copyThenRemove(i, it)
 	case MethodRemove:
 		ex.progress.start(StageDelete, it.Src)
 		return deleteItem(ex.ctx, ex.opt.hooks, it, ex.progress.done)
 	}
-	// 移動・ごみ箱はフェーズ9〜10で作る。
+	// ごみ箱はフェーズ10で作る。
 	return ItemResult{Src: it.Src, Dst: it.Dst, Outcome: OutcomeFailed,
 		Err: &OpError{Op: "execute", Path: it.Src, Kind: KindUnknown, Err: errors.ErrUnsupported}}
 }

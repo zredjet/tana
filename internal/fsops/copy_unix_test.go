@@ -107,3 +107,6 @@ func TestCopyTempFilePerm(t *testing.T) {
 		}
 	}
 }
+
+// crossDeviceErr は、ボリューム違いのリネームのエラー（§11.1）を返す（テストの注入用）。
+func crossDeviceErr() error { return unix.EXDEV }
