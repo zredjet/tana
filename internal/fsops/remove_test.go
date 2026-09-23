@@ -363,3 +363,29 @@ func TestDeleteSourceGone(t *testing.T) {
 		t.Errorf("result = %+v, want Failed with KindNotFound", it)
 	}
 }
+
+// TestDeleteVanishedEntries は、列挙の後に消えたエントリを失敗にしないことを確かめる（消すものがない。§6.3）。
+func TestDeleteVanishedEntries(t *testing.T) {
+	t.Parallel()
+	root := testfs.TempDir(t)
+	testfs.Build(t, root, testfs.Tree{"tree/a.txt": testfs.File("a"), "tree/b.txt": testfs.File("b"), "tree/sub/c.txt": testfs.File("c")})
+	h := &testHooks{
+		beforeRemove: func(p string) {
+			if filepath.Base(p) == "a.txt" {
+				os.Remove(testfs.ExtendedPath(p)) // ほかのプロセスが先に消した
+			}
+		},
+		beforeEnterDir: func(p string) {
+			if filepath.Base(p) == "sub" {
+				os.RemoveAll(testfs.ExtendedPath(p))
+			}
+		},
+	}
+	res := execDelete(t, context.Background(), h, filepath.Join(root, "tree"))
+	if it := res.Items[0]; it.Outcome != OutcomeDone || it.Err != nil || len(it.Details) != 0 {
+		t.Errorf("result = %+v, want Done", it)
+	}
+	if testfs.Exists(t, filepath.Join(root, "tree")) {
+		t.Error("the tree was not deleted")
+	}
+}

@@ -40,15 +40,19 @@ func (r *remover) checkCanceled() bool {
 	return r.canceled
 }
 
-// removeErr は、削除の失敗を分類する（§13.2、§17）。種類に合わない方法での削除の失敗なら調べ直し、
-// 種類が変わっていれば KindSourceChanged にする。restat は調べ直す関数、sysPath は読み取り専用の判定に使うパス。
-func removeErr(path string, err error, e dirEntry, restat func() (dirEntry, error), sys string) *OpError {
-	if isMismatchRemoveErr(err) {
-		if now, serr := restat(); serr == nil && now.dirAttr != e.dirAttr {
-			return &OpError{Op: "remove", Path: path, Kind: KindSourceChanged, Err: err}
-		}
+// removeErr は、削除の失敗を分類する（§13.2、§17）。失敗したら調べ直し、
+// エントリがもうなければ vanished を真にする（列挙・確認の後に消えた。消すものがないので失敗にしない）。
+// 種類に合わない方法での削除の失敗で、種類が変わっていれば KindSourceChanged にする。
+// restat は調べ直す関数、sys は読み取り専用の判定に使うパス。
+func removeErr(path string, err error, e dirEntry, restat func() (dirEntry, error), sys string) (oe *OpError, vanished bool) {
+	now, serr := restat()
+	if serr != nil && classify(serr, classifyOpts{}) == KindNotFound {
+		return nil, true
 	}
-	return &OpError{Op: "remove", Path: path, Kind: classify(err, classifyOpts{readOnly: readOnlySys(sys)}), Err: withUserPaths(err, path, "")}
+	if isMismatchRemoveErr(err) && serr == nil && now.dirAttr != e.dirAttr {
+		return &OpError{Op: "remove", Path: path, Kind: KindSourceChanged, Err: err}, false
+	}
+	return &OpError{Op: "remove", Path: path, Kind: classify(err, classifyOpts{readOnly: readOnlySys(sys)}), Err: withUserPaths(err, path, "")}, false
 }
 
 // removeIn は、確かめて開いたフォルダ d の中のエントリ e を削除する。削除できたら真。
@@ -60,7 +64,11 @@ func (r *remover) removeIn(d *secDir, e dirEntry) bool {
 	}
 	if err := d.remove(e, r.recorded); err != nil {
 		sys, _ := sysPath(path)
-		r.fail(path, removeErr(path, err, e, func() (dirEntry, error) { return d.stat(e.name) }, sys))
+		oe, vanished := removeErr(path, err, e, func() (dirEntry, error) { return d.stat(e.name) }, sys)
+		if vanished {
+			return true
+		}
+		r.fail(path, oe)
 		return false
 	}
 	r.removed(path, e.info)
@@ -75,7 +83,11 @@ func (r *remover) removeTopEntry(path string, e dirEntry) bool {
 	}
 	if err := removeTop(path, e, r.recorded); err != nil {
 		sys, _ := sysPath(path)
-		r.fail(path, removeErr(path, err, e, func() (dirEntry, error) { return statTop(path) }, sys))
+		oe, vanished := removeErr(path, err, e, func() (dirEntry, error) { return statTop(path) }, sys)
+		if vanished {
+			return true
+		}
+		r.fail(path, oe)
 		return false
 	}
 	r.removed(path, e.info)
@@ -90,18 +102,24 @@ func (r *remover) removed(path string, info EntryInfo) {
 }
 
 // enter は、フォルダ path に §13.1 の方法で入る。確かめられなければ記録して nil を返す（I4）。
-func (r *remover) enter(parent *secDir, path, name string, want fileID) *secDir {
+// 列挙の後に消えていた場合は、記録せずに nil と gone=true を返す（消すものがない）。
+func (r *remover) enter(parent *secDir, path, name string, want fileID) (d *secDir, gone bool) {
 	r.hooks.enterDir(path)
 	d, err := openSecDir(parent, path, name, want)
 	if err != nil {
+		if KindOf(err) == KindNotFound {
+			if _, serr := statTop(path); serr != nil && classify(serr, classifyOpts{}) == KindNotFound {
+				return nil, true // 列挙の後に消えた。消すものがない
+			}
+		}
 		oe, ok := err.(*OpError)
 		if !ok {
 			oe = &OpError{Op: "open", Path: path, Kind: classify(err, classifyOpts{}), Err: err}
 		}
 		r.fail(path, oe)
-		return nil
+		return nil, false
 	}
-	return d
+	return d, false
 }
 
 // deleteContents は、開いたフォルダ d の中身を後順で削除する（§13.2）。すべて削除できたら真。
@@ -117,7 +135,10 @@ func (r *remover) deleteContents(d *secDir) bool {
 			return false
 		}
 		if e.info.Type == TypeDir {
-			cd := r.enter(d, filepath.Join(d.path, e.name), e.name, e.id)
+			cd, gone := r.enter(d, filepath.Join(d.path, e.name), e.name, e.id)
+			if gone {
+				continue
+			}
 			if cd == nil {
 				all = false
 				continue
@@ -156,7 +177,7 @@ func deleteItem(ctx context.Context, h *testHooks, it Item, onRemoved func(strin
 		return res
 	}
 	if e.info.Type == TypeDir {
-		if d := r.enter(nil, it.Src, filepath.Base(it.Src), e.id); d != nil {
+		if d, _ := r.enter(nil, it.Src, filepath.Base(it.Src), e.id); d != nil {
 			ok := r.deleteContents(d)
 			d.close()
 			if ok {
@@ -231,7 +252,7 @@ func removeRecorded(ctx context.Context, path string, rec recordEntry, h *testHo
 	case !rec.matches(now):
 		r.fail(path, &OpError{Op: "remove", Path: path, Kind: KindSourceChanged})
 	case rec.info.Type == TypeDir:
-		if d := r.enter(nil, path, filepath.Base(path), rec.id); d != nil {
+		if d, _ := r.enter(nil, path, filepath.Base(path), rec.id); d != nil {
 			ok := r.removeRecordedContents(d, rec.children)
 			d.close()
 			if ok && !r.canceled {
@@ -269,7 +290,10 @@ func (r *remover) removeRecordedContents(d *secDir, recs []recordEntry) bool {
 			continue
 		}
 		if rec.info.Type == TypeDir {
-			cd := r.enter(d, path, rec.name, rec.id)
+			cd, gone := r.enter(d, path, rec.name, rec.id)
+			if gone {
+				continue
+			}
 			if cd == nil {
 				all = false
 				continue

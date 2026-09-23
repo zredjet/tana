@@ -24,7 +24,9 @@ func readDirSys(s string) ([]dirEntry, error) {
 
 // listFD は、開いたフォルダ fd の中身を名前のバイト順で列挙する。fd は閉じない。s はエラーに使うパス。
 func listFD(fd int, s string) ([]dirEntry, error) {
-	dup, err := unix.Dup(fd) // 列挙で読み進める位置を fd と共有しないように複製する
+	// os.File に渡すと Close で閉じられるので複製する。複製は読み進める位置（オフセット）を fd と共有するので、
+	// 続けて先頭に戻してから列挙する（同じフォルダを何度列挙しても全件を返すため）。
+	dup, err := unix.Dup(fd)
 	if err != nil {
 		return nil, &os.PathError{Op: "dup", Path: s, Err: err}
 	}

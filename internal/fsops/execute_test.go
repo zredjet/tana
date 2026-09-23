@@ -88,13 +88,11 @@ func TestExecuteItemErrAndStatus(t *testing.T) {
 		t.Errorf("Status = %v, want StatusCompletedWithErrors", res.Status)
 	}
 
-	plan = mustPlan(t, Request{Op: OpDelete, Sources: []string{filepath.Join(root, "missing2")}})
 	testfs.Build(t, root, testfs.Tree{"ok": testfs.File("x")})
 	plan2 := mustPlan(t, Request{Op: OpDelete, Sources: []string{filepath.Join(root, "ok")}})
 	if res, _ := plan2.Execute(context.Background(), ExecOptions{}); res.Status != StatusCompleted {
 		t.Errorf("all done: Status = %v, want StatusCompleted", res.Status)
 	}
-	_ = plan
 }
 
 // TestExecuteCanceledBeforeStart は、開始前にキャンセルされた ctx では、全項目が Skipped（KindCanceled）で StatusCanceled になることを確かめる。

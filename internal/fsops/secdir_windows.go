@@ -3,6 +3,7 @@ package fsops
 import (
 	"errors"
 	"os"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -75,7 +76,7 @@ func (d *secDir) stat(name string) (dirEntry, error) {
 
 // remove は、中の e を §13.2 の方法（DeleteFileW・RemoveDirectoryW）で削除する。
 func (d *secDir) remove(e dirEntry, clearReadOnly bool) error {
-	return removeSys(d.sys+`\`+e.name, e.dirAttr, clearReadOnly)
+	return removeSys(d.sys+`\`+e.name, e, clearReadOnly)
 }
 
 // removeTop は、トップレベルのエントリ path を §13.2 の方法で削除する。
@@ -84,7 +85,7 @@ func removeTop(path string, e dirEntry, clearReadOnly bool) error {
 	if err != nil {
 		return err
 	}
-	return withUserPaths(removeSys(s, e.dirAttr, clearReadOnly), path, "")
+	return withUserPaths(removeSys(s, e, clearReadOnly), path, "")
 }
 
 // statTop は、トップレベルのエントリ path をリンクを辿らずに調べる。
@@ -97,45 +98,63 @@ func statTop(path string) (dirEntry, error) {
 	return e, withUserPaths(err, path, "")
 }
 
-// statEntrySys は、\\?\ 形式のパス s を調べ、列挙と同じ形の dirEntry を返す（name は設定しない）。
+// statEntrySys は、\\?\ 形式のパス s を 1 つのハンドルで調べ、列挙と同じ形の dirEntry を返す（name は設定しない）。
+// 種類・サイズ・更新日時・fileID を同じハンドルから求め、途中で置き換えられても別のエントリの情報が混ざらないようにする。
 func statEntrySys(s string) (dirEntry, error) {
-	info, err := lstatEntrySys(s)
-	if err != nil {
-		return dirEntry{}, err
-	}
-	st, err := statIDSys(s, false)
-	if err != nil {
-		return dirEntry{}, err
-	}
 	s16, err := windows.UTF16PtrFromString(s)
 	if err != nil {
 		return dirEntry{}, err
 	}
-	a, err := windows.GetFileAttributes(s16)
+	h, err := windows.CreateFile(s16, windows.FILE_READ_ATTRIBUTES,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING,
+		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
 	if err != nil {
-		return dirEntry{}, &os.PathError{Op: "GetFileAttributes", Path: s, Err: err}
+		return dirEntry{}, &os.PathError{Op: "CreateFile", Path: s, Err: err}
 	}
-	return dirEntry{info: info, id: st.id, dirAttr: a&windows.FILE_ATTRIBUTE_DIRECTORY != 0}, nil
+	defer windows.CloseHandle(h)
+	var bi windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(h, &bi); err != nil {
+		return dirEntry{}, &os.PathError{Op: "GetFileInformationByHandle", Path: s, Err: err}
+	}
+	var tag uint32
+	if bi.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		var ti fileAttributeTagInfo
+		if err := windows.GetFileInformationByHandleEx(h, windows.FileAttributeTagInfo, (*byte)(unsafe.Pointer(&ti)), uint32(unsafe.Sizeof(ti))); err != nil {
+			return dirEntry{}, &os.PathError{Op: "GetFileInformationByHandleEx", Path: s, Err: err}
+		}
+		tag = ti.ReparseTag
+	}
+	st, err := statIDHandle(h)
+	if err != nil {
+		return dirEntry{}, &os.PathError{Op: "GetFileInformationByHandleEx", Path: s, Err: err}
+	}
+	t := entryTypeFromAttrs(bi.FileAttributes, tag)
+	info := EntryInfo{Type: t, ModTime: time.Unix(0, bi.LastWriteTime.Nanoseconds())}
+	if t == TypeFile {
+		info.Size = int64(bi.FileSizeHigh)<<32 | int64(bi.FileSizeLow)
+	}
+	return dirEntry{info: info, id: st.id, dirAttr: bi.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0}, nil
 }
 
-// removeSys は、\\?\ 形式のパス s を削除する（§13.2）。フォルダ属性のあるもの（フォルダ用のリンク・ジャンクションを含む）は
+// removeSys は、\\?\ 形式のパス s にあるエントリ e を削除する（§13.2）。フォルダ属性のあるもの（フォルダ用のリンク・ジャンクションを含む）は
 // RemoveDirectoryW、それ以外は DeleteFileW。
 // フォルダの読み取り専用属性は外してから削除する（V15）。clearReadOnly が真なら、ファイルの読み取り専用属性も外す（§13.3）。
-// 削除に失敗したら、外した属性を元に戻す。
-func removeSys(s string, dirAttr, clearReadOnly bool) error {
+// 属性を外すのは、s にあるものが e と同じ fileID の場合だけ（確かめていないエントリの属性を変えない）。削除に失敗したら元に戻す。
+func removeSys(s string, e dirEntry, clearReadOnly bool) error {
 	s16, err := windows.UTF16PtrFromString(s)
 	if err != nil {
 		return err
 	}
 	restore := func() {}
-	if dirAttr || clearReadOnly {
+	if e.dirAttr || clearReadOnly {
 		if a, err := windows.GetFileAttributes(s16); err == nil && a&windows.FILE_ATTRIBUTE_READONLY != 0 {
-			if windows.SetFileAttributes(s16, a&^windows.FILE_ATTRIBUTE_READONLY) == nil {
+			if now, err := statIDSys(s, false); err == nil && now.id == e.id &&
+				windows.SetFileAttributes(s16, a&^windows.FILE_ATTRIBUTE_READONLY) == nil {
 				restore = func() { windows.SetFileAttributes(s16, a) }
 			}
 		}
 	}
-	if dirAttr {
+	if e.dirAttr {
 		err = windows.RemoveDirectory(s16)
 	} else {
 		err = windows.DeleteFile(s16)
