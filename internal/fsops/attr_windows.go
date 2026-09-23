@@ -14,3 +14,6 @@ func readOnlySys(p string) func() bool {
 		return err == nil && a&windows.FILE_ATTRIBUTE_READONLY != 0
 	}
 }
+
+// targetReadOnlySys は、上書き先 p が読み取り専用（§9.3。Windows では読み取り専用属性）かを返す。
+func targetReadOnlySys(p string) bool { return readOnlySys(p)() }

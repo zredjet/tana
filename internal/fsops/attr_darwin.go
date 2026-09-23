@@ -10,3 +10,9 @@ func readOnlySys(p string) func() bool {
 		return unix.Lstat(p, &st) == nil && st.Flags&unix.UF_IMMUTABLE != 0
 	}
 }
+
+// targetReadOnlySys は、上書き先 p が読み取り専用（§9.3。オーナーの書き込み権限がない、またはロック（UF_IMMUTABLE））かを返す。
+func targetReadOnlySys(p string) bool {
+	var st unix.Stat_t
+	return unix.Lstat(p, &st) == nil && (st.Mode&0o200 == 0 || st.Flags&unix.UF_IMMUTABLE != 0)
+}

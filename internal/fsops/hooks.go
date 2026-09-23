@@ -10,6 +10,11 @@ type testHooks struct {
 	// beforeRemove は、削除（§13.2、§13.3）で各エントリを削除する直前に呼ばれる。
 	// 置き換えやキャンセルの注入に使う。path は \\?\ の付かない形。
 	beforeRemove func(path string)
+	// onWrite は、コピー（§10.1）で一時ファイルにバッファ 1 つ分を書き込むたびに呼ばれる。
+	// dst は最終名のパス、written はそれまでに書き込んだバイト数。error を返すと、書き込みの障害として扱う（I3 の注入用）。
+	onWrite func(dst string, written int64) error
+	// beforeFinalRename は、一時ファイルを最終名にする直前に呼ばれる（計画後に現れた衝突の注入用。I1）。
+	beforeFinalRename func(dst string)
 }
 
 func (h *testHooks) enterDir(path string) {
@@ -21,5 +26,18 @@ func (h *testHooks) enterDir(path string) {
 func (h *testHooks) remove(path string) {
 	if h != nil && h.beforeRemove != nil {
 		h.beforeRemove(path)
+	}
+}
+
+func (h *testHooks) write(dst string, written int64) error {
+	if h != nil && h.onWrite != nil {
+		return h.onWrite(dst, written)
+	}
+	return nil
+}
+
+func (h *testHooks) finalRename(dst string) {
+	if h != nil && h.beforeFinalRename != nil {
+		h.beforeFinalRename(dst)
 	}
 }

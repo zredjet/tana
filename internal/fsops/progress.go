@@ -83,3 +83,23 @@ func (r *progressReporter) done(path string, info EntryInfo) {
 	}
 	r.report(false)
 }
+
+// step は、処理中のパスを設定する（間引いて報告する）。
+func (r *progressReporter) step(path string) {
+	r.cur.Current = path
+	r.report(false)
+}
+
+// addBytes は、コピーで書き込んだバイト数を加える（バッファごと。§16）。
+// 進捗が逆戻りしないよう、失敗・キャンセルしたファイルの書き込み済みの分も戻さない（処理したバイト数として数える）。
+func (r *progressReporter) addBytes(n int64) {
+	r.cur.DoneBytes += n
+	r.report(false)
+}
+
+// fileDone は、コピーしたファイル 1 件の完了を加える。バイト数は addBytes で加え済み。
+func (r *progressReporter) fileDone(path string) {
+	r.cur.Current = path
+	r.cur.DoneFiles++
+	r.report(false)
+}
