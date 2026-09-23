@@ -656,7 +656,7 @@ const (
 
 ### 12.1 共通
 
-- `OpTrash` はトップレベルの項目だけを扱い、中身を走査しない（項目ごとごみ箱へ移すため）。
+- `OpTrash` はトップレベルの項目だけを扱う（項目ごとごみ箱へ移すため）。中身は、Windows で §12.2 の最大サイズの事前確認のためにサイズを数える場合だけ、§13.1 の走査（リンクに入り込まない）で読む。変更はしない。
 - 1 項目ずつ処理し、結果を項目ごとに返す。
 - ごみ箱が使えないと判断したら、その項目には何もせず、`OutcomeFailed`（`KindTrashUnavailable`）にする（I5）。
 - `NewPlan` は、ごみ箱が使えるかの事前確認（§12.2 の `GetDriveType` など、ファイルシステムを変更しないもの）を行い、使えない項目の `Item.Err` に `KindTrashUnavailable` を入れる。
@@ -670,17 +670,26 @@ const (
     ネットワーク上のパスは、確認なしに完全削除されることを確かめた（V4。`\\localhost\C$` 経由）。
   - パスの長さが 260 文字（`MAX_PATH`）以上なら `KindTrashUnavailable`。`SHFileOperationW` では確認なしに完全削除された（V4）。
     V18 で `IFileOperation` が長いパスを安全に扱えると確認できたら、この制限を見直す。
+  - ごみ箱の設定と最大サイズ（V13、V18、V19）: ごみ箱の最大サイズを超える項目は、`IFileOperation` でも確認なしに完全削除される（V18）ため、事前に比べる。
+    - グループポリシー（HKCU と HKLM の `Software\Microsoft\Windows\CurrentVersion\Policies\Explorer`）の `NoRecycleFiles` が 1 なら `KindTrashUnavailable`。
+    - ボリュームの設定（HKCU の `Software\Microsoft\Windows\CurrentVersion\Explorer\BitBucket\Volume\{ボリューム GUID}`）の `NukeOnDelete` が 1 なら `KindTrashUnavailable`。
+    - 最大サイズは、ポリシーの `RecycleBinSize`（ボリュームの容量に対する割合）があればそれを、なければボリュームの設定の `MaxCapacity`（MB）を使う。
+      項目のサイズ（フォルダは中身の合計。§12.1）が最大サイズ以上なら `KindTrashUnavailable`。
+    - 設定を読めない場合（キーや値がない、ボリューム GUID が取れない）は、分からないものとして `KindTrashUnavailable` にする。
+    - 比べ方の詳細（境界の扱い、実サイズか割り当てサイズか、ごみ箱に既にある項目の影響）は V19 の結果で確定する。
   - パスに Win32 の正規化で変わる名前（末尾の `.` や空白、予約名）が含まれる場合、つまり `GetFullPathNameW` の結果が元のパスと一致しない場合は `KindTrashUnavailable`。
     `SHFileOperationW` では `foo.` を指定すると隣の別ファイル `foo` がごみ箱に入った（V4）。`\\?\` 付きのパスは受け付けられなかった。
 - 実装: `IFileOperation`（COM）を使う（V13 の結果により、`SHFileOperationW` から移行した）。
   `SHFileOperationW` は、ごみ箱が「すぐに削除する」設定のボリュームと、ごみ箱の最大サイズを超える項目を、成功を返したまま確認なしに完全削除したため（V13）。
   1. `runtime.LockOSThread` した goroutine で `CoInitializeEx(COINIT_APARTMENTTHREADED)` を呼ぶ。
-  2. `CoCreateInstance(CLSID_FileOperation)` で `IFileOperation` を作り、`SetOperationFlags` に `FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI`（と、V18 で必要と分かったもの）を設定する。
+  2. `CoCreateInstance(CLSID_FileOperation)` で `IFileOperation` を作り、`SetOperationFlags` に `FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI | FOFX_RECYCLEONDELETE | FOF_WANTNUKEWARNING` を設定する。
+     `FOF_WANTNUKEWARNING` は、事前確認が見落とした場合の安全装置（黙って完全削除される代わりに、Windows の確認ダイアログが出る。V18）。
+     ダイアログは `Execute` を止め、`ctx` のキャンセルでは閉じられない。fsops のテストはダイアログが出る状況を作らない（事前確認で `KindTrashUnavailable` になる状況だけを使う）。
   3. `SHCreateItemFromParsingName` でパスから `IShellItem` を作り、自前の `IFileOperationProgressSink` を付けて `DeleteItem` する。1 回の操作で 1 項目だけ渡す。
   4. 進捗通知の `PreDeleteItem` で、フラグに `TSF_DELETE_RECYCLE_IF_POSSIBLE`（`0x80`）がなければ（ごみ箱に入らず完全削除になる場合）、`E_ABORT` を返して中止させ、その項目を `KindTrashUnavailable` にする（I5。V18 で、中止した項目が残ることを確認済み）。
   5. `PerformOperations` の後、`GetAnyOperationsAborted` と `PostDeleteItem` の結果で成否を決める。`PostDeleteItem` で渡されるごみ箱内の項目からパスが取れれば `TrashedPath` に入れる。
   - COM の vtable の呼び出しと進捗通知の実装は、cgo を使わず `syscall.SyscallN` と `syscall.NewCallback`（または x/sys/windows の同等のもの）で行う。
-  - **未解決**: ごみ箱の最大サイズを超える項目は、`PreDeleteItem` のフラグでは見分けられず、確認なしに完全削除される（V18）。対処の方針は確認中で、決まるまでこの手順は確定しない。
+  - ごみ箱の最大サイズを超える項目は `PreDeleteItem` のフラグでは見分けられない（V18）。事前確認（上記）と `FOF_WANTNUKEWARNING` の併用で対処する（フェーズ3で承認）。
 - 分類できない `HRESULT` は `KindUnknown` にして値を `Err` に残す。
 - 既存ライブラリ（`hymkor/trash-go`、`rafshawn/go2trash` など）は実装の参考にしてよい。依存に加える場合は許可リストの変更になるので確認を取る。
 
@@ -1143,7 +1152,10 @@ hdiutil detach /Volumes/fsopstest
     `FOF_WANTNUKEWARNING` を付けると、完全削除の前に確認のダイアログが出て止まった（30 秒で強制終了。項目は残った）。
     `\\?\` 付きのパスは `SHCreateItemFromParsingName` が `E_INVALIDARG`。`foo.` は `foo` と解釈され、隣の `foo` がごみ箱に入った。
     COM は STA・MTA・初期化なしのいずれでも動作した。
-    → 最大サイズを超える項目の扱いは未解決（方針を確認中。§12.2）。
+    → 最大サイズを超える項目は、事前確認と `FOF_WANTNUKEWARNING` の併用で対処する（§12.2。事前確認の詳細は V19）。
+- **V19** Windows: §12.2 のごみ箱の設定と最大サイズの事前確認が、実際の動作を正しく予測するか。
+  レジストリ（ボリュームの設定・グループポリシー）が読めるか。最大サイズの境界（ちょうど・1 バイト超・割り当て単位での切り上げ）、フォルダ（中身の合計）、
+  ごみ箱に既に項目がある場合（古い項目が消されて入るのか、完全削除されるのか）の動作。
 
 ---
 
