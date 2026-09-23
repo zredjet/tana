@@ -361,7 +361,7 @@ const (
 - ボリュームのルート、デバイスパスは `KindInvalidRequest`（§8.1）。
 - `OpCopy` / `OpMove` では、`DestDir` が存在するフォルダであること（`os.Stat` で確認。`DestDir` 自体がリンクの場合は辿ってよい）。
 - `OpTrash` / `OpDelete` では、`DestDir` が空文字であること。
-- 以上を満たさない場合、`NewPlan` は error を返す。`NewPlan` が error を返すのは、この節で挙げたリクエスト全体の問題の場合だけとする。
+- 以上を満たさない場合、`NewPlan` は error（`*OpError`）を返す。Kind は、`DestDir` が存在しなければ `KindNotFound`、それ以外は `KindInvalidRequest`。`NewPlan` が error を返すのは、この節で挙げたリクエスト全体の問題の場合だけとする。
   §6.2 以降の項目ごとの問題は `Item.Err` に入れ、ほかの項目の計画は続ける。
 
 ### 6.2 項目ごとの判定
@@ -422,7 +422,7 @@ const (
 - 上書き（`DecisionOverwrite`）の直前に上書き先を `Lstat` し、計画時に記録した fileID と種類に一致する場合だけ上書きする。
   一致しなければ計画後に現れた衝突とみなし、`OutcomeSkipped`（`KindExist`）にする（I1）。
   上書き先が消えていれば、衝突なしとして排他リネームで書く。
-- マージ（`DecisionMerge`）の直前にもマージ先を `Lstat` し、計画時の fileID と一致するフォルダ（`TypeDir`）であることを確かめる。
+- マージ（`DecisionMerge`）の直前にも（内側の衝突のマージも含め、マージのたびに）マージ先を `Lstat` し、計画時の fileID と一致するフォルダ（`TypeDir`）であることを確かめる。
   一致しない場合（ファイル・リンク・ジャンクションに置き換えられた場合を含む）は `OutcomeSkipped`（`KindExist`）にする。
   消えていれば、衝突なしとして `os.Mkdir` から始める。
 - 計画時にあったコピー元が消えていたら `OutcomeFailed`（`KindNotFound`）。
@@ -459,7 +459,7 @@ const (
 - `filepath.IsAbs` が偽のパスは `KindInvalidRequest`。受け取ったパスは `filepath.Clean` する。
 - Windows では `C:\...` と UNC（`\\server\share\...`）を受け付ける。
   ドライブ相対（`C:foo`）、ルート相対（`\foo`）、呼び出し側が付けた `\\?\` は拒否する。
-  デバイスパス（`\\.\`）と NT 形式（`\??\`）も拒否する。
+  デバイスパス（`\\.\`）と NT 形式（`\??\`）、ドライブ指定以外に `:` を含むパス（代替データストリームの指定）も拒否する。
 - ボリュームのルート（`C:\`、`\\server\share\`、`/`）は `Sources` に指定できない（`KindInvalidRequest`）。`DestDir` には指定してよい。
 
 ### 8.2 Windows のパス（`\\?\` 形式）
@@ -469,7 +469,7 @@ const (
 - 理由: `\\?\` のないパスは Win32 のパス正規化を受け、末尾の `.` と空白が取り除かれ、`CON` などの予約名がデバイスとして解釈される。
   NTFS 上には WSL などで作られたこうした名前のエントリが存在しうるため、走査で得た名前をそのまま結合すると、別のファイル（`foo.` に対する `foo`）やデバイスを操作してしまう。
   また、`os` パッケージは 248 文字未満のパスには `\\?\` を付けない。
-- 呼び出し側から受け取るパスと、結果・エラーで返すパスは、`\\?\` の付かない形とする（§8.1）。
+- 呼び出し側から受け取るパスと、結果・エラー・進捗（`Progress.Current`）で返すパスは、`\\?\` の付かない形とする（§8.1）。
 - シンボリックリンクのリンク先の文字列は変換しない（§14.2）。
 - `\\?\` を受け付けない API（`SHFileOperationW` など）では、長いパスを扱えない場合がある（§12.2、V4）。
 - `os` の各関数が `\\?\` 形式のパスを期待どおりに扱えることは V11 で確かめる。
@@ -680,7 +680,11 @@ const (
 
 `os.RemoveAll` や `filepath.WalkDir` の既定の動作に頼らず、自前で走査する。
 
-- `os.ReadDir` と `os.Lstat` を使い、リンクを辿らない。
+- リンクを辿らずに列挙する。
+  - Unix: `os.ReadDir` と `Lstat`（下記のハンドルで入ったフォルダでは `fstatat(AT_SYMLINK_NOFOLLOW)`）。
+  - Windows: フォルダのハンドルに `GetFileInformationByHandleEx` の `FileIdExtdDirectoryInfo` を使い、名前・属性・リパースタグ・ファイル ID・サイズ・更新日時を 1 回の列挙で得る。
+    ボリュームシリアル番号はフォルダのハンドルから取る。対応しないファイルシステムでの扱いは V14 の結果で決める。
+- fileID は、計画の走査では衝突先と §8.3 の判定に必要なものだけ取得する。実行時の走査では列挙で得たものを使う。
 - 入り込むのは、§14.1 で `TypeDir` と判定したエントリだけ。`TypeSymlink`、`TypeJunction`、`TypeSpecial` には入り込まない（I4）。
 - 名前順に処理する。
 - 走査は、計画（§6.3）、コピー（§10.2）、移動（§11）、完全削除（§13.2）で使う。
@@ -701,16 +705,20 @@ const (
 - フォルダは中身を消した後に `os.Remove`（空でなければ失敗するので、消し残しがあれば自然に残る。`KindNotEmpty`）。
 - 1 件失敗しても残りは続け、トップレベルの結果を `OutcomePartial` にする。
 - Windows の読み取り専用ファイルは削除に失敗する。属性を勝手に外さず `KindReadOnly` として報告する。
+- Windows のフォルダの読み取り専用属性は保護を意味しないため、フォルダに限り属性を外してから削除してよい（V15 の結果で決める）。削除に失敗したら属性を元に戻す。
 
 ### 13.3 記録した項目だけの削除（移動元の削除）
 
 - §11.2 で記録した一覧のエントリだけを削除する。
-- 削除の直前に `Lstat` し直し、記録と一致するエントリだけを削除する。
+- 削除の直前に照合し、記録と一致するエントリだけを削除する。
+  照合は、Unix では §13.1 のハンドルからの相対の `fstatat(AT_SYMLINK_NOFOLLOW)`、Windows では祖先のハンドルを開いたままの `Lstat` で行う。
   照合するのは、ファイルとリンクでは fileID・種類・サイズ・更新日時、フォルダでは fileID と種類だけとする（フォルダの更新日時は中身を消すと変わるため）。
   一致しないもの（コピー後に変更・置き換えられたもの）は削除せず、`Details` に `KindSourceChanged` で報告する。
   コピー後・削除前に移動元のファイルが編集・保存された場合に、その変更を失わないため（I2）。
 - ファイルとリンクを先に消し、フォルダは深い順に `os.Remove` する。空でなければ残す（コピー中に追加されたファイルがあると空にならないため、そのファイルは残る）。
 - フォルダへの入り方は §13.1 に従う。
+- Windows では、照合で一致したエントリに読み取り専用属性があれば、属性を外してから削除する。
+  移動先には属性を保持した複製があり、利用者は移動を指示しているため。削除に失敗したら属性を元に戻す。macOS のロック（`UF_IMMUTABLE`）は外さない。
 
 ---
 
@@ -721,7 +729,7 @@ const (
 - Unix: `Lstat` のモードで判定する。シンボリックリンクは `TypeSymlink`。FIFO・ソケット・デバイスは `TypeSpecial`。
 - Windows: Go のモードビットだけに頼らない。Go 1.23 以降、ジャンクションは `ModeSymlink` ではなくなり、シンボリックリンク以外のリパースポイントは `ModeIrregular` になるなど、Go のバージョンで扱いが変わってきたため。次の手順で判定する。
   1. ファイル属性（`FileInfo.Sys()` の `*syscall.Win32FileAttributeData`）に `FILE_ATTRIBUTE_REPARSE_POINT` があるか
-  2. あれば、リパースタグを取得する（`FILE_FLAG_OPEN_REPARSE_POINT` で開いて `GetFileInformationByHandleEx` の `FileAttributeTagInfo`、または `FindFirstFile` の `dwReserved0`）
+  2. あれば、リパースタグを取得する（走査中は列挙で得た `ReparsePointTag`（§13.1）。トップレベルの項目は `FILE_FLAG_OPEN_REPARSE_POINT` で開いて `GetFileInformationByHandleEx` の `FileAttributeTagInfo`）
   3. タグで分類する:
      - `IO_REPARSE_TAG_SYMLINK` → `TypeSymlink`
      - `IO_REPARSE_TAG_MOUNT_POINT` → `TypeJunction`
@@ -844,7 +852,7 @@ type OpError struct {
 
 | Kind | Windows | Unix |
 |---|---|---|
-| NotFound | `ERROR_FILE_NOT_FOUND`、`ERROR_PATH_NOT_FOUND` | `ENOENT` |
+| NotFound | `ERROR_FILE_NOT_FOUND`、`ERROR_PATH_NOT_FOUND`、`ERROR_DIRECTORY` | `ENOENT`、`ENOTDIR` |
 | Exist | `ERROR_FILE_EXISTS`、`ERROR_ALREADY_EXISTS` | `EEXIST` |
 | Permission | `ERROR_ACCESS_DENIED`（読み取り専用でない場合） | `EACCES`、`EPERM` |
 | Locked | `ERROR_SHARING_VIOLATION`、`ERROR_LOCK_VIOLATION` | `EBUSY` |
@@ -915,6 +923,8 @@ hdiutil detach /Volumes/fsopstest
 | I2 | コピー完了後・移動元の削除前に移動元のファイルを書き換える → そのファイルは消えない、`OutcomeCopiedSourceKept` | CROSSVOL |
 | I2 | ボリュームをまたぐマージ移動で、内側の衝突を Skip に決定 → スキップしたものだけ移動元に残り、ほかは移動される | CROSSVOL |
 | I2 | 移動元の削除に失敗（ロック）→ `OutcomeCopiedSourceKept`、移動先は完全 | CROSSVOL・Windows |
+| I2 | 移動元の削除中にキャンセル（フックで注入）→ `OutcomeCopiedSourceKept`、移動先は完全 | CROSSVOL |
+| I2 | 読み取り専用のファイルをボリュームをまたいで移動 → 移動元が消え、移動先で属性が保持される | CROSSVOL |
 | I3 | ファイルの途中でキャンセル（5 MiB 以上のファイル）→ 最終名のファイルも一時ファイルも残らない | 共通 |
 | I3 | 書き込み途中に障害を注入 → 同上 | 共通 |
 | I4 | 先に目印ファイルを置いたリンク（ジャンクション・シンボリックリンク）を含むツリーを完全削除 → 目印ファイルが残る | 共通（ジャンクションは Windows） |
@@ -936,6 +946,7 @@ hdiutil detach /Volumes/fsopstest
 | 計画 | 重複・入れ子の `Sources` → `KindInvalidRequest` | 共通 |
 | 計画 | ボリュームのルート、`\\.\` 形式の `Sources` → `KindInvalidRequest` | 共通・Windows |
 | 計画 | 計画の作成前後でファイルシステムが変化しない | 共通 |
+| 計画 | 同じ Plan を 2 回・並行して Execute → 2 回目は何もせず error | 共通 |
 | パス | 相対パス、ドライブ相対パス（`C:foo`）、`\\?\` 付きの拒否 | 共通・Windows |
 | パス | 260 文字を超えるパスのコピー・移動・完全削除 | Windows |
 | パス | 末尾が `.`・空白の名前、予約名（`CON`）を含むツリーのコピー・移動・完全削除 → 同名の別ファイル（`foo`）に影響しない | Windows（V11） |
@@ -951,6 +962,7 @@ hdiutil detach /Volumes/fsopstest
 | 検証 | コピー中にコピー元が変更された → `KindSourceChanged`、一時ファイルなし | 共通 |
 | 容量 | 空き容量不足の見込みが `Warnings` に入る | CROSSVOL |
 | 容量 | 書き込み中の容量不足 → `KindNoSpace`、残りは Skipped | CROSSVOL（他のテストと並行実行しない） |
+| 容量 | 容量不足の後も、同じボリュームへの移動（`MethodRename`）の項目は続行される | CROSSVOL |
 | ごみ箱 | ごみ箱に入り、元の場所から消えている（Windows: `$I` ファイル、macOS: `TrashedPath`） | TRASH（V5、V10） |
 | 並行性 | 進捗コールバックまわりにデータ競合がない | macOS（`-race`） |
 
@@ -977,7 +989,7 @@ hdiutil detach /Volumes/fsopstest
 - **ubuntu ジョブ（`ubuntu-latest`、公開・非公開に関わらず毎回実行）**
   1. `gofmt -l .` の出力が空であること
   2. `go vet ./...`、`GOOS=windows go vet ./...`、`GOOS=darwin CGO_ENABLED=0 go vet ./...`
-  3. ごみ箱が使えないことを確かめるテスト（§18.4 の I5 の行）の実行
+  3. ごみ箱が使えないことを確かめるテスト（§18.4 の I5 の行）の実行（フェーズ10で追加）
 - VHD とディスクイメージの作成はフェーズ2で追加する。フェーズ1では `go vet`・`go test` と ubuntu ジョブだけ。
 
 ---
@@ -1005,6 +1017,9 @@ hdiutil detach /Volumes/fsopstest
   `SHFileOperationW`（`FOF_ALLOWUNDO | FOF_NOCONFIRMATION`）が確認なしに完全削除するか。
   完全削除する場合は、`IFileOperation` の進捗通知（`PreDeleteItem` のフラグ `TSF_DELETE_RECYCLE_IF_POSSIBLE`）で完全削除になる項目を中止する方式（§21 の移行を前倒しする）と、
   設定の事前確認のどちらにするかを、結果を見て決める（§12.2）。
+- **V14** Windows: `FileIdExtdDirectoryInfo` による列挙が NTFS・exFAT・FAT32 の VHD で使えるか。得られるファイル ID・リパースタグが `FileIdInfo`・`FileAttributeTagInfo` と一致するか。
+  使えないファイルシステムでは `FileIdBothDirectoryInfo` などに切り替えるかを、結果を見て決める（§13.1）。
+- **V15** Windows: 読み取り専用属性の付いた空のフォルダを `RemoveDirectory`（`os.Remove`）で削除できるか（§13.2）。
 
 ---
 
