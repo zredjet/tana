@@ -1321,7 +1321,12 @@ hdiutil detach /Volumes/fsopstest
   上限ちょうど（大きさ 4 GiB − 1）は容量不足になるはずで、上限を超える場合と比べる。上限のない exFAT でも同じことをして比べる。
   - 手元の macOS 26（`hdiutil` の 64 MB のイメージ、Go 1.27.1）: FAT32 では上限を超える書き込み・大きさの変更が `EFBIG`（27）、上限ちょうどは `ENOSPC`（28）。
     exFAT ではどれも `ENOSPC`。どの場合もファイルの大きさは 0 のまま。
-  - **結果:** （CI の結果を待つ）
+  - **結果（2026-09-24、windows-latest・macos-latest・ubuntu-latest、Go 1.27.1。64 MB のボリューム）:**
+    macOS の FAT32 と Linux の vfat では、上限を超える書き込み・大きさの変更が `EFBIG`（27）、上限ちょうどは `ENOSPC`（28）で、区別できる
+    （Linux の vfat は、上限ちょうどの失敗の後に、確保できた分（約 63 MB）だけ大きくなったファイルを残した。macOS はどれも大きさ 0 のまま）。
+    macOS の exFAT はどれも `ENOSPC`。Windows では FAT32・exFAT とも、上限を超える場合も含めてどれも `ERROR_DISK_FULL`（112）で、大きさは 0 のまま。
+    Windows は空き容量を先に確かめているとみられ、64 MB のボリュームでは上限を超えたときのエラー番号がわからない（未確定）。
+    → Unix の `EFBIG` は容量不足と区別できる。Windows は、空きが 4 GiB を超える FAT32 のボリュームで確かめてから決める。
 
 ---
 
