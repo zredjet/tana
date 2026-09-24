@@ -59,6 +59,7 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 | リンクを辿らない列挙（`walk*.go` `readDir`） | TestReadDirNotADir、TestReadDirJunction | 共通・Windows |
 | 完全削除の走査で、開いたハンドルで確かめてから入る（`secdir_*.go` `openSecDir`、`remove.go` `enter`・`deleteContents`） | TestDeleteKeepsLinkTargets、TestDeleteDirReplacedByLinkBeforeEnter、TestDeleteTopLevelLinks、TestDeleteDirReplacedByFileBeforeRemove | 共通・Windows |
 | 移動元の削除の走査（`remove.go` `removeRecorded`） | TestRemoveRecordedDirReplacedByLink、TestMoveCrossVolumeLinks | 共通・CROSSVOL |
+| ハンドルを閉じた後のフォルダの削除（Windows: `secdir_windows.go` `removeDirVerified` の確かめたハンドルでの削除、Unix: `rmdir`・`unlinkat(AT_REMOVEDIR)`） | TestDeleteDirReplacedByLinkBeforeRemove、TestRemoveRecordedDirReplacedByLinkBeforeRemove、TestMoveMergeDirReplacedByLinkBeforeRemove | 共通 |
 | コピーでリンクに入らない（`copy.go` `copyEntry`・`copyDir`・`copySymlink`） | TestCopyTreeWithLinks、TestCopyDirReplacedByLink、TestCopyLinkSkip | 共通 |
 | コピーのメタデータの設定がリンクを辿らない（`meta_*.go` `setMetaSys` の O_NOFOLLOW・リパースポイントを開かない、fileID の確認） | TestCopyTreeWithLinks（リンク先の更新日時・権限が変わらない）、TestCopyQuarantine | 共通・macOS |
 | 同一ボリュームのマージ移動で、開いたハンドルで確かめてから入る（`move.go` `merge`） | TestMoveMergeDirReplacedByLink、TestMoveMergeLinks | 共通 |
@@ -107,11 +108,8 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 見つかったものを挙げる（まだ直していない）。
 
 1. （解決済み）Windows の、別名になりうる名前と長いパスのコピー・移動。I6 の表の TestCopyWin32UnsafeNames などでテストした。
-2. **ハンドルを閉じた後のパスでのフォルダの削除**（I4）。
-   完全削除のトップレベルのフォルダ、§13.3 のトップレベルのフォルダ、同一ボリュームのマージ移動で空になった移動元のフォルダは、
-   ハンドルを閉じてからパスで `rmdir`・`RemoveDirectoryW` する（§13.1「フォルダ自体を削除する直前に閉じる」）。
-   その間にジャンクションへ置き換えられると、Windows ではそのジャンクション自体を削除しうる（リンクの先には入らないが、計画にないエントリを消す）。
-   この隙間を突く注入のテストはない。
+2. （解決済み）ハンドルを閉じた後のパスでのフォルダの削除。Windows では確かめたハンドルで削除するように直した（§13.2）。I4 の表の TestDeleteDirReplacedByLinkBeforeRemove などでテストした。
+   ファイル（`DeleteFileW`）は、まだパスで削除している（判定の後に別のファイルへ置き換えられると、それを消しうる）。
 3. **一時ファイルが最終名にする前に置き換えられた場合**（I1・I3）。
    `finalize` は一時ファイルの名前をリネームするので、書き終えた後に一時ファイルが別のものに置き換えられると、それを最終名にしてしまう。
    メタデータの設定と VerifyHash の読み直しは fileID を確かめるが、最終名へのリネームの直前には確かめていない。テストもない。

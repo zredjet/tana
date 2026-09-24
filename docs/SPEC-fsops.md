@@ -755,7 +755,7 @@ const (
     中身の削除は `unlinkat`、マージ移動での中身の移動は `renameatx_np` / `renameat2`（どちらも開いたフォルダからの相対）で行う。
   - Windows: `FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT` で、共有モードに `FILE_SHARE_DELETE` を含めずに開く。
     リパースポイントでないことと、fileID が一致することを確かめる。そのフォルダの処理が終わるまでハンドルを閉じない
-    （開いている間、そのフォルダは名前の変更・削除・リンクへの置き換えができない）。フォルダ自体を削除する直前に閉じる。
+    （開いている間、そのフォルダは名前の変更・削除・リンクへの置き換えができない）。フォルダ自体を削除する直前に閉じ、削除は §13.2 の確かめたハンドルで行う。
   - 確認できなければ、そのフォルダには入らず `KindSourceChanged` で失敗にする。
 
 ### 13.2 完全削除（`OpDelete`）
@@ -766,8 +766,15 @@ const (
   | 種類 | Unix | Windows |
   |---|---|---|
   | ファイル・特殊なファイル・ファイル用のシンボリックリンク | `unlink`（§13.1 のハンドルで入ったフォルダの中では `unlinkat(fd, name, 0)`） | `DeleteFileW` |
-  | フォルダ | `rmdir`（同 `unlinkat(fd, name, AT_REMOVEDIR)`） | `RemoveDirectoryW` |
-  | フォルダ用のシンボリックリンク・ジャンクション（Windows） | — | `RemoveDirectoryW` |
+  | フォルダ | `rmdir`（同 `unlinkat(fd, name, AT_REMOVEDIR)`） | 確かめたハンドルでの削除（下記） |
+  | フォルダ用のシンボリックリンク・ジャンクション（Windows） | — | 確かめたハンドルでの削除（下記） |
+
+  - Windows のフォルダ属性のあるエントリ（フォルダ、フォルダ用のリンク、ジャンクション）は、`RemoveDirectoryW` をパスで呼ぶ代わりに、
+    削除のアクセス権で `FILE_FLAG_OPEN_REPARSE_POINT` を付けて開き、fileID と種類（§14.1）が走査で得たものと一致することを確かめてから、
+    同じハンドルに `FileDispositionInfo` で削除の印を付ける。一致しなければ削除せず `KindSourceChanged`。
+    フォルダのハンドルを閉じてから削除するまでの間にジャンクションへ置き換えられても、置き換えたものを消さないため（2026-09-24 の CI で、
+    `RemoveDirectoryW` ではジャンクションが消えることを確認した）。
+    Unix の `rmdir`・`unlinkat(AT_REMOVEDIR)` は、シンボリックリンクに置き換えられていれば失敗するので、そのままでよい。
 
   - Windows のフォルダ用・ファイル用の区別は、エントリの属性（`FILE_ATTRIBUTE_DIRECTORY`）で決める。`TypeSpecial` も同じ。
   - Windows では、パスは §8.2 の helper で `\\?\` 形式にしてから渡す。
@@ -781,7 +788,8 @@ const (
   削除が `ERROR_ACCESS_DENIED`・`ERROR_DIRECTORY`（Unix では `EISDIR`・`ENOTDIR`・`EPERM`）で失敗したら `Lstat` し直し、種類が変わっていれば `KindSourceChanged` とする。
 - 1 件失敗しても残りは続け、トップレベルの結果を `OutcomePartial` にする。
 - Windows の読み取り専用ファイルは削除に失敗する（`DeleteFileW` は `ERROR_ACCESS_DENIED` を返し、ファイルと属性は残る。V15 で確認済み）。属性を勝手に外さず `KindReadOnly` として報告する。
-- Windows のフォルダの読み取り専用属性は保護を意味しないため、フォルダに限り属性を外してから削除する（読み取り専用属性の付いたフォルダは、空でも `RemoveDirectoryW` が `ERROR_ACCESS_DENIED` で失敗する。V15）。削除に失敗したら属性を元に戻す。
+- Windows のフォルダの読み取り専用属性は保護を意味しないため、フォルダに限り属性を外してから削除する（読み取り専用属性の付いたフォルダは、空でも `RemoveDirectoryW` が `ERROR_ACCESS_DENIED` で失敗する。V15）。
+  属性は、上記の確かめたハンドルで外し、削除に失敗したら元に戻す。
 
 ### 13.3 記録した項目だけの削除（移動元の削除）
 
