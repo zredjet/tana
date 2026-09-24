@@ -87,7 +87,7 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 | 計画時の事前確認（`trash.go` `trashPrecheck`、`trash_windows.go` `trashAvailable`・`recycleCapacity`・`hasWin32UnsafeComponent`） | TestNewPlanTrashPrecheck、TestTrashPrecheckWindows、TestTrashPrecheckCapacity | 共通・Windows・NUKE/SMALL |
 | 実行時にもう一度、今の大きさで確かめる（`trash.go` `trashItem`） | TestTrashExecuteRecheck（本物のごみ箱は呼ばない。`noRealTrash`） | Windows・SMALL |
 | 計画時に使えない項目を、実行時に何もせず失敗にする（`execute.go` `run`、`trash.go` `trashItem`） | TestTrashWindowsUnavailable（本物のごみ箱は呼ばない。`noRealTrash`）、TestTrashUnavailable | Windows・ubuntu・macOS（`CGO_ENABLED=0`） |
-| ごみ箱へ移す操作が成功を返しても、元の場所に残っていれば失敗にする（`trash.go` `trashItem`。ごみ箱に入ったと報告しない） | TestTrashReportedButLeft（`trashCall` フックで、成功を返して何もしない呼び出しに差し替える） | Windows・macOS（cgo） |
+| ごみ箱へ移す呼び出しの結果を、呼び出しが返した成否ではなく、呼び出しの後の状態で決める（`trash.go` `trashOutcome`。§12.1）。成功を返しても残っていれば Failed、失敗を返してもごみ箱に入っていれば Done、消えたのにごみ箱の中の項目がなければ TrashUnconfirmed（完全に削除された可能性を伝える） | TestTrashReportedButLeft、TestTrashOutcomeFromState（`trashCall` フックで呼び出しを差し替える） | Windows・macOS（cgo） |
 | PreDeleteItem での中止（二つ目の防御。`trash_ifo_windows.go` `progressSink.preDelete`） | TestTrashPreDeleteAbort、TestProgressSink | TRASH・NUKE・Windows |
 | 事前確認が見落とした最大サイズ超過の最後の防御（`FOF_WANTNUKEWARNING` の確認ダイアログ） | TestTrashOverCapacityBypass | TRASH・SMALL |
 | フォルダの中身ごとの結果の扱い（`progressSink.postDelete`。最初のパスと最初の失敗）。成功の通知でも `psiNewlyCreated` が NULL なら完全削除として失敗にする（V18、§12.2 の手順 5） | TestProgressSink | Windows |
@@ -170,7 +170,8 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 14. （解決済み。2026-09-25 の監査）fileID を記録した後の一時ファイルの削除が、名前だけで消していた（§10.1 の手順 8 と違い、一時ファイルを置き換えたものを消しうる）。
     照合してから消すように直した（TestTempReplacedBeforeVerify）。
 15. （解決済み。2026-09-25 の監査）Windows のごみ箱で、最大サイズを超えて完全に削除された項目（`psiNewlyCreated` が NULL）を Done と報告しうる（I5）。
-    失敗（`KindTrashUnavailable`）にするように直した（TestProgressSink。§12.2 の手順 5）。項目はすでに削除されているので、報告を正すだけで、防御は事前確認と `FOF_WANTNUKEWARNING`。
+    `OutcomeTrashUnconfirmed`（`KindTrashUnavailable`）にするように直した（TestProgressSink、TestTrashOutcomeFromState。§12.1、§12.2 の手順 5）。
+    あわせて、ごみ箱に入ったのに失敗と報告する逆向きの誤りも、呼び出しの後の状態で結果を決める規則（§12.1）で直した。項目はすでに削除されているので、報告を正すだけで、防御は事前確認と `FOF_WANTNUKEWARNING`。
 16. （解決済み。2026-09-25 の監査）Windows の Zone.Identifier をパスで書くとき、照合の後に名前をリンクへ置き換えられると、リンク先に書きえた（I4）。
     照合に使うハンドルを、名前の変更を許さずに開くように直した（TestCopyZoneIdentifierLinkSwap。属性だけのアクセス権のハンドルは共有モードの検査の対象にならないので、読み取りのアクセス権も要求する）。
 17. （解決済み。2026-09-25 の監査）ごみ箱が使えないことを確かめるテストの一部が `FSOPS_TEST_TRASH` を見ず、防御が壊れると本物のごみ箱を呼びえた。
@@ -189,7 +190,8 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
     - §8.4 の代わりの手段で、確保の後に失敗したときの片付け（`rename_unix.go` の手順 2・4、`removeIfSame`）。
     - `openSecDir` の二重の防御（O_NOFOLLOW と fileID の照合）の片方ずつ、Unix の `setMetaIn` の O_NOFOLLOW だけ。
     - Unix の移動元の削除のやり直しは、§13.3 の照合（`matches`）をやり直さない。Unix では使用中のやり直しが起きない（`lockRetrySys` が偽）ので、注入した失敗でだけ通る。
-    - ごみ箱: パスの途中の予約名（`root\CON\x.txt`）の事前確認、`PostDeleteItem` が届かない場合（`!posted`）、ごみ箱へ渡す名前の NFC・NFD・大文字小文字（TRASH）。
+    - ごみ箱: パスの途中の予約名（`root\CON\x.txt`）の事前確認、ごみ箱へ渡す名前の NFC・NFD・大文字小文字（TRASH）。`PostDeleteItem` が届かない場合（`!posted`）の報告は、
+      §12.1 の規則でどの状態でも正しくなるが（TestTrashOutcomeFromState）、Windows のその分岐自体はテストされていない。
     - 名前: 不正な UTF-16（Windows）・不正な UTF-8（Linux）の名前、macOS での大文字小文字だけが違うトップレベルのコピー。
     - 移動での容量不足、書き込み中に上限を超える KindFileTooLarge、検証でのコピー元の変化（コピーではテストしている。実験では移動元が残った）。
 22. （要確認）Windows の exFAT・FAT32 で、同じ名前のコピー元 2 件の両方に上書きを承認すると、ファイルインデックスがディレクトリエントリの位置に基づく（V16）ため、
