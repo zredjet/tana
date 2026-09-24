@@ -257,3 +257,34 @@ func TestMoveMergeCancel(t *testing.T) {
 		t.Errorf("left %+q, moved %+q: want a partial move without losing anything", left, moved)
 	}
 }
+
+// TestMoveMergeOtherVolumes は、exFAT・FAT32 の中での同一ボリュームのマージ移動を確かめる。
+// macOS の exFAT では、開いたフォルダからの相対の排他リネームに §8.4 の代わりの手段が使われる（V12）。
+// 計画後に現れた衝突は上書きせず Skipped（KindExist）になる（I1）。
+func TestMoveMergeOtherVolumes(t *testing.T) {
+	t.Parallel()
+	for _, env := range []string{testfs.ExFATEnv, testfs.FAT32Env} {
+		t.Run(env, func(t *testing.T) {
+			t.Parallel()
+			root := testfs.EnvDir(t, env)
+			testfs.Build(t, root, testfs.Tree{
+				"src/m/a.txt": testfs.File("a"), "src/m/sub/b.txt": testfs.File("b"), "src/m/appear.txt": testfs.File("mine"),
+				"dest/m/old.txt": testfs.File("old"),
+			})
+			plan := sameMove(t, root, "m")
+			decide(t, plan, filepath.Join(root, "dest", "m"), DecisionMerge)
+			testfs.WriteFile(t, filepath.Join(root, "dest", "m", "appear.txt"), "appeared")
+			res := execPlan(t, context.Background(), plan, ExecOptions{})
+			it := res.Items[0]
+			if it.Outcome != OutcomePartial || len(it.Details) != 1 || it.Details[0].Err == nil || it.Details[0].Err.Kind != KindExist {
+				t.Errorf("result = %+v, want Partial with appear.txt skipped by KindExist", it)
+			}
+			wantFiles(t, root, map[string]string{
+				"dest/m/a.txt": "a", "dest/m/sub/b.txt": "b", "dest/m/old.txt": "old", "dest/m/appear.txt": "appeared", "src/m/appear.txt": "mine",
+			})
+			if got := testfs.ListNames(t, filepath.Join(root, "src", "m")); !slices.Equal(got, []string{"appear.txt"}) {
+				t.Errorf("left in src/m: %+q", got)
+			}
+		})
+	}
+}
