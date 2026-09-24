@@ -32,6 +32,9 @@ type testHooks struct {
 	// bypassTrashPrecheck は、実行時のごみ箱の事前確認（§12.2）を飛ばす。事前確認が見落とした場合の二つ目の防御
 	// （Windows の PreDeleteItem での中止。§12.2 の手順 4）を確かめるためだけに使う。
 	bypassTrashPrecheck bool
+	// beforeOpenDest は、コピー・マージ移動で、書き込み先のフォルダを作った（マージでは照合した）後、それを開いて確かめる直前に、
+	// そのパスで呼ばれる（書き込み先のフォルダをリンクへ置き換える注入用。総点検の穴 4）。
+	beforeOpenDest func(dst string)
 }
 
 func (h *testHooks) enterDir(path string) {
@@ -93,3 +96,9 @@ func (h *testHooks) syncDir(dir string) error {
 }
 
 func (h *testHooks) trashPrecheck() bool { return h == nil || !h.bypassTrashPrecheck }
+
+func (h *testHooks) openDest(dst string) {
+	if h != nil && h.beforeOpenDest != nil {
+		h.beforeOpenDest(dst)
+	}
+}

@@ -64,6 +64,7 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 | コピーでリンクに入らない（`copy.go` `copyEntry`・`copyDir`・`copySymlink`） | TestCopyTreeWithLinks、TestCopyDirReplacedByLink、TestCopyLinkSkip | 共通 |
 | コピーのメタデータの設定がリンクを辿らない（`meta_*.go` `setMetaSys` の O_NOFOLLOW・リパースポイントを開かない、fileID の確認） | TestCopyTreeWithLinks（リンク先の更新日時・権限が変わらない）、TestCopyQuarantine | 共通・macOS |
 | 同一ボリュームのマージ移動で、開いたハンドルで確かめてから入る（`move.go` `merge`） | TestMoveMergeDirReplacedByLink、TestMoveMergeLinks | 共通 |
+| 書き込み先のフォルダ（DestDir・作ったフォルダ・マージ先）を確かめて開き、中の操作をそのハンドルで行う（`secdir_*.go` `openDestRoot`・`openNewSecDir`・`renameBetween` など、`copy.go` `copyDir`、`move.go` `merge`） | TestCopyMergeDestReplacedAfterCheck、TestCopyCreatedDestReplacedAfterMkdir、TestMoveMergeDestReplacedAfterCheck | 共通 |
 | ごみ箱に入れる項目の大きさを数える走査（`trash_windows.go` `itemSize`）と、リンク自体だけを入れること | TestTrash（リンクを含むフォルダ、トップレベルのリンク・ジャンクション） | TRASH |
 
 ## I5 黙って完全削除しない
@@ -114,9 +115,9 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 3. （解決済み。ごく短い隙間は残る）一時ファイルが最終名にする前に置き換えられた場合。リネームの直前に一時ファイルの fileID・大きさを確かめ、
    置き換えられていれば最終名にせず、置き換えたものも消さないように直した（§10.1 の手順 7・8）。I3 の表の TestCopyTempReplacedBeforeFinalRename でテストした。
    確かめてからリネームするまでの間の、ごく短い隙間は残る（リネームは名前で行うため）。
-4. **照合の後にマージ先・上書き先を置き換えられた場合**（I1、書き込み先がリンクの先になる）。
-   §7.3 の照合（`checkTarget`）はマージの開始時・上書きの直前に行うが、その後にマージ先をリンクへ置き換えられると、中身はリンクの先に書かれる。
-   上書きでも、照合と置換リネームの間は `Lstat` による確認だけ（SPEC で許容）。照合より前の置き換えだけをテストしている。
+4. （解決済み。上書き先のエントリ自体の隙間は残る）照合の後にマージ先・作ったフォルダを置き換えられた場合。書き込み先のフォルダも §13.1 の方法で開いて確かめ、
+   中の操作をそのハンドルで行うように直した（§13.1、§10.2、§11.1）。I4 の表の TestCopyMergeDestReplacedAfterCheck などでテストした。
+   上書き先のエントリ自体を、照合と置換リネームの間に置き換えられる、ごく短い隙間は残る（§7.3 の `Lstat` による照合として SPEC で許容）。
 5. **§8.4 の代わりの手段の残る危険**（I1・I3）。名前を確保してから置き換えるまでの間に、確保した名前が消されて作り直された場合に上書きしうる（SPEC §8.4 に明記済み）。
    また、名前を確保した後・置き換える前にプロセスが強制終了すると、最終名の空のファイル・空のフォルダが残る（書きかけの内容ではないが、最終名に中身のないものが残る）。
    このどちらのテストもない。

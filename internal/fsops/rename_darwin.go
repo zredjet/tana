@@ -20,14 +20,15 @@ func renameExclusiveSys(s, d string) error {
 	return nil
 }
 
-// renameAtExclusiveSys は、フォルダ fd の中の name を d へ排他リネームする（§13.1 のマージ移動。renameatx_np(RENAME_EXCL)）。
-func renameAtExclusiveSys(fd int, name, d string) error {
-	err := unix.RenameatxNp(fd, name, unix.AT_FDCWD, d, unix.RENAME_EXCL)
+// renameAtExclusiveSys は、フォルダ sfd の中の s を、フォルダ dfd の中の d へ排他リネームする（§8.4。renameatx_np(RENAME_EXCL)）。
+// AT_FDCWD ならパス。§13.1 の、確かめて開いたフォルダからの相対の操作に使う。
+func renameAtExclusiveSys(sfd int, s string, dfd int, d string) error {
+	err := unix.RenameatxNp(sfd, s, dfd, d, unix.RENAME_EXCL)
 	if errors.Is(err, unix.ENOTSUP) {
-		return reserveThenRenameAt(fd, name, d)
+		return reserveThenRenameAt(sfd, s, dfd, d)
 	}
 	if err != nil {
-		return &os.LinkError{Op: "renameatx_np", Old: name, New: d, Err: err}
+		return &os.LinkError{Op: "renameatx_np", Old: s, New: d, Err: err}
 	}
 	return nil
 }

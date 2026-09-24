@@ -61,11 +61,12 @@ func dirMetaSys(s string) (srcMeta, error) {
 	return srcMeta{mtime: time.Unix(0, d.LastWriteTime.Nanoseconds()), attrs: d.FileAttributes}, nil
 }
 
-// setMetaSys は、fsops が作ったファイル（一時ファイル）・フォルダ s に、メタデータ m を設定する（§15）。
+// setMetaIn は、フォルダ d の中の、fsops が作ったファイル（一時ファイル）・フォルダ name に、メタデータ m を設定する（§15）。
 // リンクを辿らずに開き、fileID が作ったときの want と一致することを確かめてから設定する。
 // 設定できなかったものがあっても残りは続け、エラーをまとめて返す（呼び出し側は KindMetadata の警告にする）。
 // 順序: Zone.Identifier（書き込みが要る。書くと更新日時が変わる）→ 更新日時と属性（読み取り専用にするのは最後）。
-func setMetaSys(s string, want fileID, m srcMeta, isDir bool) error {
+func setMetaIn(d *secDir, name string, want fileID, m srcMeta, isDir bool) error {
+	s := d.sysJoin(name)
 	var errs []error
 	if len(m.extra) > 0 && !isDir {
 		if err := os.WriteFile(s+zoneStream, m.extra, 0o644); err != nil {

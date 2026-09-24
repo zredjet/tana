@@ -88,11 +88,18 @@ func (ex *executor) moveItem(i int, it Item) ItemResult {
 		return res
 	}
 	e.name = filepath.Base(it.Src)
+	// 移動先のフォルダ（DestDir）を、計画時と同じもの（fileID）であることを確かめて開き、項目の処理が終わるまで持つ（§13.1）。
+	dd, err := openDestRoot(ex.plan.req.DestDir, ex.plan.destID)
+	if err != nil {
+		res.Outcome, res.Err = OutcomeFailed, &OpError{Op: "move", Path: it.Src, Dest: it.Dst, Kind: KindOf(err), Err: err}
+		return res
+	}
+	defer dd.close()
 	mv := &mover{ex: ex}
 	var out Outcome
 	var oe *OpError
 	if pc != nil && pc.c.Decision == DecisionMerge {
-		gone, terr := checkTarget(it.Src, it.Dst, pc)
+		gone, terr := checkTarget(it.Src, it.Dst, pc, dd)
 		switch {
 		case terr != nil && terr.Kind == KindExist:
 			res.Outcome, res.Err = OutcomeSkipped, terr
@@ -101,12 +108,12 @@ func (ex *executor) moveItem(i int, it Item) ItemResult {
 			res.Outcome, res.Err = OutcomeFailed, terr
 			return res
 		case !gone:
-			out, oe, _ = mv.merge(nil, it.Src, it.Dst, e, pc)
+			out, oe, _ = mv.merge(nil, it.Src, it.Dst, e, pc, dd)
 		default:
-			res.Dst, out, oe = mv.rename(nil, it.Src, it.Dst, e, nil) // マージ先が消えていれば、衝突なしとして移動する
+			res.Dst, out, oe = mv.rename(nil, it.Src, it.Dst, e, nil, dd) // マージ先が消えていれば、衝突なしとして移動する
 		}
 	} else {
-		res.Dst, out, oe = mv.rename(nil, it.Src, it.Dst, e, pc)
+		res.Dst, out, oe = mv.rename(nil, it.Src, it.Dst, e, pc, dd)
 	}
 	if oe != nil && oe.Kind == KindCrossDevice {
 		return ex.copyThenRemove(i, it) // §11.1: トップレベルの項目は §11.2 の方式でやり直す
@@ -129,24 +136,23 @@ func (ex *executor) moveItem(i int, it Item) ItemResult {
 
 // rename は、エントリ e（src）を dst へリネームで移動する（§11.1）。pc は計画時に検出した衝突（なければ nil。マージ以外）。
 // parent が nil ならパスで、そうでなければ開いたフォルダ parent からの相対で移動する（§13.1）。
+// 移動先は、確かめて開いた移動先のフォルダ dd の中の名前として扱う（総点検の穴 4）。
 // 衝突なしは排他リネーム、上書きは §9.3 の事前確認の後に置換リネーム、自動リネームは §9.2 の候補への排他リネーム。
 // 実際の移動先のパスと結果を返す。ボリューム違いのエラーは KindCrossDevice のまま返す（呼び出し側が扱う）。
-func (mv *mover) rename(parent *secDir, src, dst string, e dirEntry, pc *planned) (string, Outcome, *OpError) {
+func (mv *mover) rename(parent *secDir, src, dst string, e dirEntry, pc *planned, dd *secDir) (string, Outcome, *OpError) {
 	do := func(d string, replace bool) error {
 		if err := mv.ex.opt.hooks.moveRename(src, d); err != nil {
 			return err
 		}
-		ds, err := sysPath(d)
-		if err != nil {
-			return err
+		from := e.name
+		if parent == nil {
+			s, err := sysPath(src)
+			if err != nil {
+				return err
+			}
+			from = s
 		}
-		if parent != nil {
-			return withUserPaths(parent.renameOut(e.name, ds, replace), src, d)
-		}
-		if replace {
-			return renameReplace(src, d)
-		}
-		return renameExclusive(src, d)
+		return withUserPaths(renameBetween(parent, from, dd, filepath.Base(d), replace), src, d)
 	}
 	var final string
 	var out Outcome
@@ -154,7 +160,7 @@ func (mv *mover) rename(parent *secDir, src, dst string, e dirEntry, pc *planned
 	switch {
 	case pc != nil && pc.c.Decision == DecisionOverwrite:
 		final = dst
-		gone, o, terr := checkOverwrite(src, dst, pc)
+		gone, o, terr := checkOverwrite(src, dst, pc, dd)
 		switch {
 		case terr != nil:
 			out, oe = o, terr
@@ -179,9 +185,26 @@ func (mv *mover) rename(parent *secDir, src, dst string, e dirEntry, pc *planned
 
 // merge は、フォルダ e（src）を既存のフォルダ dst へマージ移動する（§11.1）。中身を 1 件ずつ移動し、内側の衝突はそれぞれの決定に従う。
 // src には §13.1 の方法で入り（リンクに置き換えられていれば入らない。I4）、中身は開いたフォルダからの相対で移動する。
+// マージ先の dst も、移動先のフォルダ ddParent の中で §13.1 の方法で開いて計画時の fileID と照合し、中身はそのハンドルの中へ移動する
+// （照合した後にリンクへ置き換えられても、リンクの先へ移動しない。総点検の穴 4）。
 // 最後に移動元のフォルダが空なら §13.2 の方法で削除する。中身の結果は Details に記録し、フォルダ自体の結果と、
 // 移動元のフォルダを削除できたか（removed）を返す。
-func (mv *mover) merge(parent *secDir, src, dst string, e dirEntry, pc *planned) (out Outcome, oe *OpError, removed bool) {
+func (mv *mover) merge(parent *secDir, src, dst string, e dirEntry, pc *planned, ddParent *secDir) (out Outcome, oe *OpError, removed bool) {
+	mv.ex.opt.hooks.openDest(dst)
+	dd, derr := openSecDir(ddParent, dst, filepath.Base(dst), pc.dstID)
+	if derr != nil {
+		doe, ok := derr.(*OpError)
+		if !ok {
+			doe = &OpError{Kind: classify(derr, classifyOpts{}), Err: derr}
+		}
+		doe.Op, doe.Path, doe.Dest = "move", src, dst
+		if doe.Kind == KindSourceChanged {
+			doe.Kind = KindExist // マージ先が照合の後に置き換えられた（計画後に現れた衝突。§7.3）
+			return OutcomeSkipped, doe, false
+		}
+		return OutcomeFailed, doe, false
+	}
+	defer dd.close()
 	mv.ex.opt.hooks.enterDir(src)
 	d, err := openSecDir(parent, src, e.name, e.id)
 	if err != nil {
@@ -205,7 +228,7 @@ func (mv *mover) merge(parent *secDir, src, dst string, e dirEntry, pc *planned)
 			return OutcomeDone, nil, false
 		}
 		childSrc, childDst := filepath.Join(src, ce.name), filepath.Join(dst, ce.name)
-		final, out, oe, gone := mv.mergeEntry(d, childSrc, childDst, ce, inner[ce.name])
+		final, out, oe, gone := mv.mergeEntry(d, childSrc, childDst, ce, inner[ce.name], dd)
 		mv.entry(childSrc, final, out, oe)
 		if out != OutcomeDone || !gone {
 			left++ // 移動元に残した（中にスキップしたものが残って、フォルダ自体を消さなかった場合を含む）
@@ -242,7 +265,7 @@ func (mv *mover) merge(parent *secDir, src, dst string, e dirEntry, pc *planned)
 }
 
 // mergeEntry は、マージ移動の中のエントリ 1 件を処理する。実際の移動先のパスと結果、移動元から消えたか（gone）を返す。
-func (mv *mover) mergeEntry(d *secDir, src, dst string, e dirEntry, pc *planned) (final string, out Outcome, oe *OpError, gone bool) {
+func (mv *mover) mergeEntry(d *secDir, src, dst string, e dirEntry, pc *planned, dd *secDir) (final string, out Outcome, oe *OpError, gone bool) {
 	if pc != nil && (pc.c.Decision == DecisionUnset || pc.c.Decision == DecisionSkip) {
 		return dst, OutcomeSkipped, nil, false // 衝突の決定による Skip。移動元に残る
 	}
@@ -250,19 +273,19 @@ func (mv *mover) mergeEntry(d *secDir, src, dst string, e dirEntry, pc *planned)
 		return dst, OutcomeFailed, &OpError{Op: "move", Path: src, Dest: dst, Kind: KindSourceChanged}, false
 	}
 	if pc != nil && pc.c.Decision == DecisionMerge {
-		targetGone, terr := checkTarget(src, dst, pc)
+		targetGone, terr := checkTarget(src, dst, pc, dd)
 		switch {
 		case terr != nil && terr.Kind == KindExist:
 			return dst, OutcomeSkipped, terr, false
 		case terr != nil:
 			return dst, OutcomeFailed, terr, false
 		case !targetGone:
-			out, oe, removed := mv.merge(d, src, dst, e, pc)
+			out, oe, removed := mv.merge(d, src, dst, e, pc, dd)
 			return dst, out, oe, removed
 		}
 		pc = nil // マージ先が消えていれば、衝突なしとして移動する
 	}
-	final, out, oe = mv.rename(d, src, dst, e, pc)
+	final, out, oe = mv.rename(d, src, dst, e, pc, dd)
 	if oe != nil && oe.Kind == KindCrossDevice {
 		// §11.1: マージの途中で内側のエントリがボリューム違いになった場合は、そのエントリを失敗とする。
 		// KindCrossDevice は結果に出さない（§17）ので KindUnknown にする。

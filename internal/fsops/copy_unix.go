@@ -14,7 +14,12 @@ import (
 // 開いたファイルの fstat で、大きさ・更新日時・パーミッションを記録する（extra は含めない）。
 // 検証（§10.4）で一時ファイルを読み直すときにも使う。
 func openSourceSys(s string, want fileID) (*os.File, srcMeta, error) {
-	fd, err := unix.Open(s, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	return openRegularAt(unix.AT_FDCWD, s, want)
+}
+
+// openRegularAt は openSourceSys の、フォルダ dfd からの相対の名前 s で開く形（AT_FDCWD ならパス）。
+func openRegularAt(dfd int, s string, want fileID) (*os.File, srcMeta, error) {
+	fd, err := unix.Openat(dfd, s, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, srcMeta{}, &os.PathError{Op: "open", Path: s, Err: err}
 	}

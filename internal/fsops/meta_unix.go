@@ -24,16 +24,17 @@ func dirMetaSys(s string) (srcMeta, error) {
 	return metaFromStat(&st), nil
 }
 
-// setMetaSys は、fsops が作ったファイル（一時ファイル）・フォルダ s に、メタデータ m を設定する（§15）。
-// リンクを辿らずに開き、fileID が作ったときの want と一致することを確かめてから設定する。
+// setMetaIn は、フォルダ d の中の、fsops が作ったファイル（一時ファイル）・フォルダ name に、メタデータ m を設定する（§15）。
+// リンクを辿らずに d からの相対で開き、fileID が作ったときの want と一致することを確かめてから設定する。
 // 設定できなかったものがあっても残りは続け、エラーをまとめて返す（呼び出し側は KindMetadata の警告にする）。
 // 順序: 安全上のメタデータ（書き込み権限が要る）→ 更新日時 → パーミッション（読み取り専用にするのは最後）。
-func setMetaSys(s string, want fileID, m srcMeta, isDir bool) error {
+func setMetaIn(d *secDir, name string, want fileID, m srcMeta, isDir bool) error {
+	s := d.join(name)
 	flags := unix.O_RDONLY | unix.O_NOFOLLOW | unix.O_NONBLOCK | unix.O_CLOEXEC
 	if isDir {
 		flags |= unix.O_DIRECTORY
 	}
-	fd, err := unix.Open(s, flags, 0)
+	fd, err := unix.Openat(d.fd, name, flags, 0)
 	if err != nil {
 		return &os.PathError{Op: "open", Path: s, Err: err}
 	}
@@ -53,7 +54,7 @@ func setMetaSys(s string, want fileID, m srcMeta, isDir bool) error {
 	}
 	mt, err := unix.TimeToTimespec(m.mtime)
 	if err == nil {
-		err = unix.UtimesNanoAt(unix.AT_FDCWD, s, []unix.Timespec{mt, mt}, unix.AT_SYMLINK_NOFOLLOW)
+		err = unix.UtimesNanoAt(d.fd, name, []unix.Timespec{mt, mt}, unix.AT_SYMLINK_NOFOLLOW)
 	}
 	if err != nil {
 		errs = append(errs, &os.PathError{Op: "utimensat", Path: s, Err: err})

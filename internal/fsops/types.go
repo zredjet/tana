@@ -44,6 +44,7 @@ type Request struct {
 //
 // NewPlan が作る Plan は items が 1 件以上なので、items が空の Plan はゼロ値（NewPlan 以外で作られたもの）とみなす。
 type Plan struct {
+	destID    fileID // OpCopy / OpMove の DestDir の fileID（リンクを辿った先）。実行時に DestDir を開くときに照合する（§13.1）
 	req       Request
 	items     []Item
 	conflicts []Conflict

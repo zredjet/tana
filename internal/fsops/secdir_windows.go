@@ -13,9 +13,11 @@ import (
 // Windows では、共有モードに FILE_SHARE_DELETE を含めずに開き、そのフォルダの処理が終わるまで閉じない
 // （開いている間、そのフォルダは名前の変更・削除・リンクへの置き換えができない）。
 type secDir struct {
-	path string // \\?\ の付かない形のパス（結果とフックに使う）
-	sys  string // \\?\ 形式のパス
-	h    windows.Handle
+	path  string // \\?\ の付かない形のパス（結果とフックに使う）
+	sys   string // \\?\ 形式のパス
+	h     windows.Handle
+	id    fileID // 開いたフォルダの fileID
+	dirty bool   // 中の名前を変えた（作成・リネーム）。§10.5 の同期に使う
 }
 
 // openSecDir は、フォルダ path を開き、リパースポイント（リンク・ジャンクションなど）でないこと、fileID が want と一致することを確かめる（§13.1）。
@@ -55,8 +57,121 @@ func openSecDir(parent *secDir, path, name string, want fileID) (*secDir, error)
 		windows.CloseHandle(h)
 		return nil, &OpError{Op: "open", Path: path, Kind: KindSourceChanged, Err: err}
 	}
-	return &secDir{path: path, sys: s, h: h}, nil
+	return &secDir{path: path, sys: s, h: h, id: want}, nil
 }
+
+// openDirHandle は、\\?\ 形式のパス s のフォルダを、共有モードに FILE_SHARE_DELETE を含めずに開く（§13.1。開いている間、
+// そのフォルダは名前の変更・削除・リンクへの置き換えができない）。follow が偽ならリパースポイントを辿らない。
+// フォルダであること（follow が偽ならリパースポイントでないことも）を確かめ、fileID を返す。確かめられなければ KindSourceChanged。
+func openDirHandle(path, s string, follow bool) (windows.Handle, fileID, error) {
+	s16, err := windows.UTF16PtrFromString(s)
+	if err != nil {
+		return 0, fileID{}, err
+	}
+	flags := uint32(windows.FILE_FLAG_BACKUP_SEMANTICS)
+	if !follow {
+		flags |= windows.FILE_FLAG_OPEN_REPARSE_POINT
+	}
+	h, err := windows.CreateFile(s16, windows.FILE_LIST_DIRECTORY|windows.FILE_READ_ATTRIBUTES,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING, flags, 0)
+	if err != nil {
+		return 0, fileID{}, &OpError{Op: "open", Path: path, Kind: classify(err, classifyOpts{}), Err: &os.PathError{Op: "CreateFile", Path: path, Err: err}}
+	}
+	var bi windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(h, &bi); err != nil {
+		windows.CloseHandle(h)
+		return 0, fileID{}, &OpError{Op: "open", Path: path, Kind: classify(err, classifyOpts{}), Err: err}
+	}
+	// 種類は §14.1 と同じ方法で判定する（クラウドファイルのフォルダはリパースポイントでも TypeDir）。
+	var tag uint32
+	if bi.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		var ti fileAttributeTagInfo
+		if err := windows.GetFileInformationByHandleEx(h, windows.FileAttributeTagInfo, (*byte)(unsafe.Pointer(&ti)), uint32(unsafe.Sizeof(ti))); err != nil {
+			windows.CloseHandle(h)
+			return 0, fileID{}, &OpError{Op: "open", Path: path, Kind: classify(err, classifyOpts{}), Err: err}
+		}
+		tag = ti.ReparseTag
+	}
+	st, err := statIDHandle(h)
+	if err != nil || entryTypeFromAttrs(bi.FileAttributes, tag) != TypeDir {
+		windows.CloseHandle(h)
+		return 0, fileID{}, &OpError{Op: "open", Path: path, Kind: KindSourceChanged, Err: err}
+	}
+	return h, st.id, nil
+}
+
+// openNewSecDir は、フォルダ parent の中に作ったばかりのフォルダ name（パスは path）を、リパースポイントを辿らずに開く（§10.2）。
+// fileID は、開いたものから記録する。リンク・ジャンクションに置き換えられていれば KindSourceChanged の *OpError を返す。
+func openNewSecDir(parent *secDir, path, name string) (*secDir, error) {
+	s := parent.sysJoin(name)
+	h, id, err := openDirHandle(path, s, false)
+	if err != nil {
+		return nil, err
+	}
+	return &secDir{path: path, sys: s, h: h, id: id}, nil
+}
+
+// openDestRoot は、コピー先・移動先のフォルダ（DestDir）path を開き、fileID が計画時の want（リンクを辿った先）と一致することを確かめる（§13.1）。
+// DestDir 自体はリンクでもよいので、辿って開く。違えば KindSourceChanged の *OpError を返す。
+func openDestRoot(path string, want fileID) (*secDir, error) {
+	s, err := sysPath(path)
+	if err != nil {
+		return nil, err
+	}
+	h, id, err := openDirHandle(path, s, true)
+	if err != nil {
+		return nil, err
+	}
+	if id != want {
+		windows.CloseHandle(h)
+		return nil, &OpError{Op: "open", Path: path, Kind: KindSourceChanged}
+	}
+	return &secDir{path: path, sys: s, h: h, id: id}, nil
+}
+
+// join は、中の name の \\?\ の付かない形のパスを返す（結果とエラーに使う）。
+func (d *secDir) join(name string) string { return d.path + `\` + name }
+
+// sysJoin は、中の name の \\?\ 形式のパスを返す。このフォルダのハンドルを開いたままなので、パスで操作してよい（§13.1）。
+func (d *secDir) sysJoin(name string) string { return d.sys + `\` + name }
+
+// createFile は、中に name を新しく作る（CREATE_NEW。§10.1 の一時ファイル）。
+func (d *secDir) createFile(name string) (*os.File, error) {
+	f, err := os.OpenFile(d.sysJoin(name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	return f, withUserPaths(err, d.join(name), "")
+}
+
+// mkdir は、中に name のフォルダを作る（§10.2）。
+func (d *secDir) mkdir(name string) error {
+	return withUserPaths(os.Mkdir(d.sysJoin(name), 0o700), d.join(name), "")
+}
+
+// symlink は、中に name のシンボリックリンクを作る（§14.2）。dir ならフォルダ用のリンク。
+func (d *secDir) symlink(target, name string, dir bool) error {
+	return withUserPaths(createSymlinkSys(target, d.sysJoin(name), dir), target, d.join(name))
+}
+
+// unlinkTemp は、中の fsops の一時ファイル name を削除する（§10.1 の手順 8）。
+// 一時ファイルは fsops が作ったものなので、削除できなければ読み取り専用属性を外してから削除し直す。
+func (d *secDir) unlinkTemp(name string) error {
+	s := d.sysJoin(name)
+	err := os.Remove(s)
+	if err != nil && clearReadOnlySys(s) {
+		err = os.Remove(s)
+	}
+	return withUserPaths(err, d.join(name), "")
+}
+
+// openRegular は、中の name を読むために開き、フォルダでなく fileID が want であることを確かめる（§10.4 の読み直し）。
+func (d *secDir) openRegular(name string, want fileID) (*os.File, srcMeta, error) {
+	return openSourceSys(d.sysJoin(name), want)
+}
+
+// targetReadOnly は、中の上書き先 name が読み取り専用（§9.3。読み取り専用属性）かを返す。
+func (d *secDir) targetReadOnly(name string) bool { return readOnlySys(d.sysJoin(name))() }
+
+// sync は、このフォルダを同期する（§10.5）。Windows では失敗しても処理は続け、警告にもしない。
+func (d *secDir) sync() error { return syncDirSys(d.sys) }
 
 func (d *secDir) close() { windows.CloseHandle(d.h) }
 
@@ -235,14 +350,19 @@ func isMismatchRemoveErr(err error) bool {
 	return errors.Is(err, windows.ERROR_ACCESS_DENIED) || errors.Is(err, windows.ERROR_DIRECTORY)
 }
 
-// renameOut は、中の name を dst（\\?\ 形式のパス）へリネームする（§13.1 のマージ移動）。
-// Windows に開いたフォルダからの相対のリネームはないので、パスで行う。祖先のハンドルを共有モードに FILE_SHARE_DELETE を含めずに
-// 開いたままにしているので、途中の階層を名前の変更・リンクへの置き換えで差し替えられることはない（§13.1）。
+// renameBetween は、from の中の fromName を、to の中の toName へリネームする（§13.1）。
+// from が nil なら fromName はパス（sysPath で変換したもの）。
+// Windows に開いたフォルダからの相対のリネームはないので、パスで行う。移動元・移動先のフォルダのハンドルを、共有モードに
+// FILE_SHARE_DELETE を含めずに開いたままにしているので、フォルダを名前の変更・リンクへの置き換えで差し替えられることはない（§13.1）。
 // replace が偽なら排他リネーム（§8.4）、真なら置換リネーム（ファイルの上書き）。
-func (d *secDir) renameOut(name, dst string, replace bool) error {
-	s := d.sys + `\` + name
-	if !replace {
-		return renameExclusiveSys(s, dst)
+func renameBetween(from *secDir, fromName string, to *secDir, toName string, replace bool) error {
+	s := fromName
+	if from != nil {
+		s = from.sysJoin(fromName)
 	}
-	return os.Rename(s, dst)
+	d := to.sysJoin(toName)
+	if !replace {
+		return renameExclusiveSys(s, d)
+	}
+	return os.Rename(s, d)
 }

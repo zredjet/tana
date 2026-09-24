@@ -116,6 +116,7 @@ func (pl *planner) checkRequest(req Request) (Request, error) {
 		}
 		r.DestDir = d
 		pl.destID = st
+		pl.plan.destID = st.id
 	default:
 		if req.DestDir != "" {
 			return Request{}, invalid(req.DestDir)
