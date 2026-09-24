@@ -243,3 +243,18 @@ func TestTrashPreDeleteAbortHelper(t *testing.T) {
 	}
 	t.Logf("HELPER-RESULT: %v outcome=%v err=%v", kind, res.Outcome, res.Err)
 }
+
+// TestHresultFailed は、HRESULT の成否を SUCCEEDED/FAILED（最上位ビット）で判定することを確かめる。
+// ごみ箱へ入れるのに成功しても、PostDeleteItem は S_OK ではなく COPYENGINE_S_DONT_PROCESS_CHILDREN（0x00270008）を渡す
+// （2026-09-24 の CI の V18 のログで確認）。S_OK 以外を失敗とすると、ごみ箱に入った項目を失敗と報告してしまう。
+func TestHresultFailed(t *testing.T) {
+	t.Parallel()
+	for hr, want := range map[uint32]bool{
+		sOK: false, sFalse: false, 0x00270008: false,
+		eAbort: true, 0x80070020: true, 0x80270000: true,
+	} {
+		if got := hresultFailed(hr); got != want {
+			t.Errorf("hresultFailed(%#x) = %v, want %v", hr, got, want)
+		}
+	}
+}

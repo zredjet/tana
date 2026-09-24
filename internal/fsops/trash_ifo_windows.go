@@ -140,6 +140,11 @@ type hresultError uint32
 
 func (e hresultError) Error() string { return "HRESULT 0x" + strconv.FormatUint(uint64(e), 16) }
 
+// hresultFailed は、HRESULT が失敗（FAILED。最上位ビットが 1）かを返す。
+// 成功を表す値は S_OK だけではない。ごみ箱へ入れるのに成功しても、PostDeleteItem は COPYENGINE_S_DONT_PROCESS_CHILDREN
+// （0x00270008）を渡す（V18 のログ）。
+func hresultFailed(hr uint32) bool { return hr&0x80000000 != 0 }
+
 // hresultErr は HRESULT を error にする。FACILITY_WIN32 のものは Win32 のエラー番号にして §17 の分類に使えるようにする。
 func hresultErr(hr uint32) error {
 	if hr>>16 == hresultFacilityWin32Prefix {
@@ -179,11 +184,11 @@ func trashLocked(src string) (string, error) {
 	}
 	var op *comObj
 	if hr, _, _ := procCoCreateInstance.Call(uintptr(unsafe.Pointer(&clsidFileOperation)), 0, clsctxInprocServer,
-		uintptr(unsafe.Pointer(&iidIFileOperation)), uintptr(unsafe.Pointer(&op))); hr != sOK {
+		uintptr(unsafe.Pointer(&iidIFileOperation)), uintptr(unsafe.Pointer(&op))); hresultFailed(uint32(hr)) {
 		return fail(KindUnknown, hresultErr(uint32(hr)))
 	}
 	defer op.release()
-	if hr := op.call(ifileOperationSetFlags, trashOperationFlags); hr != sOK {
+	if hr := op.call(ifileOperationSetFlags, trashOperationFlags); hresultFailed(uint32(hr)) {
 		return fail(KindUnknown, hresultErr(uint32(hr)))
 	}
 	// SHCreateItemFromParsingName は \\?\ 付きのパスを受け付けない（V18）。事前確認で、260 文字未満で Win32 の正規化で
@@ -194,13 +199,13 @@ func trashLocked(src string) (string, error) {
 	}
 	var item *comObj
 	if hr, _, _ := procSHCreateItemFromParsingName.Call(uintptr(unsafe.Pointer(p16)), 0,
-		uintptr(unsafe.Pointer(&iidIShellItem)), uintptr(unsafe.Pointer(&item))); hr != sOK {
+		uintptr(unsafe.Pointer(&iidIShellItem)), uintptr(unsafe.Pointer(&item))); hresultFailed(uint32(hr)) {
 		err := hresultErr(uint32(hr))
 		return fail(classify(err, classifyOpts{}), err)
 	}
 	defer item.release()
 	sink := &progressSink{vtbl: progressSinkVtbl}
-	if hr := op.call(ifileOperationDeleteItem, uintptr(unsafe.Pointer(item)), uintptr(unsafe.Pointer(sink))); hr != sOK {
+	if hr := op.call(ifileOperationDeleteItem, uintptr(unsafe.Pointer(item)), uintptr(unsafe.Pointer(sink))); hresultFailed(uint32(hr)) {
 		return fail(KindUnknown, hresultErr(uint32(hr)))
 	}
 	perform := uint32(op.call(ifileOperationPerform))
@@ -210,12 +215,12 @@ func trashLocked(src string) (string, error) {
 	switch {
 	case sink.notRecycled:
 		return fail(KindTrashUnavailable, nil) // PreDeleteItem で中止した。項目は残る（V18）
-	case perform != sOK:
+	case hresultFailed(perform):
 		err := hresultErr(perform)
 		return fail(classify(err, classifyOpts{}), err)
 	case aborted != 0 || !sink.posted:
 		return fail(KindUnknown, hresultErr(eAbort))
-	case sink.postHR != sOK:
+	case hresultFailed(sink.postHR):
 		err := hresultErr(sink.postHR)
 		return fail(classify(err, classifyOpts{}), err)
 	}
