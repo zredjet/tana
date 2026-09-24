@@ -340,9 +340,9 @@ func checkOverwrite(src, dst string, pc *planned, dd *secDir) (gone bool, out Ou
 
 // tempFile は、書き終えた一時ファイル（§10.1）。fileID と大きさで、fsops が書いたものであることを確かめる。
 type tempFile struct {
-	dir  *secDir // 一時ファイルを作ったフォルダ（書き込み先。確かめて開いたもの）
-	name string  // dir の中の一時名
-	path string  // \\?\ の付かない形のパス（結果とエラーに使う）
+	dir   *secDir   // 一時ファイルを作ったフォルダ（書き込み先。確かめて開いたもの）
+	name  string    // dir の中の一時名
+	path  string    // \\?\ の付かない形のパス（結果とエラーに使う）
 	id    fileID    // 書き込んだ後に記録した fileID
 	size  int64     // 書き込んだバイト数
 	mtime time.Time // メタデータを設定した後の更新日時
