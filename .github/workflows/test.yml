@@ -157,7 +157,13 @@ jobs:
           command -v mkfs.exfat || sudo apt-get install -y exfatprogs
           sudo mkfs.exfat "$RUNNER_TEMP/fsopsexfat.img"
           sudo mkdir -p /mnt/fsopsexfat
-          sudo mount -o loop,uid=$(id -u),gid=$(id -g) "$RUNNER_TEMP/fsopsexfat.img" /mnt/fsopsexfat
+          # カーネルの exfat モジュールがなければ、FUSE 版（exfat-fuse）でマウントする。
+          if sudo modprobe exfat 2>/dev/null; then
+            sudo mount -o loop,uid=$(id -u),gid=$(id -g) "$RUNNER_TEMP/fsopsexfat.img" /mnt/fsopsexfat
+          else
+            sudo apt-get install -y exfat-fuse
+            sudo mount.exfat-fuse -o uid=$(id -u),gid=$(id -g),allow_other "$RUNNER_TEMP/fsopsexfat.img" /mnt/fsopsexfat
+          fi
           echo "FSOPS_PROBE_EXFAT_DIR=/mnt/fsopsexfat" >> "$GITHUB_ENV"
           mount | grep -E "fsopstest|fsopsexfat"
       # TestCopyNoSpaceCrossVolume が別ボリュームを一杯にするので、パッケージを並行させない（-p 1。§18.4「容量」）。
