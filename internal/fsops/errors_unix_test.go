@@ -22,6 +22,7 @@ func TestClassifyErrnoUnix(t *testing.T) {
 		{unix.EBUSY, KindLocked},
 		{unix.EROFS, KindReadOnly},
 		{unix.ENOSPC, KindNoSpace},
+		{unix.EFBIG, KindFileTooLarge},
 		{unix.EDQUOT, KindNoSpace},
 		{unix.ENOTEMPTY, KindNotEmpty},
 		{unix.EXDEV, KindCrossDevice},

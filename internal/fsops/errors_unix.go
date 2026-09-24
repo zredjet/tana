@@ -42,6 +42,8 @@ func classifyErrno(err error, o classifyOpts) (k Kind, ok bool) {
 		return KindReadOnly, true
 	case unix.ENOSPC, unix.EDQUOT:
 		return KindNoSpace, true
+	case unix.EFBIG:
+		return KindFileTooLarge, true
 	case unix.ENOTEMPTY:
 		return KindNotEmpty, true
 	case unix.EXDEV:

@@ -49,6 +49,9 @@ type testHooks struct {
 	lockFault func(op, path string) bool
 	// lockWait は、§17.1 のやり直しの待ちの代わりに、待つ長さ d で呼ばれる（実際には待たない）。キャンセルや置き換えの注入にも使う。
 	lockWait func(path string, d time.Duration)
+	// fileSizeLimit は、0 より大きければ、実行時のコピー先のファイルの大きさの上限（§10.6）をこの値に置き換える
+	// （FAT32 の上限を、小さなファイルで確かめるため）。計画時の警告（§6.4）には使わない。
+	fileSizeLimit int64
 }
 
 func (h *testHooks) enterDir(path string) {

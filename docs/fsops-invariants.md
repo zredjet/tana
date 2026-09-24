@@ -44,6 +44,7 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 | 照合の後・削除の直前に書き換えられた移動元を消さない（Windows: `removeVerified` の削除するハンドルでの照合。Unix は受け入れる危険。SPEC §13.3） | TestRemoveRecordedFileEditedBeforeRemove | Windows |
 | AppleDouble の付属（`._名前`）は項目として記録・削除せず、移動元の `名前` と一緒に OS が消す（`appledouble_darwin.go` `dropAppleDouble`。§15 の `com.apple.quarantine` は移動先に残る） | TestAppleDoubleQuarantineOtherVolumes（move across volumes・delete） | macOS・EXFAT/FAT32 |
 | 移動元の削除の、使用中の間のやり直し（`remove.go` `removeWithRetry`） | TestLockRetryMoveCrossVolume | CROSSVOL |
+| コピー先の上限を超えるファイルのコピーの失敗で、移動元に手を付けない（`copy.go` `writeTemp` の §10.6 の確認） | TestMoveFileTooLarge、TestFileTooLargeFAT32（OpMove） | CROSSVOL・FAT32 |
 
 ## I3 書きかけのファイルを最終名で残さない
 
@@ -57,6 +58,7 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 | 最終名にできなかったときに一時ファイルを消す（読み取り専用にした一時ファイルを含む。`copy.go` `removeTemp`、`copy_windows.go` `clearReadOnlySys`） | TestCopyConflictBeforeFinalRename、TestCopyOverwriteTargetReplaced、TestCopyOverwriteLocked、TestCopyAutoRenameTooLong、TestCopyReadOnlyTempRemoved | 共通・Windows |
 | コピー元を開けない場合は一時ファイルを作らない（`copy.go` `writeTemp`、`copy_*.go` `openSourceSys`） | TestCopyLockedSource | Windows |
 | 一時ファイルの削除の、使用中の間のやり直し。キャンセルの後もやり直す（`copy.go` `tempFile.remove`・`lockRetrier.removeTemp`。SPEC §17.1） | TestLockRetryCopyExhausted、TestLockRetryCopyCancel、TestLockRetrier（temp cleanup ignores cancel） | 共通 |
+| コピー先の上限を超えるファイルは一時ファイルを作らない。コピー中に上限を超えたら一時ファイルを消す（`copy.go` `writeTemp`、§10.6） | TestCopyFileTooLarge、TestCopyFileTooLargeGrows、TestFileTooLargeFAT32 | 共通・FAT32 |
 
 ## I4 リンクの先を操作しない
 

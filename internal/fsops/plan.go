@@ -24,6 +24,8 @@ type planner struct {
 	// dirIDs は、Sources の親フォルダ・祖先の fileID（リンクを辿った先）の記録。
 	// Sources は同じフォルダにあることが多いので、同じフォルダを何度も開かないようにする。計画の間だけ使う。
 	dirIDs map[string]dirIDResult
+	// sizeLimit は、OpCopy / OpMove の DestDir のファイルシステムのファイルの大きさの上限（§10.6。なければ 0）。
+	sizeLimit int64
 }
 
 type dirIDResult struct {
@@ -58,6 +60,9 @@ func (pl *planner) run(req Request) error {
 		return err
 	}
 	pl.plan.req = r
+	if r.Op == OpCopy || r.Op == OpMove {
+		pl.sizeLimit = fileSizeLimitPath(r.DestDir) // §6.4 の、ファイルの大きさの上限の警告に使う
+	}
 	var writeBytes int64 // §6.4 の空き容量と比べるバイト数
 	for i, src := range r.Sources {
 		if err := pl.errCanceled(); err != nil {
@@ -253,7 +258,7 @@ func (pl *planner) count(i int, it Item) (files int, bytes int64, err error) {
 	case it.Info.Type == TypeDir:
 		err = w.walk(it.Src, "", 0)
 	default:
-		w.add(it.Info)
+		w.add(it.Src, it.Info)
 	}
 	return w.files, w.bytes, err
 }
@@ -267,13 +272,17 @@ type walker struct {
 	bytes      int64
 }
 
-func (w *walker) add(info EntryInfo) {
+// add は、エントリ path（情報 info）を数える。書き込むファイルがコピー先の上限を超えていれば警告する（§6.4、§10.6）。
+func (w *walker) add(path string, info EntryInfo) {
 	if info.Type == TypeDir {
 		return
 	}
 	w.files++
 	if w.countBytes && info.Type == TypeFile {
 		w.bytes += info.Size
+		if limit := w.pl.sizeLimit; limit > 0 && info.Size > limit {
+			w.pl.plan.warnings = append(w.pl.plan.warnings, planError(path, KindFileTooLarge, nil))
+		}
 	}
 }
 
@@ -318,8 +327,8 @@ func (w *walker) walk(src, dst string, parent ConflictID) error {
 		if err := w.pl.errCanceled(); err != nil {
 			return err
 		}
-		w.add(e.info)
 		childSrc := filepath.Join(src, e.name)
+		w.add(childSrc, e.info)
 		childDst := ""
 		var cid ConflictID
 		if dst != "" {

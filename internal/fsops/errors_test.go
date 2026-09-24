@@ -40,10 +40,10 @@ func checkStrings[T interface {
 func TestStrings(t *testing.T) {
 	t.Parallel()
 	var kinds []Kind
-	for k := KindUnknown; k <= KindMetadata; k++ {
+	for k := KindUnknown; k <= KindFileTooLarge; k++ {
 		kinds = append(kinds, k)
 	}
-	checkStrings(t, "Kind", "Kind", kinds, KindMetadata+1)
+	checkStrings(t, "Kind", "Kind", kinds, KindFileTooLarge+1)
 	checkStrings(t, "Outcome", "Outcome",
 		[]Outcome{OutcomeDone, OutcomeSkipped, OutcomeFailed, OutcomePartial, OutcomeCopiedSourceKept}, 0)
 	checkStrings(t, "Status", "Status",

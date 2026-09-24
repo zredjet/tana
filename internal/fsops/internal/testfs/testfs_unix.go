@@ -68,3 +68,16 @@ func clearReadOnly(path string) {
 		os.Chmod(path, fi.Mode().Perm()|0o700)
 	}
 }
+
+// SparseFile は、path に大きさ size の中身のない（穴だけの）ファイルを作る。大きなファイルを、ディスクを使わずに用意するためのもの。
+func SparseFile(t testing.TB, path string, size int64) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := f.Truncate(size); err != nil {
+		t.Fatal(err)
+	}
+}

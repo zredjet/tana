@@ -34,6 +34,9 @@ func classifyErrno(err error, o classifyOpts) (k Kind, ok bool) {
 		return KindReadOnly, true
 	case windows.ERROR_DISK_FULL, windows.ERROR_HANDLE_DISK_FULL:
 		return KindNoSpace, true
+	case windows.ERROR_FILE_TOO_LARGE:
+		// FAT32 の上限では ERROR_DISK_FULL が返る（V24）ので、それは §10.6 で書く前に判断する。
+		return KindFileTooLarge, true
 	case windows.ERROR_DIR_NOT_EMPTY:
 		return KindNotEmpty, true
 	case windows.ERROR_NOT_SAME_DEVICE:

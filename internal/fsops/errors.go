@@ -30,6 +30,7 @@ const (
 	KindInvalidRequest
 	KindCanceled
 	KindMetadata
+	KindFileTooLarge // コピー先のファイルシステムの、ファイルの大きさの上限を超える（§10.6）
 )
 
 func (k Kind) String() string {
@@ -72,6 +73,8 @@ func (k Kind) String() string {
 		return "KindCanceled"
 	case KindMetadata:
 		return "KindMetadata"
+	case KindFileTooLarge:
+		return "KindFileTooLarge"
 	}
 	return "Kind(" + strconv.Itoa(int(k)) + ")"
 }

@@ -99,6 +99,14 @@ func (cp *copier) canceledErr(path string) *OpError {
 	return &OpError{Op: "copy", Path: path, Kind: KindCanceled, Err: cp.ex.ctx.Err()}
 }
 
+// fileSizeLimit は、書き込み先のフォルダ dd のファイルシステムのファイルの大きさの上限を返す（§10.6）。上限がなければ 0。
+func (cp *copier) fileSizeLimit(dd *secDir) int64 {
+	if h := cp.ex.opt.hooks; h != nil && h.fileSizeLimit > 0 {
+		return h.fileSizeLimit
+	}
+	return dd.fileSizeLimit()
+}
+
 // sync は、同期するか（§10.5。移動では必ず、コピーでは SyncAlways のときだけ）を返す。
 func (cp *copier) sync() bool { return cp.move || cp.ex.opt.Sync == SyncAlways }
 
@@ -543,6 +551,19 @@ func (cp *copier) writeTemp(src, dst string, e dirEntry, dd *secDir) (tempFile, 
 		return tempFile{}, srcMeta{}, nil, oe
 	}
 	defer in.Close()
+	// コピー先のファイルシステムの上限を超えるファイルは、書かずに失敗にする（§10.6。Windows は上限を容量不足と区別できないため。V24）。
+	limit := cp.fileSizeLimit(dd)
+	if limit > 0 && m.size > limit {
+		return tempFile{}, srcMeta{}, nil, &OpError{Op: "copy", Path: src, Dest: dst, Kind: KindFileTooLarge}
+	}
+	// writeFail は書き込みの失敗を分類する。上限を超える位置への書き込みでの容量不足は、KindFileTooLarge にする（§10.6）。
+	writeFail := func(err error, pos int64) *OpError {
+		oe := fail(err)
+		if oe.Kind == KindNoSpace && limit > 0 && pos > limit {
+			oe.Kind = KindFileTooLarge
+		}
+		return oe
+	}
 	var warnings []*OpError
 	if m.extra, err = readExtra(in, s); err != nil {
 		warnings = append(warnings, &OpError{Op: "metadata", Path: src, Dest: dst, Kind: KindMetadata, Err: withUserPaths(err, src, "")})
@@ -576,7 +597,7 @@ func (cp *copier) writeTemp(src, dst string, e dirEntry, dd *secDir) (tempFile, 
 		n, rerr := in.Read(buf)
 		if n > 0 {
 			if _, err := out.Write(buf[:n]); err != nil {
-				return tempFile{}, srcMeta{}, nil, fail(withUserPaths(err, tmp, ""))
+				return tempFile{}, srcMeta{}, nil, writeFail(withUserPaths(err, tmp, ""), written+int64(n))
 			}
 			if sum != nil {
 				sum.Write(buf[:n])
@@ -584,7 +605,7 @@ func (cp *copier) writeTemp(src, dst string, e dirEntry, dd *secDir) (tempFile, 
 			written += int64(n)
 			cp.ex.progress.addBytes(int64(n))
 			if err := cp.ex.opt.hooks.write(dst, written); err != nil {
-				return tempFile{}, srcMeta{}, nil, fail(err)
+				return tempFile{}, srcMeta{}, nil, writeFail(err, written)
 			}
 		}
 		if rerr == io.EOF {

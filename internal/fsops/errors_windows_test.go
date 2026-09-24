@@ -21,6 +21,7 @@ func TestClassifyErrnoWindows(t *testing.T) {
 		{windows.ERROR_LOCK_VIOLATION, KindLocked},
 		{windows.ERROR_WRITE_PROTECT, KindReadOnly},
 		{windows.ERROR_DISK_FULL, KindNoSpace},
+		{windows.ERROR_FILE_TOO_LARGE, KindFileTooLarge},
 		{windows.ERROR_HANDLE_DISK_FULL, KindNoSpace},
 		{windows.ERROR_DIR_NOT_EMPTY, KindNotEmpty},
 		{windows.ERROR_NOT_SAME_DEVICE, KindCrossDevice},

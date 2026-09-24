@@ -145,3 +145,21 @@ func clearReadOnly(path string) {
 		windows.SetFileAttributes(p16, a&^windows.FILE_ATTRIBUTE_READONLY)
 	}
 }
+
+// SparseFile は、path に大きさ size の中身のない（穴だけの）ファイルを作る。大きなファイルを、ディスクを使わずに用意するためのもの。
+// NTFS では、スパースファイルにしてから大きさを変える（そうしないと大きさの分の領域を確保する）。
+func SparseFile(t testing.TB, path string, size int64) {
+	t.Helper()
+	f, err := os.OpenFile(ExtendedPath(path), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	var n uint32
+	if err := windows.DeviceIoControl(windows.Handle(f.Fd()), windows.FSCTL_SET_SPARSE, nil, 0, nil, 0, &n, nil); err != nil {
+		t.Fatalf("FSCTL_SET_SPARSE %s: %v", path, err)
+	}
+	if err := f.Truncate(size); err != nil {
+		t.Fatal(err)
+	}
+}
