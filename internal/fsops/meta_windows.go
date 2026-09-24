@@ -72,8 +72,10 @@ func setMetaIn(d *secDir, name string, want fileID, m srcMeta, isDir bool, hooks
 	if err != nil {
 		return err
 	}
+	// 共有モードに FILE_SHARE_DELETE を含めない。開いている間は名前の変更・削除ができないので、照合した後に
+	// パスで書く Zone.Identifier も、照合したファイルに書かれる（名前をリンクへ置き換えられない。I4）。
 	h, err := windows.CreateFile(s16, windows.FILE_READ_ATTRIBUTES|windows.FILE_WRITE_ATTRIBUTES,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil,
 		windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
 	if err != nil {
 		return errors.Join(append(errs, &os.PathError{Op: "CreateFile", Path: s, Err: err})...)
@@ -91,7 +93,7 @@ func setMetaIn(d *secDir, name string, want fileID, m srcMeta, isDir bool, hooks
 	if st.id != want || !isDir && int64(bi.FileSizeHigh)<<32|int64(bi.FileSizeLow) != m.size {
 		return errors.Join(append(errs, &OpError{Op: "metadata", Path: s, Kind: KindSourceChanged})...)
 	}
-	// 照合した後に Zone.Identifier を書く（照合したハンドルを開いたままなので、同じファイルに書かれる）。
+	// 照合した後に Zone.Identifier を書く（照合したハンドルを、名前の変更を許さずに開いたままなので、同じファイルに書かれる）。
 	if len(m.extra) > 0 && !isDir {
 		hooks.zoneWrite(d.join(name))
 		if err := os.WriteFile(s+zoneStream, m.extra, 0o644); err != nil {
