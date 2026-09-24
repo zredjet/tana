@@ -33,6 +33,12 @@ const (
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	go func() {
+		// 1 回目の Ctrl-C でキャンセルした後は、既定の動作に戻して 2 回目の Ctrl-C でプロセスを終わらせる
+		// （Windows の確認ダイアログなど、ctx では中断できない待ちから抜けられるように）。
+		<-ctx.Done()
+		stop()
+	}()
 	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
 	stop()
 	os.Exit(code)
@@ -131,6 +137,14 @@ func runCommand(ctx context.Context, op fsops.OpKind, planOnly bool, args []stri
 		fmt.Fprintln(stderr, "対象を 1 つ以上指定してください。")
 		return exitUsage
 	}
+	// flag は最初の対象で解析を止めるので、対象の後ろに書いたオプションは対象のパスになってしまう。
+	// 取り違えて消したりしないよう、- で始まる対象は受け付けない（その名前のファイルは ./ を付けて指定する）。
+	for _, a := range fs.Args() {
+		if strings.HasPrefix(a, "-") {
+			fmt.Fprintf(stderr, "オプションは対象より前に書いてください: %q（- で始まる名前のファイルは ./%s のように指定してください）\n", a, a)
+			return exitUsage
+		}
+	}
 	decision, ok := decisionOf(o.onConflict)
 	if !ok {
 		fmt.Fprintf(stderr, "-on-conflict には skip・overwrite・rename・merge のどれかを指定してください: %q\n", o.onConflict)
@@ -205,9 +219,10 @@ func runCommand(ctx context.Context, op fsops.OpKind, planOnly bool, args []stri
 	}
 	applyDecision(stdout, plan, decision)
 
-	exec.Progress = progressPrinter(stderr)
+	progress, finish := progressPrinter(stderr)
+	exec.Progress = progress
 	res, err := plan.Execute(ctx, exec)
-	fmt.Fprintln(stderr)
+	finish()
 	if err != nil {
 		fmt.Fprintf(stderr, "実行できません: %s\n", errorText(err))
 		return exitUsage
@@ -256,12 +271,37 @@ func applyDecision(w io.Writer, plan *fsops.Plan, d fsops.Decision) {
 	}
 }
 
-// progressPrinter は、進捗を 1 行で上書きして表示する関数を返す（fsops が 100 ミリ秒に 1 回までに間引く）。
-func progressPrinter(w io.Writer) func(fsops.Progress) {
-	return func(p fsops.Progress) {
-		fmt.Fprintf(w, "\r[%s] %d/%d 件 %s/%s %s\x1b[K", stageText(p.Stage), p.DoneFiles, p.TotalFiles,
+// progressPrinter は、進捗を表示する関数と、表示を終える関数を返す（fsops が 100 ミリ秒に 1 回までに間引く）。
+// w が端末なら 1 行を上書きして表示し、そうでなければ（ファイルやログへのリダイレクト）1 行ずつ書き、制御文字を出さない。
+func progressPrinter(w io.Writer) (progress func(fsops.Progress), finish func()) {
+	tty := isTerminal(w)
+	printed := false
+	progress = func(p fsops.Progress) {
+		line := fmt.Sprintf("[%s] %d/%d 件 %s/%s %s", stageText(p.Stage), p.DoneFiles, p.TotalFiles,
 			sizeText(p.DoneBytes), sizeText(p.TotalBytes), shorten(p.Current, 60))
+		if tty {
+			fmt.Fprint(w, "\r"+line+"\x1b[K")
+		} else {
+			fmt.Fprintln(w, line)
+		}
+		printed = true
 	}
+	finish = func() {
+		if tty && printed {
+			fmt.Fprintln(w)
+		}
+	}
+	return progress, finish
+}
+
+// isTerminal は、w が端末（キャラクタデバイス）かを返す。
+func isTerminal(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	fi, err := f.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }
 
 // shorten は、パスの末尾を n 文字（ルーン）までにする。

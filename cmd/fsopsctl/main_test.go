@@ -156,3 +156,41 @@ func TestUsage(t *testing.T) {
 		}
 	}
 }
+
+// TestOptionAfterOperand は、対象の後ろに書いたオプションを対象のパスとして扱わず、使い方の誤りにすることを確かめる
+// （flag パッケージは最初の対象で解析を止めるため。delete -yes a.txt -v で、-v という名前のファイルを消さないように）。
+func TestOptionAfterOperand(t *testing.T) {
+	root := tempDir(t)
+	p := filepath.Join(root, "a.txt")
+	flagLike := filepath.Join(root, "-v")
+	write(t, p, "a")
+	write(t, flagLike, "not a flag")
+	t.Chdir(root)
+	code, _, errOut := runCLI(t, "delete", "-yes", "a.txt", "-v")
+	if code != exitUsage || !strings.Contains(errOut, "./-v") {
+		t.Errorf("code %d\n%s", code, errOut)
+	}
+	if !exists(p) || !exists(flagLike) {
+		t.Error("files were deleted although the arguments were rejected")
+	}
+	// ./ を付ければ、- で始まる名前も対象にできる。
+	if code, _, _ := runCLI(t, "delete", "-yes", "./-v"); code != exitOK || exists(flagLike) {
+		t.Errorf("./-v: code %d, exists %v", code, exists(flagLike))
+	}
+}
+
+// TestProgressToNonTerminal は、標準エラー出力が端末でないとき、進捗を 1 行ずつ書き、制御文字（\r、エスケープシーケンス）を出さないことを確かめる。
+func TestProgressToNonTerminal(t *testing.T) {
+	root := tempDir(t)
+	write(t, filepath.Join(root, "src", "a.txt"), "a")
+	if err := os.MkdirAll(filepath.Join(root, "dest"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errOut := runCLI(t, "copy", "-dest", filepath.Join(root, "dest"), filepath.Join(root, "src", "a.txt"))
+	if code != exitOK || errOut == "" {
+		t.Fatalf("code %d, stderr %q", code, errOut)
+	}
+	if strings.ContainsAny(errOut, "\r\x1b") {
+		t.Errorf("control characters in the progress written to a non-terminal: %q", errOut)
+	}
+}

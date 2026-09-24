@@ -6,7 +6,7 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 - 経路は `internal/fsops` のファイル名と関数名で示す。テストも同じパッケージのもの。
 - 「条件」の列: 共通 = Windows・macOS の CI で毎回実行。CROSSVOL・TRASH・EXFAT/FAT32・NUKE/SMALL = §18.2 の環境変数が必要
   （CI ではすべて設定している）。Windows・macOS = その OS だけ。
-- CI で実行するのは Windows と macOS（`-race`）。Linux（ubuntu）では vet・プローブ・ごみ箱が使えないことのテストだけを実行する。
+- CI で実行するのは Windows と macOS（`-race`）。Linux（ubuntu）では vet・プローブ・ごみ箱が使えないことのテストと、`cmd/fsopsctl` のテストだけを実行する。
 - 最後の節に、テストで守られていない経路を挙げる。
 
 ---
@@ -69,17 +69,17 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 | 経路 | 防いでいるテスト | 条件 |
 |---|---|---|
 | 計画時の事前確認（`trash.go` `trashPrecheck`、`trash_windows.go` `trashAvailable`・`recycleCapacity`・`hasWin32UnsafeComponent`） | TestNewPlanTrashPrecheck、TestTrashPrecheckWindows、TestTrashPrecheckCapacity | 共通・Windows・NUKE/SMALL |
-| 実行時にもう一度、今の大きさで確かめる（`trash.go` `trashItem`） | TestTrashExecuteRecheck、TestTrashWindowsUnavailable | Windows・SMALL |
+| 実行時にもう一度、今の大きさで確かめる（`trash.go` `trashItem`） | TestTrashExecuteRecheck | Windows・SMALL |
+| 計画時に使えない項目を、実行時に何もせず失敗にする（`execute.go` `run`、`trash.go` `trashItem`） | TestTrashWindowsUnavailable、TestTrashUnavailable | Windows・ubuntu・macOS（`CGO_ENABLED=0`） |
 | PreDeleteItem での中止（二つ目の防御。`trash_ifo_windows.go` の進捗通知） | TestTrashPreDeleteAbort | TRASH・NUKE |
 | HRESULT の成否の判定（`trash_ifo_windows.go` `hresultFailed`） | TestHresultFailed | Windows |
 | ごみ箱が使えないビルド（`trash_darwin_nocgo.go`、`trash_other.go`） | TestTrashUnavailable、TestNewPlanTrashPrecheck | ubuntu・macOS（`CGO_ENABLED=0`） |
-| 成功を返しても元の場所に残っていれば失敗にする（`trash.go` `trashItem`） | TestTrash | TRASH |
 
 ## I6 ファイル名を変換しない
 
 | 経路 | 防いでいるテスト | 条件 |
 |---|---|---|
-| 移動先・コピー先の名前はコピー元の名前をそのまま使う（`plan.go` `item`、`copy.go`、`move.go`） | TestCopyTree（日本語・絵文字・NFD）、TestMoveSameVolume | 共通 |
+| コピー先の名前はコピー元の名前をそのまま使う（`plan.go` `item`、`copy.go`） | TestCopyTree（日本語・絵文字・NFD） | 共通 |
 | Windows の `\\?\` 変換（`path_windows.go` `sysPath`・`userPath`） | TestSysPathWindows、TestUserPathWindows、TestRenameHelpersWin32UnsafeNames、TestReadDirWin32UnsafeNames、TestFileIDWin32UnsafeNames、TestLstatEntryWin32UnsafeNames | Windows |
 | 自動リネームの候補（`copy.go` `autoRenameName`。切り詰めない） | TestAutoRenameName、TestCopyAutoRenameTooLong | 共通 |
 | `Rename` の大文字小文字・正規化だけの変更（`rename.go` `Rename`） | TestRenameCaseOnly、TestRenameCaseOnlyOtherVolumes | 共通・EXFAT/FAT32 |
@@ -118,7 +118,9 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 4. **照合の後にマージ先・上書き先を置き換えられた場合**（I1、書き込み先がリンクの先になる）。
    §7.3 の照合（`checkTarget`）はマージの開始時・上書きの直前に行うが、その後にマージ先をリンクへ置き換えられると、中身はリンクの先に書かれる。
    上書きでも、照合と置換リネームの間は `Lstat` による確認だけ（SPEC で許容）。照合より前の置き換えだけをテストしている。
-5. **§8.4 の代わりの手段の残る危険**（I1）。名前を確保してから置き換えるまでの間に、確保した名前が消されて作り直された場合に上書きしうる（SPEC §8.4 に明記済み）。
+5. **§8.4 の代わりの手段の残る危険**（I1・I3）。名前を確保してから置き換えるまでの間に、確保した名前が消されて作り直された場合に上書きしうる（SPEC §8.4 に明記済み）。
+   また、名前を確保した後・置き換える前にプロセスが強制終了すると、最終名の空のファイル・空のフォルダが残る（書きかけの内容ではないが、最終名に中身のないものが残る）。
+   このどちらのテストもない。
 6. **メタデータの設定の失敗の経路**。一時ファイル・作ったフォルダの fileID が一致しない場合の警告、Unix でコピー元のフォルダのメタデータを読めない場合の警告のテストがない
    （データは無事なので不変条件は破らない）。
 7. **Windows のごみ箱の、事前確認を飛ばした最大サイズ超過**（I5）。確認ダイアログで止まることが V18 で分かっているため実行していない。
@@ -127,5 +129,8 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
    `renameat2` と代わりの手段（開いたフォルダからの相対を含む）、`attr_linux.go`、`volume_linux.go`、`meta_linux.go` の経路はテストされていない。
 9. **macOS の exFAT の NFC の名前**（V17、§8.5 の制限事項）。NFC の名前で作られたエントリは NFD の名前で列挙され、その名前では削除できない。
    コピー・移動・完全削除で `KindNotFound` の失敗として報告するはずだが、テストはない。
-10. **手元の macOS での FAT 系ボリュームのテスト**。手元の Mac では AppleDouble ファイル（`._名前`）が作られ、名前の一覧を比べる一部のテストが失敗する
+10. **移動で名前をバイト単位でそのまま使うこと**（I6、§18.4 の I6 の「移動」）。コピーは日本語・絵文字・NFD の名前でテストしているが、
+    移動（同一ボリューム・ボリュームをまたぐ）のテストでは、そうした名前を使っていない。
+11. **ごみ箱へ移す操作が成功を返したのに元の場所に残っている場合を失敗にする経路**（`trash.go` `trashItem`）。起こす方法がなく、テストがない。
+12. **手元の macOS での FAT 系ボリュームのテスト**。手元の Mac では AppleDouble ファイル（`._名前`）が作られ、名前の一覧を比べる一部のテストが失敗する
     （TestRenameCaseOnlyOtherVolumes、TestRenameExclusiveOtherVolumes、TestMoveMergeOtherVolumes）。CI では作られず成功する。
