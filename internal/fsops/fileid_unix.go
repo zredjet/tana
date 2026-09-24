@@ -26,10 +26,19 @@ func statIDSys(p string, follow bool) (idStat, error) {
 	return idStatFromStat(&st), nil
 }
 
+// syntheticIno は、macOS の exFAT・FAT32 で空の通常のファイルに付く仮の ino（2^63 以上。操作のたびに変わる。V25）の代わりに使う一定の値。
+const syntheticIno = 1 << 63
+
 func idStatFromStat(st *unix.Stat_t) idStat {
 	var id fileID
 	id.method = idMethodDevIno
 	id.vol = uint64(st.Dev)
-	binary.LittleEndian.PutUint64(id.id[:], uint64(st.Ino))
+	ino := uint64(st.Ino)
+	if ino >= syntheticIno && st.Size == 0 && st.Mode&unix.S_IFMT == unix.S_IFREG {
+		// fileID では同一性を確かめられないので、「そのボリュームの空のファイル」を表す一定の値にする（§8.3）。
+		// 照合は、一緒に比べる種類・大きさ・更新日時で行うことになる。空のファイルはデータを持たないので、取り違えても失うデータはない。
+		ino = syntheticIno
+	}
+	binary.LittleEndian.PutUint64(id.id[:], ino)
 	return idStat{id: id, isDir: st.Mode&unix.S_IFMT == unix.S_IFDIR, nlink: uint64(st.Nlink)}
 }
