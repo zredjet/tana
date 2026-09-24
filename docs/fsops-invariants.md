@@ -27,6 +27,7 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 | シンボリックリンクを最終名に直接作る（`copy.go` `copySymlink`） | TestCopySymlinkConflictAfterPlan、TestCopyTopLevelLinks | 共通 |
 | 同一ボリュームの移動のリネーム（`move.go` `rename`。トップレベルはパス、マージの中は開いたフォルダからの相対 `secDir.renameOut`） | TestMoveConflicts（計画後に現れた衝突）、TestMoveMerge、TestMoveMergeOtherVolumes | 共通・EXFAT/FAT32 |
 | 移動先・コピー先の孤立した AppleDouble ファイル（`._名前`）を、`名前` を作るときに OS が消す・置き換える（macOS の exFAT・FAT32） | 受け入れる制限事項（SPEC §8.5）。OS の動作は TestV22 で記録 | macOS・EXFAT/FAT32 |
+| 使用中の一時的な失敗のやり直し（SPEC §17.1。`lockretry.go` `lockRetrier`、`copy.go` `finalize`・`overwriteOnce`、`move.go` `rename`、`rename.go` `renameWith`）。やり直すたびに一時ファイルの `check` と上書き先の照合からやり直す | TestLockRetryConflictDuringWait（待つ間に現れた衝突）、TestLockRetryOverwriteChangedDuringWait（待つ間に変わった上書き先）、TestLockRetryOverwrite、TestLockRetryMove、TestLockRetryRename | 共通 |
 
 ## I2 移動元は最後に、コピーした分だけ消す
 
@@ -42,6 +43,7 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 | ボリューム違いのエラーからの切り替え（`move.go` `moveItem`） | TestMoveRenameFallback | 共通 |
 | 照合の後・削除の直前に書き換えられた移動元を消さない（Windows: `removeVerified` の削除するハンドルでの照合。Unix は受け入れる危険。SPEC §13.3） | TestRemoveRecordedFileEditedBeforeRemove | Windows |
 | AppleDouble の付属（`._名前`）は項目として記録・削除せず、移動元の `名前` と一緒に OS が消す（`appledouble_darwin.go` `dropAppleDouble`。§15 の `com.apple.quarantine` は移動先に残る） | TestAppleDoubleQuarantineOtherVolumes（move across volumes・delete） | macOS・EXFAT/FAT32 |
+| 移動元の削除の、使用中の間のやり直し（`remove.go` `removeWithRetry`） | TestLockRetryMoveCrossVolume | CROSSVOL |
 
 ## I3 書きかけのファイルを最終名で残さない
 
@@ -54,6 +56,7 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 | 一時ファイルが置き換えられていれば最終名にせず、置き換えたものを消さない（`copy.go` `tempFile.check`・`tempFile.remove`・`finalize`） | TestCopyTempReplacedBeforeFinalRename | 共通 |
 | 最終名にできなかったときに一時ファイルを消す（読み取り専用にした一時ファイルを含む。`copy.go` `removeTemp`、`copy_windows.go` `clearReadOnlySys`） | TestCopyConflictBeforeFinalRename、TestCopyOverwriteTargetReplaced、TestCopyOverwriteLocked、TestCopyAutoRenameTooLong、TestCopyReadOnlyTempRemoved | 共通・Windows |
 | コピー元を開けない場合は一時ファイルを作らない（`copy.go` `writeTemp`、`copy_*.go` `openSourceSys`） | TestCopyLockedSource | Windows |
+| 一時ファイルの削除の、使用中の間のやり直し。キャンセルの後もやり直す（`copy.go` `tempFile.remove`・`lockRetrier.removeTemp`。SPEC §17.1） | TestLockRetryCopyExhausted、TestLockRetryCopyCancel、TestLockRetrier（temp cleanup ignores cancel） | 共通 |
 
 ## I4 リンクの先を操作しない
 
@@ -71,6 +74,7 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 | 同一ボリュームのマージ移動で、開いたハンドルで確かめてから入る（`move.go` `merge`） | TestMoveMergeDirReplacedByLink、TestMoveMergeLinks | 共通 |
 | 書き込み先のフォルダ（DestDir・作ったフォルダ・マージ先）を確かめて開き、中の操作をそのハンドルで行う（`secdir_*.go` `openDestRoot`・`openNewSecDir`・`renameBetween` など、`copy.go` `copyDir`、`move.go` `merge`） | TestCopyMergeDestReplacedAfterCheck、TestCopyCreatedDestReplacedAfterMkdir、TestMoveMergeDestReplacedAfterCheck | 共通 |
 | ごみ箱に入れる項目の大きさを数える走査（`trash_windows.go` `itemSize`）と、リンク自体だけを入れること | TestTrash（リンクを含むフォルダ、トップレベルのリンク・ジャンクション） | TRASH |
+| 削除の、使用中の間のやり直しで §13.2 の確認もやり直す（`remove.go` `removeWithRetry`、Windows は `removeVerified` の一連） | TestLockRetryDeleteLinkSwapDuringWait（待つ間にリンクへ置き換え）、TestLockRetryDelete | 共通 |
 
 ## I5 黙って完全削除しない
 
@@ -112,6 +116,7 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 | 完全削除中のキャンセル・失敗（I4） | TestDeleteCancel、TestDeleteLocked、TestDeleteReadOnly | 共通・Windows |
 | 移動中のキャンセル・失敗（I2・I4） | TestMoveCrossVolumeFault、TestMoveCrossVolumeCancel、TestMoveCrossVolumeCancelRemoval、TestMoveMergeCancel、TestMoveSyncFailureKeepsSource | 共通・CROSSVOL |
 | リンクの作成の失敗（I1） | TestCopySymlinkCreateFails、TestCopySymlinkToFATVolumes | 共通・EXFAT/FAT32 |
+| 使用中のやり直しの待ちの間のキャンセル（`lockretry.go` `retry`・`wait`、各呼び出し側の KindCanceled の扱い） | TestLockRetrier（cancel during wait）、TestLockRetryCopyCancel、TestLockRetryDeleteCancel | 共通 |
 
 ---
 
@@ -153,3 +158,6 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
     できていた。調べると、fsops が `._名前` を独立した項目として扱うため、同一ボリュームのマージ移動で §15 の `com.apple.quarantine` が失われる不具合が見つかった（V22）。
     macOS の exFAT・FAT32 では `名前` と並ぶ `._名前` を付属として列挙から除くようにし（SPEC §8.5）、TestAppleDoubleQuarantineOtherVolumes・TestAppleDoubleNamesOrdinary でテストした。
     `testfs.ListNames` も同じ見方で付属を除くので、手元でも TestRenameCaseOnlyOtherVolumes などが成功する。
+13. （確かめられない）§17.1 の使用中の一時的な失敗のやり直しの間隔と上限（1 操作 1 秒、1 回の Execute で 10 秒）が、実際のウイルス対策ソフト・
+    検索インデクサ・同期クライアントのロックに足りるか。CI では再現できないので、推測で決めた値のまま。やり直しの処理自体は、注入した失敗で 3 つの OS でテストし
+    （TestLockRetry*）、実際の共有違反が上限の後に KindLocked になることは TestCopyLockedSource などでテストしている（Windows）。

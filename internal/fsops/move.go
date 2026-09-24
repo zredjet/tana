@@ -16,7 +16,7 @@ func (ex *executor) copyThenRemove(i int, it Item) ItemResult {
 	}
 	ex.opt.hooks.removeSource(it.Src)
 	ex.progress.start(StageRemoveSource, it.Src)
-	out := removeRecorded(ex.ctx, it.Src, *rec, ex.opt.hooks, func(EntryInfo) { ex.progress.report(false) })
+	out := removeRecorded(ex.locks, it.Src, *rec, func(EntryInfo) { ex.progress.report(false) })
 	res.Details = append(res.Details, out.details...)
 	sortDetails(res.Details) // コピーの結果と移動元の削除の結果を合わせて名前順にする（§5）
 	switch {
@@ -152,28 +152,30 @@ func (mv *mover) rename(parent *secDir, src, dst string, e dirEntry, pc *planned
 			}
 			from = s
 		}
+		if err := mv.ex.opt.hooks.lockFaultErr("rename", d); err != nil {
+			return err
+		}
 		return withUserPaths(renameBetween(parent, from, dd, filepath.Base(d), replace), src, d)
 	}
+	// 使用中で失敗したら、上書きの確認からやり直す（§17.1）。
+	locks := mv.ex.locks
 	var final string
 	var out Outcome
 	var oe *OpError
 	switch {
 	case pc != nil && pc.c.Decision == DecisionOverwrite:
 		final = dst
-		gone, o, terr := checkOverwrite(src, dst, pc, dd)
-		switch {
-		case terr != nil:
-			out, oe = o, terr
-		case gone:
-			out, oe = createResult(src, dst, do(dst, false), false)
-		default:
-			out, oe = replaceResult(src, dst, do(dst, true))
-		}
+		out, oe = locks.result(dst, func() (Outcome, *OpError) { return overwriteOnce(src, dst, pc, dd, do) })
 	case pc != nil && pc.c.Decision == DecisionAutoRename:
-		final, out, oe = autoRename(src, dst, e.info.Type == TypeDir, false, func(cand string) error { return do(cand, false) })
+		final, out, oe = autoRename(src, dst, e.info.Type == TypeDir, false, func(cand string) error {
+			return locks.retry(cand, false, func() error { return do(cand, false) }, lockedErr)
+		})
 	default:
 		final = dst
-		out, oe = createResult(src, dst, do(dst, false), false)
+		out, oe = locks.result(dst, func() (Outcome, *OpError) { return createResult(src, dst, do(dst, false), false) })
+	}
+	if oe != nil && oe.Kind == KindCanceled && mv.checkCanceled() {
+		return final, OutcomeSkipped, &OpError{Op: "move", Path: src, Dest: final, Kind: KindCanceled, Err: mv.ex.ctx.Err()}
 	}
 	if oe != nil {
 		oe.Op = "move"
@@ -240,21 +242,19 @@ func (mv *mover) merge(parent *secDir, src, dst string, e dirEntry, pc *planned,
 	}
 	d.close() // フォルダ自体を削除する直前に閉じる（§13.1）
 	mv.ex.opt.hooks.remove(src)
-	var rerr error
+	remove := func() error { return removeTop(src, e, false) }
 	restat := func() (dirEntry, error) { return statTop(src) }
 	if parent != nil {
-		rerr = parent.remove(e, false)
+		remove = func() error { return parent.remove(e, false) }
 		restat = func() (dirEntry, error) { return parent.stat(e.name) }
-	} else {
-		rerr = removeTop(src, e, false)
 	}
-	if rerr == nil {
+	// 削除と同じ方法で分類する（置き換えられていれば KindSourceChanged）。使用中の間はやり直す（§17.1）。
+	_, oe = removeWithRetry(mv.ex.locks, src, e, remove, restat)
+	if oe == nil {
 		return OutcomeDone, nil, true
 	}
-	ss, _ := sysPath(src)
-	oe, vanished := removeErr(src, rerr, e, restat, ss) // 削除と同じ方法で分類する（置き換えられていれば KindSourceChanged）
-	if vanished {
-		return OutcomeDone, nil, true
+	if oe.Kind == KindCanceled && mv.checkCanceled() {
+		return OutcomeDone, nil, false // キャンセルで打ち切った。移動元のフォルダは残る
 	}
 	if left == 0 || oe.Kind == KindSourceChanged {
 		// 残したものがないのに空でない（移動中に追加された）、削除できなかった、または置き換えられていた。移動元のフォルダは残る。

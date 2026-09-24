@@ -7,6 +7,9 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// lockRetrySys は、使用中（KindLocked）の失敗を §17.1 のとおりやり直すか。
+const lockRetrySys = true
+
 // classifyErrno は err に含まれる Windows のエラー番号を分類する（SPEC §17）。
 // 対応表にない番号、またはエラー番号を含まない場合は ok が false。
 func classifyErrno(err error, o classifyOpts) (k Kind, ok bool) {

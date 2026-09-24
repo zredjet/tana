@@ -308,7 +308,7 @@ func (cp *copier) copyFile(src, dst string, e dirEntry, pc *planned, dd *secDir)
 	}
 	final, out, oe := cp.finalize(src, tmp, dst, decision, pc)
 	if out != OutcomeDone {
-		tmp.remove() // 置き換えられていれば、それは fsops の一時ファイルではないので消さない
+		tmp.remove(cp.ex.locks) // 置き換えられていれば、それは fsops の一時ファイルではないので消さない
 		return final, out, oe
 	}
 	cp.warnings = append(cp.warnings, warnings...)
@@ -338,6 +338,19 @@ func checkOverwrite(src, dst string, pc *planned, dd *secDir) (gone bool, out Ou
 	return false, OutcomeDone, nil
 }
 
+// overwriteOnce は、上書きの 1 回の試み（§9.3）。直前の確認の後に do で置換リネームする。上書き先が消えていれば、衝突なしとして排他リネームする。
+// §17.1 のやり直しでは、確認からやり直す。
+func overwriteOnce(src, dst string, pc *planned, dd *secDir, do func(d string, replace bool) error) (Outcome, *OpError) {
+	gone, out, oe := checkOverwrite(src, dst, pc, dd)
+	switch {
+	case oe != nil:
+		return out, oe
+	case gone:
+		return createResult(src, dst, do(dst, false), false)
+	}
+	return replaceResult(src, dst, do(dst, true))
+}
+
 // tempFile は、書き終えた一時ファイル（§10.1）。fileID と大きさで、fsops が書いたものであることを確かめる。
 type tempFile struct {
 	dir   *secDir   // 一時ファイルを作ったフォルダ（書き込み先。確かめて開いたもの）
@@ -365,11 +378,28 @@ func (t tempFile) check() error {
 }
 
 // remove は、一時ファイルを削除する（§10.1 の手順 8）。path にあるものが書き終えた一時ファイルのままの場合だけ消す
-// （置き換えられていれば、それは fsops の一時ファイルではない）。
-func (t tempFile) remove() {
-	if t.check() == nil {
-		t.dir.unlinkTemp(t.name)
-	}
+// （置き換えられていれば、それは fsops の一時ファイルではない）。使用中の間は、キャンセルされていてもやり直す（§17.1、I3）。
+func (t tempFile) remove(lr *lockRetrier) {
+	lr.retry(t.path, true, func() error {
+		if t.check() != nil {
+			return nil
+		}
+		if err := lr.hooks.lockFaultErr("unlink-temp", t.path); err != nil {
+			return err
+		}
+		return t.dir.unlinkTemp(t.name)
+	}, lockedErr)
+}
+
+// removeTemp は、書き込み中に失敗・キャンセルした一時ファイル name（パスは path）を削除する（§10.1 の手順 8）。
+// 使用中の間は、キャンセルされていてもやり直す（§17.1、I3）。
+func (lr *lockRetrier) removeTemp(d *secDir, name, path string) {
+	lr.retry(path, true, func() error {
+		if err := lr.hooks.lockFaultErr("unlink-temp", path); err != nil {
+			return err
+		}
+		return d.unlinkTemp(name)
+	}, lockedErr)
 }
 
 // finalize は、書き終えた一時ファイル tmp を最終名にする（§10.1 の手順 7）。
@@ -382,33 +412,33 @@ func (cp *copier) finalize(src string, tmp tempFile, dst string, decision Decisi
 	if cp.checkCanceled() {
 		return dst, OutcomeSkipped, cp.canceledErr(src)
 	}
+	// 使用中で失敗したら、一時ファイルの確認（と上書きの確認）からやり直す（§17.1）。
 	rename := func(d string, replace bool) error {
 		if err := tmp.check(); err != nil {
 			return err
 		}
+		if err := cp.ex.opt.hooks.lockFaultErr("rename", d); err != nil {
+			return err
+		}
 		return withUserPaths(renameBetween(dd, tmp.name, dd, filepath.Base(d), replace), tmp.path, d)
 	}
+	locks := cp.ex.locks
 	final, out, oe := dst, OutcomeDone, (*OpError)(nil)
 	switch decision {
 	case DecisionOverwrite:
 		cp.ex.opt.hooks.finalRename(dst)
-		gone, o, terr := checkOverwrite(src, dst, pc, dd)
-		switch {
-		case terr != nil:
-			return dst, o, terr
-		case gone:
-			out, oe = createResult(src, dst, rename(dst, false), false)
-		default:
-			out, oe = replaceResult(src, dst, rename(dst, true))
-		}
+		out, oe = locks.result(dst, func() (Outcome, *OpError) { return overwriteOnce(src, dst, pc, dd, rename) })
 	case DecisionAutoRename:
 		final, out, oe = autoRename(src, dst, false, false, func(cand string) error {
 			cp.ex.opt.hooks.finalRename(cand)
-			return rename(cand, false)
+			return locks.retry(cand, false, func() error { return rename(cand, false) }, lockedErr)
 		})
 	default:
 		cp.ex.opt.hooks.finalRename(dst)
-		out, oe = createResult(src, dst, rename(dst, false), false)
+		out, oe = locks.result(dst, func() (Outcome, *OpError) { return createResult(src, dst, rename(dst, false), false) })
+	}
+	if oe != nil && oe.Kind == KindCanceled && cp.checkCanceled() {
+		return final, OutcomeSkipped, cp.canceledErr(src)
 	}
 	if oe != nil {
 		return final, out, oe
@@ -490,12 +520,27 @@ func (cp *copier) writeTemp(src, dst string, e dirEntry, dd *secDir) (tempFile, 
 	if err != nil {
 		return tempFile{}, srcMeta{}, nil, fail(err)
 	}
-	in, m, err := openSourceSys(s, e.id)
-	if err != nil {
-		if oe, ok := err.(*OpError); ok {
-			return tempFile{}, srcMeta{}, nil, &OpError{Op: "copy", Path: src, Dest: dst, Kind: oe.Kind, Err: oe.Err}
+	var in *os.File
+	var m srcMeta
+	// 開けなければ、使用中の間はやり直す（§17.1。開くたびに fileID を確かめる）。
+	if oe := cp.ex.locks.op(src, func() *OpError {
+		if err := cp.ex.opt.hooks.lockFaultErr("open", src); err != nil {
+			return sourceErr(src, dst, e, err)
 		}
-		return tempFile{}, srcMeta{}, nil, sourceErr(src, dst, e, withUserPaths(err, src, ""))
+		var err error
+		in, m, err = openSourceSys(s, e.id)
+		if err == nil {
+			return nil
+		}
+		if oe, ok := err.(*OpError); ok {
+			return &OpError{Op: "copy", Path: src, Dest: dst, Kind: oe.Kind, Err: oe.Err}
+		}
+		return sourceErr(src, dst, e, withUserPaths(err, src, ""))
+	}); oe != nil {
+		if oe.Kind == KindCanceled && cp.checkCanceled() {
+			return tempFile{}, srcMeta{}, nil, cp.canceledErr(src)
+		}
+		return tempFile{}, srcMeta{}, nil, oe
 	}
 	defer in.Close()
 	var warnings []*OpError
@@ -514,7 +559,7 @@ func (cp *copier) writeTemp(src, dst string, e dirEntry, dd *secDir) (tempFile, 
 			out.Close()
 		}
 		if !keep {
-			dd.unlinkTemp(tmpName)
+			cp.ex.locks.removeTemp(dd, tmpName, tmp)
 		}
 	}()
 	var sum hash.Hash
@@ -608,8 +653,19 @@ func (cp *copier) verify(src, dst string, tmp tempFile, e dirEntry, m srcMeta, s
 	}
 	cp.ex.progress.start(StageVerify, src)
 	defer cp.ex.progress.setStage(StageCopy)
-	f, _, err := tmp.dir.openRegular(tmp.name, tmp.id)
+	var f *os.File
+	err = cp.ex.locks.retry(tmp.path, false, func() error { // 使用中の間はやり直す（§17.1）
+		if err := cp.ex.opt.hooks.lockFaultErr("verify", tmp.path); err != nil {
+			return err
+		}
+		var err error
+		f, _, err = tmp.dir.openRegular(tmp.name, tmp.id)
+		return err
+	}, lockedErr)
 	if err != nil {
+		if KindOf(err) == KindCanceled && cp.checkCanceled() {
+			return cp.canceledErr(src)
+		}
 		return &OpError{Op: "verify", Path: src, Dest: dst, Kind: classify(err, classifyOpts{}), Err: withUserPaths(err, tmp.path, "")}
 	}
 	defer f.Close()

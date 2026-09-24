@@ -37,7 +37,7 @@ func recordOf(t *testing.T, path string) recordEntry {
 
 func removeRec(t *testing.T, ctx context.Context, h *testHooks, path string, rec recordEntry) removeOutcome {
 	t.Helper()
-	return removeRecorded(ctx, path, rec, h, nil)
+	return removeRecorded(newLockRetrier(ctx, h), path, rec, nil)
 }
 
 // keptWith は、Details に、path を kind で残したエントリがあるかを返す。

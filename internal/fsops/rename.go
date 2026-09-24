@@ -1,6 +1,7 @@
 package fsops
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"os"
@@ -73,6 +74,11 @@ func renameReplace(src, dst string) error {
 
 // Rename は path の名前を newName に変える。上書きは一切しない（§11.3）。
 func Rename(path, newName string) error {
+	return renameWith(newLockRetrier(context.Background(), nil), path, newName)
+}
+
+// renameWith は Rename の本体。使用中の一時的な失敗は lr でやり直す（§17.1）。
+func renameWith(lr *lockRetrier, path, newName string) error {
 	p, err := checkPath(path)
 	if err != nil {
 		return &OpError{Op: "rename", Path: path, Kind: KindInvalidRequest}
@@ -97,9 +103,18 @@ func Rename(path, newName string) error {
 		return &OpError{Op: "rename", Path: p, Dest: dest, Kind: classify(err, classifyOpts{readOnly: readOnlySys(s)}),
 			Err: withUserPaths(err, p, dest)}
 	}
+	// 名前の変更は、使用中の間はやり直す（§17.1）。
+	retry := func(to string, rename func() error) error {
+		return lr.retry(to, false, func() error {
+			if err := lr.hooks.lockFaultErr("rename", to); err != nil {
+				return err
+			}
+			return rename()
+		}, lockedErr)
+	}
 	// 大文字小文字・正規化の違いだけの変更か（名前の変更の後の確認が要るか）を先に調べる。変更の方法自体は renameExclusiveSysSame が決める。
 	same := sameFileRename(s, d)
-	if err := renameExclusiveSysSame(s, d); err != nil {
+	if err := retry(dst, func() error { return renameExclusiveSysSame(s, d) }); err != nil {
 		return fail(err, dst)
 	}
 	if !same {
@@ -119,11 +134,11 @@ func Rename(path, newName string) error {
 	if err != nil {
 		return err
 	}
-	if err := renameExclusiveSys(s, t); err != nil {
+	if err := retry(tmp, func() error { return renameExclusiveSys(s, t) }); err != nil {
 		return fail(err, dst)
 	}
-	if err := renameExclusiveSys(t, d); err != nil {
-		if rerr := renameExclusiveSys(t, s); rerr != nil {
+	if err := retry(dst, func() error { return renameExclusiveSys(t, d) }); err != nil {
+		if rerr := retry(p, func() error { return renameExclusiveSys(t, s) }); rerr != nil {
 			return fail(err, tmp) // 元の名前に戻せなかった。一時名のパスを Dest で返す
 		}
 		return fail(err, dst)

@@ -10,7 +10,8 @@ import (
 type remover struct {
 	ctx      context.Context
 	hooks    *testHooks
-	recorded bool // §13.3（移動元の削除）なら真
+	locks    *lockRetrier // 使用中の一時的な失敗のやり直し（§17.1）
+	recorded bool         // §13.3（移動元の削除）なら真
 	// onRemoved は、フォルダ以外のエントリを削除するたびに呼ばれる（進捗用。nil 可）。
 	onRemoved func(path string, info EntryInfo)
 
@@ -63,17 +64,7 @@ func (r *remover) removeIn(d *secDir, e dirEntry) bool {
 	if r.checkCanceled() {
 		return false
 	}
-	if err := d.remove(e, r.recorded); err != nil {
-		sys, _ := sysPath(path)
-		oe, vanished := removeErr(path, err, e, func() (dirEntry, error) { return d.stat(e.name) }, sys)
-		if vanished {
-			return true
-		}
-		r.fail(path, oe)
-		return false
-	}
-	r.removed(path, e.info)
-	return true
+	return r.removeOnce(path, e, func() error { return d.remove(e, r.recorded) }, func() (dirEntry, error) { return d.stat(e.name) })
 }
 
 // removeTopEntry は、トップレベルのエントリ path を削除する。削除できたら真。
@@ -82,17 +73,42 @@ func (r *remover) removeTopEntry(path string, e dirEntry) bool {
 	if r.checkCanceled() {
 		return false
 	}
-	if err := removeTop(path, e, r.recorded); err != nil {
-		sys, _ := sysPath(path)
-		oe, vanished := removeErr(path, err, e, func() (dirEntry, error) { return statTop(path) }, sys)
-		if vanished {
-			return true
-		}
+	return r.removeOnce(path, e, func() error { return removeTop(path, e, r.recorded) }, func() (dirEntry, error) { return statTop(path) })
+}
+
+// removeOnce は、エントリ e（path）を remove で削除する。削除できた（または既になかった）なら真。
+// 使用中で失敗したら、§13.2 の確認（Windows では開いたハンドルの fileID とリパースの確認）を含めてやり直す（§17.1）。
+func (r *remover) removeOnce(path string, e dirEntry, remove func() error, restat func() (dirEntry, error)) bool {
+	gone, oe := removeWithRetry(r.locks, path, e, remove, restat)
+	switch {
+	case oe != nil && oe.Kind == KindCanceled && r.checkCanceled():
+		return false
+	case oe != nil:
 		r.fail(path, oe)
 		return false
+	case !gone:
+		r.removed(path, e.info)
 	}
-	r.removed(path, e.info)
 	return true
+}
+
+// removeWithRetry は、エントリ e（path）を remove で削除し、失敗を removeErr で分類する。使用中の間はやり直す（§17.1）。
+// 削除の前にエントリが消えていた（列挙・確認の後に消えた）なら vanished が真。待っている間にキャンセルされたら KindCanceled。
+func removeWithRetry(lr *lockRetrier, path string, e dirEntry, remove func() error, restat func() (dirEntry, error)) (vanished bool, oe *OpError) {
+	oe = lr.op(path, func() *OpError {
+		err := lr.hooks.lockFaultErr("remove", path)
+		if err == nil {
+			err = remove()
+		}
+		if err == nil {
+			return nil
+		}
+		sys, _ := sysPath(path)
+		var oe *OpError
+		oe, vanished = removeErr(path, err, e, restat, sys)
+		return oe
+	})
+	return vanished, oe
 }
 
 func (r *remover) removed(path string, info EntryInfo) {
@@ -165,9 +181,10 @@ func (r *remover) deleteContents(d *secDir) bool {
 }
 
 // deleteItem は完全削除（§13.2）の 1 項目を処理する。
-func deleteItem(ctx context.Context, h *testHooks, it Item, onRemoved func(string, EntryInfo)) ItemResult {
+func deleteItem(lr *lockRetrier, it Item, onRemoved func(string, EntryInfo)) ItemResult {
+	ctx := lr.ctx
 	res := ItemResult{Src: it.Src}
-	r := &remover{ctx: ctx, hooks: h, onRemoved: onRemoved}
+	r := &remover{ctx: ctx, hooks: lr.hooks, locks: lr, onRemoved: onRemoved}
 	e, err := statTop(it.Src)
 	if err != nil {
 		res.Outcome, res.Err = OutcomeFailed, &OpError{Op: "remove", Path: it.Src, Kind: classify(err, classifyOpts{}), Err: err}
@@ -261,8 +278,8 @@ func onlyNames(d *secDir, keep []string) bool {
 // フォルダは中身の後に削除し、空でなければ（コピー中に追加されたファイルなど）残す。
 // Windows では、照合で一致したエントリの読み取り専用属性を外してから削除する（macOS のロックは外さない）。
 // onRemoved は、フォルダ以外のエントリを削除するたびに呼ばれる（進捗用。nil 可）。
-func removeRecorded(ctx context.Context, path string, rec recordEntry, h *testHooks, onRemoved func(EntryInfo)) removeOutcome {
-	r := &remover{ctx: ctx, hooks: h, recorded: true}
+func removeRecorded(lr *lockRetrier, path string, rec recordEntry, onRemoved func(EntryInfo)) removeOutcome {
+	r := &remover{ctx: lr.ctx, hooks: lr.hooks, locks: lr, recorded: true}
 	if onRemoved != nil {
 		r.onRemoved = func(_ string, info EntryInfo) { onRemoved(info) }
 	}

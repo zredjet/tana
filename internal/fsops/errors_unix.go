@@ -9,6 +9,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// lockRetrySys は、使用中（KindLocked）の失敗を §17.1 のとおりやり直すか。Unix の EBUSY（マウントポイントなど）は一時的なものではないので、やり直さない。
+const lockRetrySys = false
+
 // classifyErrno は err に含まれる errno を分類する（SPEC §17）。
 // 対応表にない番号、または errno を含まない場合は ok が false。
 func classifyErrno(err error, o classifyOpts) (k Kind, ok bool) {

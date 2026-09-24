@@ -1,5 +1,7 @@
 package fsops
 
+import "time"
+
 // testHooks は障害の注入などに使うテスト用のフック（SPEC §5、§18.1）。
 // ExecOptions の非公開フィールドで渡すため、パッケージ内のテストからだけ設定できる。
 // nil のとき、または各フィールドが nil のときは何もしない。フックは Execute を実行している goroutine から呼ぶ。
@@ -42,6 +44,11 @@ type testHooks struct {
 	trashCall func(src string, info EntryInfo) (string, error)
 	// dirMetaFault は、コピー元のフォルダのメタデータを読む直前に呼ばれる。error を返すと、読めなかったものとして扱う（総点検の穴 6）。
 	dirMetaFault func(src string) error
+	// lockFault は、§17.1 のやり直しの対象の操作を試すたびに、操作の種類 op（"open"・"verify"・"rename"・"remove"・"unlink-temp"）と
+	// パスで呼ばれる。真を返すと、その回は操作をせずに使用中（KindLocked）で失敗させる。注入した失敗はどの OS でもやり直しの対象になる。
+	lockFault func(op, path string) bool
+	// lockWait は、§17.1 のやり直しの待ちの代わりに、待つ長さ d で呼ばれる（実際には待たない）。キャンセルや置き換えの注入にも使う。
+	lockWait func(path string, d time.Duration)
 }
 
 func (h *testHooks) enterDir(path string) {
@@ -128,4 +135,21 @@ func (h *testHooks) trash(src string, info EntryInfo) (string, error) {
 		return h.trashCall(src, info)
 	}
 	return trashSys(src, info)
+}
+
+// lockFaultErr は、lockFault が真を返せば、注入した使用中の失敗を返す。
+func (h *testHooks) lockFaultErr(op, path string) error {
+	if h != nil && h.lockFault != nil && h.lockFault(op, path) {
+		return &OpError{Op: op, Path: path, Kind: KindLocked, Err: errInjectedLock}
+	}
+	return nil
+}
+
+// waitLock は、lockWait があればそれを呼んで真を返す（実際には待たない）。
+func (h *testHooks) waitLock(path string, d time.Duration) bool {
+	if h != nil && h.lockWait != nil {
+		h.lockWait(path, d)
+		return true
+	}
+	return false
 }

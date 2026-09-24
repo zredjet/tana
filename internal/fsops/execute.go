@@ -34,6 +34,7 @@ func (p *Plan) Execute(ctx context.Context, opt ExecOptions) (*Result, error) {
 		conflicts:   conflicts,
 		conflictIdx: newConflictIndex(conflicts, p.conflictDst),
 		progress:    &progressReporter{fn: opt.Progress, cur: Progress{TotalFiles: p.totalFiles, TotalBytes: p.totalBytes}},
+		locks:       newLockRetrier(ctx, opt.hooks),
 	}
 	return ex.run(), nil
 }
@@ -46,7 +47,8 @@ type executor struct {
 	conflicts   []Conflict // Execute の開始時に固定した決定
 	conflictIdx conflictIndex
 	progress    *progressReporter
-	buf         []byte // コピーのバッファ（§10.1）。項目は 1 件ずつ処理するので、Execute の間使い回す
+	buf         []byte       // コピーのバッファ（§10.1）。項目は 1 件ずつ処理するので、Execute の間使い回す
+	locks       *lockRetrier // 使用中の一時的な失敗のやり直し（§17.1）。待ちの合計の上限は Execute 全体で数える
 }
 
 // copyBuf はコピーのバッファを返す。最初に使うときに確保する。
@@ -107,7 +109,7 @@ func (ex *executor) do(i int, it Item) ItemResult {
 		return ex.trashItem(it)
 	case MethodRemove:
 		ex.progress.start(StageDelete, it.Src)
-		return deleteItem(ex.ctx, ex.opt.hooks, it, ex.progress.done)
+		return deleteItem(ex.locks, it, ex.progress.done)
 	}
 	return ItemResult{Src: it.Src, Dst: it.Dst, Outcome: OutcomeFailed,
 		Err: &OpError{Op: "execute", Path: it.Src, Kind: KindUnknown, Err: errors.ErrUnsupported}}
