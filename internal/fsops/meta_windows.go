@@ -64,18 +64,13 @@ func dirMetaSys(s string) (srcMeta, error) {
 // setMetaIn は、フォルダ d の中の、fsops が作ったファイル（一時ファイル）・フォルダ name に、メタデータ m を設定する（§15）。
 // リンクを辿らずに開き、fileID が作ったときの want と一致することを確かめてから設定する。
 // 設定できなかったものがあっても残りは続け、エラーをまとめて返す（呼び出し側は KindMetadata の警告にする）。
-// 順序: Zone.Identifier（書き込みが要る。書くと更新日時が変わる）→ 更新日時と属性（読み取り専用にするのは最後）。
+// 順序: 照合 → Zone.Identifier（書き込みが要る。書くと更新日時が変わる）→ 更新日時と属性（読み取り専用にするのは最後）。
 func setMetaIn(d *secDir, name string, want fileID, m srcMeta, isDir bool) error {
 	s := d.sysJoin(name)
 	var errs []error
-	if len(m.extra) > 0 && !isDir {
-		if err := os.WriteFile(s+zoneStream, m.extra, 0o644); err != nil {
-			errs = append(errs, err)
-		}
-	}
 	s16, err := windows.UTF16PtrFromString(s)
 	if err != nil {
-		return errors.Join(append(errs, err)...)
+		return err
 	}
 	h, err := windows.CreateFile(s16, windows.FILE_READ_ATTRIBUTES|windows.FILE_WRITE_ATTRIBUTES,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil,
@@ -88,12 +83,19 @@ func setMetaIn(d *secDir, name string, want fileID, m srcMeta, isDir bool) error
 	if err != nil {
 		return errors.Join(append(errs, &os.PathError{Op: "GetFileInformationByHandle", Path: s, Err: err})...)
 	}
-	if st.id != want {
-		return errors.Join(append(errs, &OpError{Op: "metadata", Path: s, Kind: KindSourceChanged})...)
-	}
 	var bi windows.ByHandleFileInformation
 	if err := windows.GetFileInformationByHandle(h, &bi); err != nil {
 		return errors.Join(append(errs, &os.PathError{Op: "GetFileInformationByHandle", Path: s, Err: err})...)
+	}
+	// ファイルは大きさも照合する（§7.3。fileID だけで判断しない）。
+	if st.id != want || !isDir && int64(bi.FileSizeHigh)<<32|int64(bi.FileSizeLow) != m.size {
+		return errors.Join(append(errs, &OpError{Op: "metadata", Path: s, Kind: KindSourceChanged})...)
+	}
+	// 照合した後に Zone.Identifier を書く（照合したハンドルを開いたままなので、同じファイルに書かれる）。
+	if len(m.extra) > 0 && !isDir {
+		if err := os.WriteFile(s+zoneStream, m.extra, 0o644); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	a := (bi.FileAttributes&^keptAttrs | m.attrs&keptAttrs) & settableAttrs
 	if a == 0 {

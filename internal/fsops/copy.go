@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // copyBufSize は、ファイルのコピーのバッファの大きさ（§10.1）。バッファごとに ctx を確かめる（§16）。
@@ -342,15 +343,22 @@ type tempFile struct {
 	dir  *secDir // 一時ファイルを作ったフォルダ（書き込み先。確かめて開いたもの）
 	name string  // dir の中の一時名
 	path string  // \\?\ の付かない形のパス（結果とエラーに使う）
-	id   fileID  // 書き込んだ後に記録した fileID
-	size int64   // 書き込んだバイト数
+	id    fileID    // 書き込んだ後に記録した fileID
+	size  int64     // 書き込んだバイト数
+	mtime time.Time // メタデータを設定した後の更新日時
 }
 
-// check は、path にあるのが書き終えた一時ファイルのままか（fileID・通常のファイル・大きさが一致するか）を確かめる。
+// matches は、now が書き終えた一時ファイルのままか（fileID・通常のファイル・大きさ・更新日時が一致するか）を返す。
+// fileID だけで判断しないのは、削除と作り直しで同じ番号が再利用されるファイルシステムがあるため（Linux の ext4。§7.3、V16）。
+func (t tempFile) matches(now dirEntry) bool {
+	return now.id == t.id && now.info.Type == TypeFile && now.info.Size == t.size && now.info.ModTime.Equal(t.mtime)
+}
+
+// check は、一時ファイルの名前にあるのが書き終えた一時ファイルのままか（matches）を確かめる。
 // 違えば（別のものに置き換えられていれば）KindSourceChanged の *OpError を返す（総点検の穴 3）。
 func (t tempFile) check() error {
 	now, err := t.dir.stat(t.name)
-	if err != nil || now.id != t.id || now.info.Type != TypeFile || now.info.Size != t.size {
+	if err != nil || !t.matches(now) {
 		return &OpError{Op: "copy", Path: t.path, Kind: KindSourceChanged, Err: err}
 	}
 	return nil
@@ -359,7 +367,7 @@ func (t tempFile) check() error {
 // remove は、一時ファイルを削除する（§10.1 の手順 8）。path にあるものが書き終えた一時ファイルのままの場合だけ消す
 // （置き換えられていれば、それは fsops の一時ファイルではない）。
 func (t tempFile) remove() {
-	if now, err := t.dir.stat(t.name); err == nil && now.id == t.id {
+	if t.check() == nil {
 		t.dir.unlinkTemp(t.name)
 	}
 }
@@ -409,7 +417,7 @@ func (cp *copier) finalize(src string, tmp tempFile, dst string, decision Decisi
 	// 報告できるようにする。Windows の exFAT・FAT32 の fileID（ファイルインデックス）は、同じフォルダの中でも名前の長さが変わる
 	// リネームで変わる（2026-09-24 の CI で確認）ので、そのボリュームでは確かめられない。
 	if tmp.id.method != idMethodByHandle {
-		if now, err := dd.stat(filepath.Base(final)); err != nil || now.id != tmp.id {
+		if now, err := dd.stat(filepath.Base(final)); err != nil || !tmp.matches(now) {
 			return final, OutcomeFailed, &OpError{Op: "copy", Path: src, Dest: final, Kind: KindSourceChanged, Err: err}
 		}
 	}
@@ -571,6 +579,13 @@ func (cp *copier) writeTemp(src, dst string, e dirEntry, dd *secDir) (tempFile, 
 	if err := setMetaIn(dd, tmpName, tmpID, m, false); err != nil {
 		warnings = append(warnings, &OpError{Op: "metadata", Path: src, Dest: dst, Kind: KindMetadata, Err: withUserPathsAll(err, dst)})
 	}
+	// 照合（tempFile.matches）に使う更新日時を、メタデータを設定した後の状態で記録する。
+	now, err := dd.stat(tmpName)
+	if err != nil || now.id != tmpID || now.info.Type != TypeFile || now.info.Size != written {
+		keep = true // 置き換えられていれば、それは fsops の一時ファイルではないので消さない
+		return tempFile{}, srcMeta{}, nil, &OpError{Op: "copy", Path: src, Dest: dst, Kind: KindSourceChanged, Err: err}
+	}
+	tf.mtime = now.info.ModTime
 	keep = true
 	return tf, m, warnings, nil
 }

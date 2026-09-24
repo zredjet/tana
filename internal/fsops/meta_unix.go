@@ -43,7 +43,8 @@ func setMetaIn(d *secDir, name string, want fileID, m srcMeta, isDir bool) error
 	if err := unix.Fstat(fd, &st); err != nil {
 		return &os.PathError{Op: "fstat", Path: s, Err: err}
 	}
-	if idStatFromStat(&st).id != want {
+	// ファイルは大きさも照合する（fileID だけでは、削除と作り直しで番号が再利用される ext4 で取り違えるため。§7.3、V16）。
+	if idStatFromStat(&st).id != want || !isDir && st.Size != m.size {
 		return &OpError{Op: "metadata", Path: s, Kind: KindSourceChanged}
 	}
 	var errs []error
