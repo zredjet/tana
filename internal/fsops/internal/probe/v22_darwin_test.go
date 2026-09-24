@@ -88,3 +88,20 @@ func TestV22(t *testing.T) {
 		})
 	}
 }
+
+// TestV22Detect は、拡張属性を AppleDouble ファイルに保存するボリュームを見分ける手がかり（statfs のファイルシステム名と
+// pathconf(_PC_XATTR_SIZE_BITS)）を、APFS・exFAT・FAT32 で記録する（V22）。
+func TestV22Detect(t *testing.T) {
+	const pcXattrSizeBits = 26 // <sys/unistd.h> の _PC_XATTR_SIZE_BITS
+	check := func(label, dir string) {
+		var st unix.Statfs_t
+		err := unix.Statfs(dir, &st)
+		name := unix.ByteSliceToString(st.Fstypename[:])
+		v, perr := unix.Pathconf(dir, pcXattrSizeBits)
+		t.Logf("V22: detect: %s: statfs err=%s fstypename=%q flags=%#x; pathconf(_PC_XATTR_SIZE_BITS)=%d err=%s", label, errString(err), name, st.Flags, v, errString(perr))
+	}
+	check("APFS (temp dir)", testfs.TempDir(t))
+	for _, env := range []string{envExFAT, envFAT32} {
+		t.Run(env, func(t *testing.T) { check(env, testfs.EnvDir(t, env)) })
+	}
+}
