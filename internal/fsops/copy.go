@@ -318,7 +318,7 @@ func (cp *copier) copyFile(src, dst string, e dirEntry, pc *planned) (string, Ou
 	}
 	final, out, oe := cp.finalize(src, tmp, dst, decision, pc)
 	if out != OutcomeDone {
-		removeTemp(tmp)
+		tmp.remove() // 置き換えられていれば、それは fsops の一時ファイルではないので消さない
 		return final, out, oe
 	}
 	cp.warnings = append(cp.warnings, warnings...)
@@ -352,35 +352,80 @@ func checkOverwrite(src, dst string, pc *planned) (gone bool, out Outcome, oe *O
 	return false, OutcomeDone, nil
 }
 
+// tempFile は、書き終えた一時ファイル（§10.1）。fileID と大きさで、fsops が書いたものであることを確かめる。
+type tempFile struct {
+	path string
+	id   fileID // 書き込んだ後に記録した fileID
+	size int64  // 書き込んだバイト数
+}
+
+// check は、path にあるのが書き終えた一時ファイルのままか（fileID・通常のファイル・大きさが一致するか）を確かめる。
+// 違えば（別のものに置き換えられていれば）KindSourceChanged の *OpError を返す（総点検の穴 3）。
+func (t tempFile) check() error {
+	now, err := statTop(t.path)
+	if err != nil || now.id != t.id || now.info.Type != TypeFile || now.info.Size != t.size {
+		return &OpError{Op: "copy", Path: t.path, Kind: KindSourceChanged, Err: err}
+	}
+	return nil
+}
+
+// remove は、一時ファイルを削除する（§10.1 の手順 8）。path にあるものが書き終えた一時ファイルのままの場合だけ消す
+// （置き換えられていれば、それは fsops の一時ファイルではない）。
+func (t tempFile) remove() {
+	if now, err := statTop(t.path); err == nil && now.id == t.id {
+		removeTemp(t.path)
+	}
+}
+
 // finalize は、書き終えた一時ファイル tmp を最終名にする（§10.1 の手順 7）。
 // 衝突なしは排他リネーム、上書きは置換リネーム、自動リネームは §9.2 の候補への排他リネーム。
+// リネームの直前に、一時ファイルが置き換えられていないことを確かめ（置き換えられていれば最終名にしない）、
+// リネームの後にも、最終名にしたものが一時ファイルだったことを確かめる（総点検の穴 3）。
 // 失敗した場合、一時ファイルの削除は呼び出し側が行う。
-func (cp *copier) finalize(src, tmp, dst string, decision Decision, pc *planned) (string, Outcome, *OpError) {
+func (cp *copier) finalize(src string, tmp tempFile, dst string, decision Decision, pc *planned) (string, Outcome, *OpError) {
 	if cp.checkCanceled() {
 		return dst, OutcomeSkipped, cp.canceledErr(src)
 	}
+	rename := func(d string, replace bool) error {
+		if err := tmp.check(); err != nil {
+			return err
+		}
+		if replace {
+			return renameReplace(tmp.path, d)
+		}
+		return renameExclusive(tmp.path, d)
+	}
+	final, out, oe := dst, OutcomeDone, (*OpError)(nil)
 	switch decision {
 	case DecisionOverwrite:
 		cp.ex.opt.hooks.finalRename(dst)
-		gone, out, oe := checkOverwrite(src, dst, pc)
+		gone, o, terr := checkOverwrite(src, dst, pc)
 		switch {
-		case oe != nil:
-			return dst, out, oe
+		case terr != nil:
+			return dst, o, terr
 		case gone:
-			out, oe = createResult(src, dst, renameExclusive(tmp, dst), false)
+			out, oe = createResult(src, dst, rename(dst, false), false)
 		default:
-			out, oe = replaceResult(src, dst, renameReplace(tmp, dst))
+			out, oe = replaceResult(src, dst, rename(dst, true))
 		}
-		return dst, out, oe
 	case DecisionAutoRename:
-		return autoRename(src, dst, false, false, func(cand string) error {
+		final, out, oe = autoRename(src, dst, false, false, func(cand string) error {
 			cp.ex.opt.hooks.finalRename(cand)
-			return renameExclusive(tmp, cand)
+			return rename(cand, false)
 		})
+	default:
+		cp.ex.opt.hooks.finalRename(dst)
+		out, oe = createResult(src, dst, rename(dst, false), false)
 	}
-	cp.ex.opt.hooks.finalRename(dst)
-	out, oe := createResult(src, dst, renameExclusive(tmp, dst), false)
-	return dst, out, oe
+	if oe != nil {
+		return final, out, oe
+	}
+	// リネームの直前の確認とリネームの間に置き換えられた場合（Unix ではリネームをハンドルに結び付けられないので、ごく短い隙間が残る）を、
+	// 報告できるようにする。
+	if now, err := statTop(final); err != nil || now.id != tmp.id {
+		return final, OutcomeFailed, &OpError{Op: "copy", Path: src, Dest: final, Kind: KindSourceChanged, Err: err}
+	}
+	return final, OutcomeDone, nil
 }
 
 // createResult は、dst を排他的に作る操作（一時ファイルからの排他リネーム、フォルダ・シンボリックリンクの作成）の結果を分類する。
@@ -438,23 +483,23 @@ func autoRenameName(name string, isDir bool, n int) string {
 }
 
 // writeTemp は、src の内容をコピー先のフォルダの一時ファイルに書き込む（§10.1 の手順 1〜6）。
-// 書き込み・同期（§10.5）・検証（§10.4）・メタデータの設定（§15）を済ませた一時ファイルのパスと、メタデータの警告を返す。
+// 書き込み・同期（§10.5）・検証（§10.4）・メタデータの設定（§15）を済ませた一時ファイルと、メタデータの警告を返す。
 // 失敗・キャンセルしたら一時ファイルを削除する（I3）。
-func (cp *copier) writeTemp(src, dst string, e dirEntry) (string, srcMeta, []*OpError, *OpError) {
+func (cp *copier) writeTemp(src, dst string, e dirEntry) (tempFile, srcMeta, []*OpError, *OpError) {
 	// エラーのパスは、一時ファイルではなくコピー元とコピー先で返す（一時ファイルのパスは Err の中にだけ現れる）。
 	fail := func(err error) *OpError {
 		return &OpError{Op: "copy", Path: src, Dest: dst, Kind: classify(err, classifyOpts{}), Err: err}
 	}
 	s, err := sysPath(src)
 	if err != nil {
-		return "", srcMeta{}, nil, fail(err)
+		return tempFile{}, srcMeta{}, nil, fail(err)
 	}
 	in, m, err := openSourceSys(s, e.id)
 	if err != nil {
 		if oe, ok := err.(*OpError); ok {
-			return "", srcMeta{}, nil, &OpError{Op: "copy", Path: src, Dest: dst, Kind: oe.Kind, Err: oe.Err}
+			return tempFile{}, srcMeta{}, nil, &OpError{Op: "copy", Path: src, Dest: dst, Kind: oe.Kind, Err: oe.Err}
 		}
-		return "", srcMeta{}, nil, sourceErr(src, dst, e, withUserPaths(err, src, ""))
+		return tempFile{}, srcMeta{}, nil, sourceErr(src, dst, e, withUserPaths(err, src, ""))
 	}
 	defer in.Close()
 	var warnings []*OpError
@@ -464,7 +509,7 @@ func (cp *copier) writeTemp(src, dst string, e dirEntry) (string, srcMeta, []*Op
 
 	tmp, out, err := createTemp(filepath.Dir(dst))
 	if err != nil {
-		return "", srcMeta{}, nil, fail(err)
+		return tempFile{}, srcMeta{}, nil, fail(err)
 	}
 	closed, keep := false, false
 	defer func() {
@@ -484,12 +529,12 @@ func (cp *copier) writeTemp(src, dst string, e dirEntry) (string, srcMeta, []*Op
 	var written int64
 	for {
 		if cp.checkCanceled() {
-			return "", srcMeta{}, nil, cp.canceledErr(src)
+			return tempFile{}, srcMeta{}, nil, cp.canceledErr(src)
 		}
 		n, rerr := in.Read(buf)
 		if n > 0 {
 			if _, err := out.Write(buf[:n]); err != nil {
-				return "", srcMeta{}, nil, fail(withUserPaths(err, tmp, ""))
+				return tempFile{}, srcMeta{}, nil, fail(withUserPaths(err, tmp, ""))
 			}
 			if sum != nil {
 				sum.Write(buf[:n])
@@ -497,38 +542,38 @@ func (cp *copier) writeTemp(src, dst string, e dirEntry) (string, srcMeta, []*Op
 			written += int64(n)
 			cp.ex.progress.addBytes(int64(n))
 			if err := cp.ex.opt.hooks.write(dst, written); err != nil {
-				return "", srcMeta{}, nil, fail(err)
+				return tempFile{}, srcMeta{}, nil, fail(err)
 			}
 		}
 		if rerr == io.EOF {
 			break
 		}
 		if rerr != nil {
-			return "", srcMeta{}, nil, fail(withUserPaths(rerr, src, ""))
+			return tempFile{}, srcMeta{}, nil, fail(withUserPaths(rerr, src, ""))
 		}
 	}
 	if cp.sync() {
 		if err := out.Sync(); err != nil {
-			return "", srcMeta{}, nil, fail(withUserPaths(err, tmp, ""))
+			return tempFile{}, srcMeta{}, nil, fail(withUserPaths(err, tmp, ""))
 		}
 	}
 	fi, err := out.Stat()
 	if err != nil {
-		return "", srcMeta{}, nil, fail(withUserPaths(err, tmp, ""))
+		return tempFile{}, srcMeta{}, nil, fail(withUserPaths(err, tmp, ""))
 	}
 	// 一時ファイルの fileID は、書き込んだ後に記録する。macOS の exFAT・FAT32 では、空のファイルに最初のデータ領域を
 	// 割り当てると fileID が変わる（2026-09-24 に手元の hdiutil のイメージで確認）。
 	tmpID, err := fileIDOfFile(out)
 	if err != nil {
-		return "", srcMeta{}, nil, fail(withUserPaths(err, tmp, ""))
+		return tempFile{}, srcMeta{}, nil, fail(withUserPaths(err, tmp, ""))
 	}
 	closed = true
 	if err := out.Close(); err != nil {
-		return "", srcMeta{}, nil, fail(withUserPaths(err, tmp, ""))
+		return tempFile{}, srcMeta{}, nil, fail(withUserPaths(err, tmp, ""))
 	}
 	cp.ex.opt.hooks.verify(tmp)
 	if oe := cp.verify(src, dst, tmp, e, m, written, fi.Size(), tmpID, sum); oe != nil {
-		return "", srcMeta{}, nil, oe
+		return tempFile{}, srcMeta{}, nil, oe
 	}
 	if ts, err := sysPath(tmp); err == nil {
 		if err := setMetaSys(ts, tmpID, m, false); err != nil {
@@ -536,7 +581,7 @@ func (cp *copier) writeTemp(src, dst string, e dirEntry) (string, srcMeta, []*Op
 		}
 	}
 	keep = true
-	return tmp, m, warnings, nil
+	return tempFile{path: tmp, id: tmpID, size: written}, m, warnings, nil
 }
 
 // verify は、書き終えて閉じた一時ファイル tmp を検証する（§10.4）。
