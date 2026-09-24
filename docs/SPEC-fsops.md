@@ -534,6 +534,9 @@ const (
 - 表示・検索のための正規化は UI 側で行う。
 - 制限事項（V17）: macOS の exFAT では、NFC の名前で保存されたファイル（Windows などで作られたもの）を `ReadDir` が NFD の名前で返し、その名前では削除できない（`ENOENT`。`Lstat` や読み込みはできる）。
   fsops は名前を変換して探し直さず、その項目を `KindNotFound` の失敗として報告する（データは失われない）。
+  操作ごとの結果（2026-09-24 の CI で確認。総点検の穴 9）: 完全削除ではそのファイルが `KindNotFound` の失敗で残り、項目は `OutcomePartial`。
+  ボリュームをまたぐ移動では、コピーはでき、移動元の削除が `KindNotFound` で失敗して `OutcomeCopiedSourceKept`（両方に残る）。
+  コピーは、列挙が返した名前（NFD）でコピーされる。同じ exFAT の中のマージ移動（リネーム）はできる。
 - macOS が FAT 系のボリュームに作る AppleDouble ファイル（`._名前`）は、ほかのファイルと同じ通常のファイルとして扱う。
 
 ---

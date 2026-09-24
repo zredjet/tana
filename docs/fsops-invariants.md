@@ -86,6 +86,7 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 | 経路 | 防いでいるテスト | 条件 |
 |---|---|---|
 | コピー先の名前はコピー元の名前をそのまま使う（`plan.go` `item`、`copy.go`） | TestCopyTree（日本語・絵文字・NFD） | 共通 |
+| macOS の exFAT で、列挙が NFD の名前を返す NFC の名前のファイル（名前を変換して探し直さず、失敗として報告する。§8.5、V17） | TestNFCOnExFATCopy、TestNFCOnExFATDelete、TestNFCOnExFATMove | macOS・EXFAT |
 | Windows の `\\?\` 変換（`path_windows.go` `sysPath`・`userPath`） | TestSysPathWindows、TestUserPathWindows、TestRenameHelpersWin32UnsafeNames、TestReadDirWin32UnsafeNames、TestFileIDWin32UnsafeNames、TestLstatEntryWin32UnsafeNames | Windows |
 | 末尾が `.`・空白の名前、予約名を含むコピー・移動で、同名の別ファイル（`foo`）と取り違えない（`\\?\` 変換を通る `copy.go`・`move.go`・`remove.go` の各経路） | TestCopyWin32UnsafeNames、TestMoveWin32UnsafeNames、TestMoveCrossVolumeWin32UnsafeNames | 共通・CROSSVOL |
 | 260 文字を超えるパスのコピー・移動（上書き・自動リネーム・マージ・移動元の削除を含む） | TestCopyLongPath、TestMoveLongPath、TestMoveCrossVolumeLongPath | 共通・CROSSVOL |
@@ -134,8 +135,8 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
    これで、ext4 が削除したファイルの inode 番号をすぐ再利用するために、置き換えた一時ファイルを自分のものと取り違える不具合が見つかり、
    一時ファイルの照合を fileID・大きさ・更新日時で行うように直した（TestCopyTempReplacedBeforeFinalRename）。
    Linux では exFAT を用意できないので、Linux の exFAT、および `renameat2` が `EINVAL` を返す場合の代わりの手段の経路（ext4・vfat では使われない）はテストされない。
-9. **macOS の exFAT の NFC の名前**（V17、§8.5 の制限事項）。NFC の名前で作られたエントリは NFD の名前で列挙され、その名前では削除できない。
-   コピー・移動・完全削除で `KindNotFound` の失敗として報告するはずだが、テストはない。
+9. （解決済み）macOS の exFAT の NFC の名前（V17、§8.5 の制限事項）。コピー・完全削除・ボリュームをまたぐ移動・マージ移動で、データを失わず、
+   移動元に残った項目を Done と報告しないことを TestNFCOnExFATCopy などでテストした（macOS・EXFAT。結果は SPEC §8.5）。
 10. **移動で名前をバイト単位でそのまま使うこと**（I6、§18.4 の I6 の「移動」）。コピーは日本語・絵文字・NFD の名前でテストしているが、
     移動（同一ボリューム・ボリュームをまたぐ）のテストでは、そうした名前を使っていない。
 11. **ごみ箱へ移す操作が成功を返したのに元の場所に残っている場合を失敗にする経路**（`trash.go` `trashItem`）。起こす方法がなく、テストがない。
