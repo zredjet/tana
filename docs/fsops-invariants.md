@@ -81,6 +81,8 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 |---|---|---|
 | コピー先の名前はコピー元の名前をそのまま使う（`plan.go` `item`、`copy.go`） | TestCopyTree（日本語・絵文字・NFD） | 共通 |
 | Windows の `\\?\` 変換（`path_windows.go` `sysPath`・`userPath`） | TestSysPathWindows、TestUserPathWindows、TestRenameHelpersWin32UnsafeNames、TestReadDirWin32UnsafeNames、TestFileIDWin32UnsafeNames、TestLstatEntryWin32UnsafeNames | Windows |
+| 末尾が `.`・空白の名前、予約名を含むコピー・移動で、同名の別ファイル（`foo`）と取り違えない（`\\?\` 変換を通る `copy.go`・`move.go`・`remove.go` の各経路） | TestCopyWin32UnsafeNames、TestMoveWin32UnsafeNames、TestMoveCrossVolumeWin32UnsafeNames | 共通・CROSSVOL |
+| 260 文字を超えるパスのコピー・移動（上書き・自動リネーム・マージ・移動元の削除を含む） | TestCopyLongPath、TestMoveLongPath、TestMoveCrossVolumeLongPath | 共通・CROSSVOL |
 | 自動リネームの候補（`copy.go` `autoRenameName`。切り詰めない） | TestAutoRenameName、TestCopyAutoRenameTooLong | 共通 |
 | `Rename` の大文字小文字・正規化だけの変更（`rename.go` `Rename`） | TestRenameCaseOnly、TestRenameCaseOnlyOtherVolumes | 共通・EXFAT/FAT32 |
 | ごみ箱に名前を変換せずに渡す（`trash_darwin_cgo.go` のファイルシステムの表現、`trash_windows.go` の正規化で変わる名前の拒否） | TestTrash（日本語の名前）、TestTrashWindowsUnavailable（`foo.` を入れようとしても `foo` が残る） | TRASH・Windows |
@@ -104,9 +106,7 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 
 見つかったものを挙げる（まだ直していない）。
 
-1. **Windows の、別名になりうる名前と長いパスのコピー・移動**（I6、§18.4「パス」の行）。
-   末尾が `.`・空白の名前、予約名（`CON`）、260 文字を超えるパスは、名前の変更・完全削除・走査・fileID・ごみ箱の事前確認ではテストしているが、
-   コピー・移動（同一ボリューム・ボリュームをまたぐ）のテストでは扱っていない。
+1. （解決済み）Windows の、別名になりうる名前と長いパスのコピー・移動。I6 の表の TestCopyWin32UnsafeNames などでテストした。
 2. **ハンドルを閉じた後のパスでのフォルダの削除**（I4）。
    完全削除のトップレベルのフォルダ、§13.3 のトップレベルのフォルダ、同一ボリュームのマージ移動で空になった移動元のフォルダは、
    ハンドルを閉じてからパスで `rmdir`・`RemoveDirectoryW` する（§13.1「フォルダ自体を削除する直前に閉じる」）。
