@@ -65,7 +65,7 @@ func dirMetaSys(s string) (srcMeta, error) {
 // リンクを辿らずに開き、fileID が作ったときの want と一致することを確かめてから設定する。
 // 設定できなかったものがあっても残りは続け、エラーをまとめて返す（呼び出し側は KindMetadata の警告にする）。
 // 順序: 照合 → Zone.Identifier（書き込みが要る。書くと更新日時が変わる）→ 更新日時と属性（読み取り専用にするのは最後）。
-func setMetaIn(d *secDir, name string, want fileID, m srcMeta, isDir bool) error {
+func setMetaIn(d *secDir, name string, want fileID, m srcMeta, isDir bool, hooks *testHooks) error {
 	s := d.sysJoin(name)
 	var errs []error
 	s16, err := windows.UTF16PtrFromString(s)
@@ -93,6 +93,7 @@ func setMetaIn(d *secDir, name string, want fileID, m srcMeta, isDir bool) error
 	}
 	// 照合した後に Zone.Identifier を書く（照合したハンドルを開いたままなので、同じファイルに書かれる）。
 	if len(m.extra) > 0 && !isDir {
+		hooks.zoneWrite(d.join(name))
 		if err := os.WriteFile(s+zoneStream, m.extra, 0o644); err != nil {
 			errs = append(errs, err)
 		}

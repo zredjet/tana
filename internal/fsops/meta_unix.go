@@ -28,7 +28,7 @@ func dirMetaSys(s string) (srcMeta, error) {
 // リンクを辿らずに d からの相対で開き、fileID が作ったときの want と一致することを確かめてから設定する。
 // 設定できなかったものがあっても残りは続け、エラーをまとめて返す（呼び出し側は KindMetadata の警告にする）。
 // 順序: 安全上のメタデータ（書き込み権限が要る）→ 更新日時 → パーミッション（読み取り専用にするのは最後）。
-func setMetaIn(d *secDir, name string, want fileID, m srcMeta, isDir bool) error {
+func setMetaIn(d *secDir, name string, want fileID, m srcMeta, isDir bool, _ *testHooks) error {
 	s := d.join(name)
 	flags := unix.O_RDONLY | unix.O_NOFOLLOW | unix.O_NONBLOCK | unix.O_CLOEXEC
 	if isDir {

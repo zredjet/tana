@@ -136,5 +136,34 @@ func TestCopyZoneIdentifier(t *testing.T) {
 	}
 }
 
+// TestCopyZoneIdentifierLinkSwap は、メタデータの設定で照合した一時ファイルが、Zone.Identifier を書く前に別名へ移され、
+// その名前がリンクに置き換えられても、リンクの先に Zone.Identifier を書かないことを確かめる（I4、§15）。
+func TestCopyZoneIdentifierLinkSwap(t *testing.T) {
+	t.Parallel()
+	const zone = "[ZoneTransfer]\r\nZoneId=3\r\n"
+	root := testfs.TempDir(t)
+	testfs.Build(t, root, testfs.Tree{"src/dl.txt": testfs.File("downloaded"), "outside/target.txt": testfs.File("target"), "dest": testfs.Dir()})
+	if err := os.WriteFile(testfs.ExtendedPath(filepath.Join(root, "src", "dl.txt"))+":Zone.Identifier", []byte(zone), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "outside", "target.txt")
+	dest := filepath.Join(root, "dest")
+	h := &testHooks{beforeZoneWrite: func(p string) {
+		if err := os.Rename(testfs.ExtendedPath(p), testfs.ExtendedPath(p+".moved")); err != nil {
+			t.Logf("renaming the temporary file was refused (expected): %v", err)
+			return
+		}
+		testfs.CreateSymlink(t, target, p, false)
+	}}
+	res := execPlan(t, context.Background(), mustPlan(t, Request{Op: OpCopy, Sources: []string{filepath.Join(root, "src", "dl.txt")}, DestDir: dest}), ExecOptions{hooks: h})
+	t.Logf("result: %+v", res.Items[0])
+	if _, err := os.Stat(testfs.ExtendedPath(target) + ":Zone.Identifier"); err == nil {
+		t.Error("I4 violated: Zone.Identifier was written to the target of a link that replaced the temporary file")
+	}
+	if got := testfs.ReadFile(t, target); got != "target" {
+		t.Errorf("target = %q", got)
+	}
+}
+
 // crossDeviceErr は、ボリューム違いのリネームのエラー（§11.1）を返す（テストの注入用）。
 func crossDeviceErr() error { return windows.ERROR_NOT_SAME_DEVICE }

@@ -650,7 +650,7 @@ func (cp *copier) writeTemp(src, dst string, e dirEntry, dd *secDir) (tempFile, 
 	if oe := cp.verify(src, dst, tf, e, m, sum); oe != nil {
 		return tempFile{}, srcMeta{}, nil, oe
 	}
-	if err := setMetaIn(dd, tmpName, tmpID, m, false); err != nil {
+	if err := setMetaIn(dd, tmpName, tmpID, m, false, cp.ex.opt.hooks); err != nil {
 		warnings = append(warnings, &OpError{Op: "metadata", Path: src, Dest: dst, Kind: KindMetadata, Err: withUserPathsAll(err, dst)})
 	}
 	// 照合（tempFile.matches）に使う更新日時を、メタデータを設定した後の状態で記録する。
@@ -885,7 +885,7 @@ func (cp *copier) copyDir(src, dst string, e dirEntry, pc *planned, dd *secDir) 
 	cp.ex.opt.hooks.dirMeta(dst)
 	if created {
 		if metaErr == nil {
-			if err := setMetaIn(dd, name, id, meta, true); err != nil {
+			if err := setMetaIn(dd, name, id, meta, true, cp.ex.opt.hooks); err != nil {
 				metaErr = withUserPathsAll(err, dst)
 			}
 		}

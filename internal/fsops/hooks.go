@@ -52,6 +52,9 @@ type testHooks struct {
 	// fileSizeLimit は、0 より大きければ、実行時のコピー先のファイルの大きさの上限（§10.6）をこの値に置き換える
 	// （FAT32 の上限を、小さなファイルで確かめるため）。計画時の警告（§6.4）には使わない。
 	fileSizeLimit int64
+	// beforeZoneWrite は、Windows でメタデータの設定（§15）の照合の後、Zone.Identifier を書く直前に、そのファイルのパスで呼ばれる
+	// （照合の後に名前をリンクへ置き換える注入用。I4）。
+	beforeZoneWrite func(path string)
 }
 
 func (h *testHooks) enterDir(path string) {
@@ -155,4 +158,10 @@ func (h *testHooks) waitLock(path string, d time.Duration) bool {
 		return true
 	}
 	return false
+}
+
+func (h *testHooks) zoneWrite(path string) {
+	if h != nil && h.beforeZoneWrite != nil {
+		h.beforeZoneWrite(path)
+	}
 }
