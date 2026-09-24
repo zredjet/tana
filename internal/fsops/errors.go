@@ -31,6 +31,7 @@ const (
 	KindCanceled
 	KindMetadata
 	KindFileTooLarge // コピー先のファイルシステムの、ファイルの大きさの上限を超える（§10.6）
+	KindMountPoint   // 別のボリュームがマウントされたフォルダ。削除のために中に入らない（§13.1）
 )
 
 func (k Kind) String() string {
@@ -75,6 +76,8 @@ func (k Kind) String() string {
 		return "KindMetadata"
 	case KindFileTooLarge:
 		return "KindFileTooLarge"
+	case KindMountPoint:
+		return "KindMountPoint"
 	}
 	return "Kind(" + strconv.Itoa(int(k)) + ")"
 }

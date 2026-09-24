@@ -144,3 +144,22 @@ func TestFileIDWin32UnsafeNames(t *testing.T) {
 		seen[s.id] = n
 	}
 }
+
+// TestOnOtherVolume は、マウントポイントの判定（§13.1）が、Unix の Dev の違いだけを見ることを確かめる。
+func TestOnOtherVolume(t *testing.T) {
+	t.Parallel()
+	unixID := func(vol uint64) fileID { return fileID{method: idMethodDevIno, vol: vol} }
+	if !onOtherVolume(unixID(2), unixID(1)) {
+		t.Error("different Dev: want true")
+	}
+	if onOtherVolume(unixID(1), unixID(1)) {
+		t.Error("same Dev: want false")
+	}
+	win := fileID{method: idMethodFileID, vol: 2}
+	if onOtherVolume(win, fileID{method: idMethodFileID, vol: 1}) {
+		t.Error("Windows: want false (mounted folders are junctions and are never entered)")
+	}
+	if onOtherVolume(unixID(2), fileID{}) {
+		t.Error("unknown parent: want false")
+	}
+}

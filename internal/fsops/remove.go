@@ -151,6 +151,13 @@ func (r *remover) deleteContents(d *secDir) bool {
 		if r.checkCanceled() {
 			return false
 		}
+		if e.info.Type == TypeDir && onOtherVolume(e.id, d.id) {
+			// マウントポイント。中は別のボリュームのもので、削除を指示されたフォルダの一部ではないので入らない（§13.1）。
+			path := filepath.Join(d.path, e.name)
+			r.fail(path, &OpError{Op: "remove", Path: path, Kind: KindMountPoint})
+			all = false
+			continue
+		}
 		if e.info.Type == TypeDir {
 			cd, gone := r.enter(d, filepath.Join(d.path, e.name), e.name, e.id)
 			if gone {
@@ -192,6 +199,10 @@ func deleteItem(lr *lockRetrier, it Item, onRemoved func(string, EntryInfo)) Ite
 	}
 	if e.info.Type != it.Info.Type {
 		res.Outcome, res.Err = OutcomeFailed, &OpError{Op: "remove", Path: it.Src, Kind: KindSourceChanged}
+		return res
+	}
+	if mountPoint(it.Src, e) {
+		res.Outcome, res.Err = OutcomeFailed, &OpError{Op: "remove", Path: it.Src, Kind: KindMountPoint} // 計画の後にマウントされた（§13.1）
 		return res
 	}
 	// 確かめた後にトップレベルの項目が消えていた（別の場所へ移されたなど）ら、何も削除していないので失敗にする（§7.3）。
@@ -298,6 +309,8 @@ func removeRecorded(lr *lockRetrier, path string, rec recordEntry, onRemoved fun
 		r.fail(path, &OpError{Op: "remove", Path: path, Kind: classify(err, classifyOpts{}), Err: err})
 	case !rec.matches(now):
 		r.fail(path, &OpError{Op: "remove", Path: path, Kind: KindSourceChanged})
+	case mountPoint(path, now):
+		r.fail(path, &OpError{Op: "remove", Path: path, Kind: KindMountPoint}) // §13.1
 	case rec.info.Type == TypeDir:
 		if d, _ := r.enter(nil, path, filepath.Base(path), rec.id); d != nil {
 			ok, kept := r.removeRecordedContents(d, rec.children, rec.skipped)
@@ -366,6 +379,11 @@ func (r *remover) removeRecordedContents(d *secDir, recs []recordEntry, skipped 
 		now.name = rec.name
 		if !rec.matches(now) {
 			r.fail(path, &OpError{Op: "remove", Path: path, Kind: KindSourceChanged})
+			all = false
+			continue
+		}
+		if rec.info.Type == TypeDir && onOtherVolume(now.id, d.id) {
+			r.fail(path, &OpError{Op: "remove", Path: path, Kind: KindMountPoint}) // マウントポイントには入らない（§13.1）
 			all = false
 			continue
 		}

@@ -1,6 +1,9 @@
 package fsops
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+	"path/filepath"
+)
 
 // fileID はエントリの同一性（§8.3）。パスの文字列ではなく、これで同一性を判定する。os.SameFile は使わない。
 // 取得方法（method）が違う値どうしは比べない（== で比べれば、method が違えば一致しない）。
@@ -48,4 +51,20 @@ func fileIDPath(path string, follow bool) (idStat, error) {
 	}
 	st, err := statIDSys(s, follow)
 	return st, withUserPaths(err, path, "")
+}
+
+// onOtherVolume は、フォルダ child が、それを含むフォルダ parent と別のボリュームにある（マウントポイントである）かを返す（§13.1）。
+// Unix の Dev で比べる。Windows のマウントされたフォルダはリパースポイント（TypeJunction）で、もともと入らないので偽を返す。
+func onOtherVolume(child, parent fileID) bool {
+	return child.method == idMethodDevIno && parent.method == idMethodDevIno && child.vol != parent.vol
+}
+
+// mountPoint は、トップレベルのフォルダ path（エントリ e）がマウントポイントかを返す（§13.1）。親フォルダはリンクを辿って調べる
+// （親のパスがリンクでも、実際にそのフォルダを含むフォルダと比べるため）。調べられなければ偽を返す。
+func mountPoint(path string, e dirEntry) bool {
+	if e.info.Type != TypeDir {
+		return false
+	}
+	parent, err := fileIDFollow(filepath.Dir(path))
+	return err == nil && onOtherVolume(e.id, parent.id)
 }

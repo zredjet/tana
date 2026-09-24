@@ -197,6 +197,13 @@ func (pl *planner) item(i int, src string) Item {
 		return it
 	}
 	it.Info = info
+	if r.Op == OpDelete || r.Op == OpMove {
+		// マウントポイントは削除のために中に入らないので、削除・移動しない（§13.1）。
+		if st, err := fileIDOf(src); err == nil && mountPoint(src, dirEntry{info: info, id: st.id}) {
+			it.Err = planError(src, KindMountPoint, nil)
+			return it
+		}
+	}
 	switch r.Op {
 	case OpCopy, OpMove:
 		if r.Op == OpMove {
@@ -239,7 +246,7 @@ func (pl *planner) count(i int, it Item) (files int, bytes int64, err error) {
 	if it.Method == MethodTrash {
 		return 1, 0, nil
 	}
-	w := &walker{pl: pl, item: i, countBytes: it.Method != MethodRename}
+	w := &walker{pl: pl, item: i, countBytes: it.Method != MethodRename, skipMounts: it.Method == MethodRemove}
 	var dirConflict bool
 	var cid ConflictID
 	if it.Dst != "" {
@@ -268,6 +275,7 @@ type walker struct {
 	pl         *planner
 	item       int
 	countBytes bool
+	skipMounts bool // 完全削除: マウントポイントの中を数えず、警告する（§13.1）
 	files      int
 	bytes      int64
 }
@@ -323,6 +331,12 @@ func (w *walker) walk(src, dst string, parent ConflictID) error {
 		w.warn(src, err)
 		return nil
 	}
+	var self fileID
+	if w.skipMounts {
+		if st, err := fileIDOf(src); err == nil {
+			self = st.id
+		}
+	}
 	for _, e := range entries {
 		if err := w.pl.errCanceled(); err != nil {
 			return err
@@ -336,6 +350,10 @@ func (w *walker) walk(src, dst string, parent ConflictID) error {
 			if dirConflict, id := w.conflict(childSrc, d, e.info, parent, false); dirConflict {
 				childDst, cid = d, id
 			}
+		}
+		if e.info.Type == TypeDir && w.skipMounts && onOtherVolume(e.id, self) {
+			w.pl.plan.warnings = append(w.pl.plan.warnings, planError(childSrc, KindMountPoint, nil))
+			continue
 		}
 		if e.info.Type == TypeDir {
 			if err := w.walk(childSrc, childDst, cid); err != nil {

@@ -79,6 +79,7 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 | 書き込み先のフォルダ（DestDir・作ったフォルダ・マージ先）を確かめて開き、中の操作をそのハンドルで行う（`secdir_*.go` `openDestRoot`・`openNewSecDir`・`renameBetween` など、`copy.go` `copyDir`、`move.go` `merge`） | TestCopyMergeDestReplacedAfterCheck、TestCopyCreatedDestReplacedAfterMkdir、TestMoveMergeDestReplacedAfterCheck、TestDestDirReplacedAfterPlan（DestDir の fileID の照合） | 共通 |
 | ごみ箱に入れる項目の大きさを数える走査（`trash_windows.go` `itemSize`）と、リンク自体だけを入れること | TestTrash（リンクを含むフォルダ、トップレベルのリンク・ジャンクション） | TRASH |
 | 削除の、使用中の間のやり直しで §13.2 の確認もやり直す（`remove.go` `removeWithRetry`、Windows は `removeVerified` の一連） | TestLockRetryDeleteLinkSwapDuringWait（待つ間にリンクへ置き換えてもリンク先が残る。削除はどの OS でもリンク自体にしか作用しないので、確認のやり直しは判別しない） | 共通 |
+| 削除で、マウントポイント（別のボリューム）に入らない（`fileid.go` `onOtherVolume`・`mountPoint`、`remove.go` `deleteContents`・`removeRecordedContents`・`deleteItem`、`plan.go` `item`・`walk`。§13.1） | TestDeleteMountPoint（テストの中で `hdiutil` でマウントする）、TestOnOtherVolume | macOS・共通 |
 
 ## I5 黙って完全削除しない
 
@@ -196,3 +197,13 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
     - 移動での容量不足、書き込み中に上限を超える KindFileTooLarge、検証でのコピー元の変化（コピーではテストしている。実験では移動元が残った）。
 22. （要確認）Windows の exFAT・FAT32 で、同じ名前のコピー元 2 件の両方に上書きを承認すると、ファイルインデックスがディレクトリエントリの位置に基づく（V16）ため、
     2 件目の照合（`checkTarget`）が 1 件目の書いたファイルと一致して、それを上書きしうる（大きさと更新日時も一致する場合）。
+23. （解決済み。2026-09-25 の報告の見直し）Unix の完全削除が、フォルダの中のマウントポイントに入り、マウントされた別のボリュームの中身を消していた
+    （最後の `rmdir` が `EBUSY` になり「使用中」とだけ報告された）。マウントポイントには入らず `KindMountPoint` で報告するように直した（§13.1）。
+    Linux の同じデバイスのバインドマウントは見分けられない（受け入れる）。Linux ではテストの中でマウントできないので、macOS だけでテストしている。
+24. （解決済み。2026-09-25 の報告の見直し）報告と実際の状態の食い違いを直した。
+    - macOS の exFAT・FAT32 の空のファイルは fileID が操作のたびに変わり（V25）、そこへのコピーが毎回失敗して一時ファイルが残っていた。
+      空のファイルの仮の ino を一定の値にした（§8.3。TestEmptyFilesOtherVolumes、TestIDStatEmptySynthetic）。
+    - 移動元のハードリンクへの上書き移動が、何もせずに Done になっていた（Unix の rename の仕様）。`KindSameFile` の失敗にした（§7.3。TestMoveOverwriteHardLinkToSource）。
+    - 完全削除で、確かめた後にトップレベルの項目が移されると、何も消していないのに Done になっていた。`KindNotFound` の失敗にした（§7.3。TestDeleteTopLevelMovedAway）。
+    - 最終名にする直前に一時ファイルが置き換えられた場合、最終名に置き換えたものが置かれたのに Failed と報告していた。Partial にした（§10.1。TestTempReplacedDuringFinalRename）。
+    - ボリュームをまたぐ移動で、コピーの後に移動元へ追加されたファイル（移動先にない）を報告していなかった。1 件ずつ報告するようにした（§13.3。TestRemoveRecordedReportsAdded）。
