@@ -111,7 +111,7 @@ jobs:
       - name: Probes (verbose)
         run: |
           go test -count=1 -v ./internal/fsops/internal/probe/
-          go test -count=1 -v -run 'OtherVolumes|ReadOnly|NoSpace|MoveMethod|Warnings|TestDelete|TestRemoveRecorded|TestCopy|TestMove|TestTrash' ./internal/fsops/
+          go test -count=1 -v -run 'OtherVolumes|ReadOnly|NoSpace|MoveMethod|Warnings|TestDelete|TestRemoveRecorded|TestCopy|TestMove|TestTrash|NFCOnExFAT' ./internal/fsops/
       - run: CGO_ENABLED=0 go vet ./...
       # cgo なしのビルドでは、ごみ箱が使えないこと（KindTrashUnavailable）を確かめる（§18.4 の I5、§19）。
       - run: CGO_ENABLED=0 go test -count=1 -v -run 'TestTrashUnavailable|TestNewPlanTrashPrecheck' ./internal/fsops/
