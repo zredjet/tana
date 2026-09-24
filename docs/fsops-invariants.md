@@ -6,7 +6,7 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 - 経路は `internal/fsops` のファイル名と関数名で示す。テストも同じパッケージのもの。
 - 「条件」の列: 共通 = Windows・macOS の CI で毎回実行。CROSSVOL・TRASH・EXFAT/FAT32・NUKE/SMALL = §18.2 の環境変数が必要
   （CI ではすべて設定している）。Windows・macOS = その OS だけ。
-- CI で実行するのは Windows と macOS（`-race`）。Linux（ubuntu）では vet・プローブ・ごみ箱が使えないことのテストと、`cmd/fsopsctl` のテストだけを実行する。
+- CI では、Windows・macOS（`-race`）・Linux（ubuntu。`-race`。ext4 と vfat）のすべてでテスト一式を実行する。Linux では exFAT を用意できないので、exFAT の条件のテストは Skip される。
 - 最後の節に、テストで守られていない経路を挙げる。
 
 ---
@@ -130,8 +130,10 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 7. （解決済み）Windows のごみ箱の、事前確認を飛ばした最大サイズ超過。別プロセスで実行し、ファイル・フォルダとも確認ダイアログで止まり、
    完全に残ることを TestTrashOverCapacityBypass でテストした（フォルダも中止ではなくダイアログで止まることが分かった。SPEC §12.2、§20 V19）。
    フォルダの中身ごとに `PostDeleteItem` が届く場合の処理は、TestProgressSink で単体テストした。
-8. **Linux の実装が CI で実行されていない**。ubuntu ジョブでは fsops のテストのうちごみ箱が使えないことのテストだけを実行している。
-   `renameat2` と代わりの手段（開いたフォルダからの相対を含む）、`attr_linux.go`、`volume_linux.go`、`meta_linux.go` の経路はテストされていない。
+8. （解決済み）Linux の実装が CI で実行されていない。ubuntu ジョブでテスト一式を実行するようにした（ext4 を CROSSVOL、vfat を FAT32 に使う）。
+   これで、ext4 が削除したファイルの inode 番号をすぐ再利用するために、置き換えた一時ファイルを自分のものと取り違える不具合が見つかり、
+   一時ファイルの照合を fileID・大きさ・更新日時で行うように直した（TestCopyTempReplacedBeforeFinalRename）。
+   Linux では exFAT を用意できないので、Linux の exFAT、および `renameat2` が `EINVAL` を返す場合の代わりの手段の経路（ext4・vfat では使われない）はテストされない。
 9. **macOS の exFAT の NFC の名前**（V17、§8.5 の制限事項）。NFC の名前で作られたエントリは NFD の名前で列挙され、その名前では削除できない。
    コピー・移動・完全削除で `KindNotFound` の失敗として報告するはずだが、テストはない。
 10. **移動で名前をバイト単位でそのまま使うこと**（I6、§18.4 の I6 の「移動」）。コピーは日本語・絵文字・NFD の名前でテストしているが、

@@ -1133,8 +1133,11 @@ hdiutil detach /Volumes/fsopstest
 - **ubuntu ジョブ（`ubuntu-latest`、公開・非公開に関わらず毎回実行）**
   1. `gofmt -l .` の出力が空であること
   2. `go vet ./...`、`GOOS=windows go vet ./...`、`GOOS=darwin CGO_ENABLED=0 go vet ./...`
-  3. ごみ箱が使えないことを確かめるテスト（§18.4 の I5 の行）の実行と、動作確認用 CLI（`cmd/fsopsctl`）のテストの実行
-  4. 64 MB の vfat のイメージを `sudo mount -o loop` でマウントして `FSOPS_PROBE_FAT32_DIR` に設定し、プローブ（`internal/probe`）を実行する
+  3. 64 MB の vfat のイメージを `sudo mount -o loop` でマウントして `FSOPS_PROBE_FAT32_DIR` に設定する
+  4. 64 MB の ext4 のイメージを同じくマウントして `FSOPS_CROSSVOL_DIR` に設定する（Linux の実装をボリュームをまたぐテストでも確かめるため。総点検の穴 8）。
+     exFAT は、ランナーのカーネルに exfat モジュールがなく、`exfat-fuse` でもマウントできなかったので用意しない。
+  5. `go test -race -p 1 ./...`（テスト一式。ごみ箱が使えないことのテスト（§18.4 の I5 の行）と、動作確認用 CLI（`cmd/fsopsctl`）のテストを含む）
+  6. プローブ（`internal/probe`）と、環境によって Skip しうるテストを `-v` で実行する
 - 要検証事項のプローブは、結果をログに残すため、各ジョブで `go test -v ./internal/fsops/internal/probe/` を別の手順として実行する。
 - VHD とディスクイメージの作成はフェーズ2で追加する。フェーズ1では `go vet`・`go test` と ubuntu ジョブだけ。
 
