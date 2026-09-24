@@ -457,7 +457,10 @@ func (cp *copier) finalize(src string, tmp tempFile, dst string, decision Decisi
 	// リネームで変わる（2026-09-24 の CI で確認）ので、そのボリュームでは確かめられない。
 	if tmp.id.method != idMethodByHandle {
 		if now, err := dd.stat(filepath.Base(final)); err != nil || !tmp.matches(now) {
-			return final, OutcomeFailed, &OpError{Op: "copy", Path: src, Dest: final, Kind: KindSourceChanged, Err: err}
+			// 最終名には、書いたものではないものが置かれている（上書きでは元のファイルはもう置き換えられている）。
+			// 何も残らなかった Failed ではなく、途中までの結果が残った Partial と報告する（§10.1 の手順 7、§7.4）。
+			cp.changed(dd)
+			return final, OutcomePartial, &OpError{Op: "copy", Path: src, Dest: final, Kind: KindSourceChanged, Err: err}
 		}
 	}
 	return final, OutcomeDone, nil

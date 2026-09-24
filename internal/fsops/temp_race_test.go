@@ -141,3 +141,45 @@ func replaceTempNewID(t *testing.T, dir string) string {
 	t.Error("inject: no temporary file")
 	return ""
 }
+
+// TestTempReplacedDuringFinalRename は、一時ファイルを確かめてから最終名にするまでの間に、一時ファイルが別のファイルに置き換えられた場合
+// （フックで注入）、最終名には置き換えたものが置かれているので、Failed ではなく Partial（KindSourceChanged）と報告することを確かめる
+// （§10.1 の手順 7、§7.4）。新規と上書きの両方。Windows の exFAT・FAT32 では最終名にした後に確かめないので、一時フォルダだけで行う。
+func TestTempReplacedDuringFinalRename(t *testing.T) {
+	t.Parallel()
+	for _, overwrite := range []bool{false, true} {
+		t.Run(map[bool]string{false: "new", true: "overwrite"}[overwrite], func(t *testing.T) {
+			t.Parallel()
+			root := testfs.TempDir(t)
+			testfs.Build(t, root, testfs.Tree{"src/f.txt": testfs.File("copied"), "dest": testfs.Dir()})
+			dest := filepath.Join(root, "dest")
+			dst := filepath.Join(dest, "f.txt")
+			if overwrite {
+				testfs.WriteFile(t, dst, "old")
+			}
+			plan := mustPlan(t, Request{Op: OpCopy, Sources: []string{filepath.Join(root, "src", "f.txt")}, DestDir: dest})
+			if overwrite {
+				decide(t, plan, dst, DecisionOverwrite)
+			}
+			injected := false
+			h := &testHooks{lockFault: func(op, p string) bool {
+				// 一時ファイルを確かめた直後、リネームの直前に呼ばれる。使用中の失敗は注入しない。
+				if op == "rename" && !injected {
+					injected = true
+					replaceTempNewID(t, dest)
+				}
+				return false
+			}}
+			res := execPlan(t, context.Background(), plan, ExecOptions{hooks: h})
+			if !injected {
+				t.Fatal("no injection")
+			}
+			if it := res.Items[0]; it.Outcome != OutcomePartial || it.Err == nil || it.Err.Kind != KindSourceChanged {
+				t.Errorf("result = %+v, want Partial with KindSourceChanged (something was placed at the final name)", it)
+			}
+			if got := testfs.ReadFile(t, dst); got != "intruder" {
+				t.Errorf("final name = %q, want the replacing file", got)
+			}
+		})
+	}
+}
