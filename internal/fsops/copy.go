@@ -623,6 +623,9 @@ func (cp *copier) writeTemp(src, dst string, e dirEntry, dd *secDir) (tempFile, 
 		}
 	}
 	if cp.sync() {
+		if err := cp.ex.opt.hooks.syncFile(tmp); err != nil {
+			return tempFile{}, srcMeta{}, nil, fail(err)
+		}
 		if err := out.Sync(); err != nil {
 			return tempFile{}, srcMeta{}, nil, fail(withUserPaths(err, tmp, ""))
 		}

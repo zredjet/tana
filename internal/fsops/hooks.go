@@ -55,6 +55,9 @@ type testHooks struct {
 	// beforeZoneWrite は、Windows でメタデータの設定（§15）の照合の後、Zone.Identifier を書く直前に、そのファイルのパスで呼ばれる
 	// （照合の後に名前をリンクへ置き換える注入用。I4）。
 	beforeZoneWrite func(path string)
+	// beforeSyncFile は、一時ファイルの同期（§10.5）の直前に、そのパスで呼ばれる。error を返すと、同期せずにそのエラーで失敗させる
+	// （ファイルの同期の失敗の注入用。I2）。
+	beforeSyncFile func(tmp string) error
 }
 
 func (h *testHooks) enterDir(path string) {
@@ -164,4 +167,11 @@ func (h *testHooks) zoneWrite(path string) {
 	if h != nil && h.beforeZoneWrite != nil {
 		h.beforeZoneWrite(path)
 	}
+}
+
+func (h *testHooks) syncFile(tmp string) error {
+	if h != nil && h.beforeSyncFile != nil {
+		return h.beforeSyncFile(tmp)
+	}
+	return nil
 }
