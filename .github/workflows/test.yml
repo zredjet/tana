@@ -72,10 +72,12 @@ jobs:
       # TestCopyNoSpaceCrossVolume が別ボリュームを一杯にするので、パッケージを並行させない（-p 1。§18.4「容量」）。
       - run: go test -p 1 ./...
       # 要検証事項のプローブと、環境によって Skip しうる Windows 固有のテストは、結果をログに残すため -v で実行する（SPEC §20）。
+      # テストが失敗しても、原因を調べられるようにプローブの結果を残す。
       - name: Probes (verbose)
+        if: ${{ !cancelled() }}
         run: |
           go test -count=1 -v ./internal/fsops/internal/probe/
-          go test -count=1 -v -run 'TestLstatEntryWOF|OtherVolumes|ShortName|Junction|ReadOnly|TrashPrecheck|NoSpace|MoveMethod|TestDelete|TestRemoveRecorded|TestCopy|TestMove|TestTrash|Win32UnsafeNames|LongPath' ./internal/fsops/
+          go test -count=1 -v -run 'TestLstatEntryWOF|OtherVolumes|ShortName|Junction|ReadOnly|TrashPrecheck|NoSpace|MoveMethod|TestDelete|TestRemoveRecorded|TestCopy|TestMove|TestTrash|Win32UnsafeNames|LongPath|AppleDouble' ./internal/fsops/
 
   macos:
     # 非公開リポジトリでは、macOS のジョブは pull_request と workflow_dispatch のときだけ実行する（SPEC §19）。
@@ -160,9 +162,11 @@ jobs:
       # TestCopyNoSpaceCrossVolume が別ボリュームを一杯にするので、パッケージを並行させない（-p 1。§18.4「容量」）。
       - run: go test -race -p 1 ./...
       # 要検証事項のプローブと、環境によって Skip しうるテストは、結果をログに残すため -v で実行する（SPEC §20）。
+      # テストが失敗しても、原因を調べられるようにプローブの結果を残す。
       - name: Probes (verbose)
+        if: ${{ !cancelled() }}
         run: |
           go test -count=1 -v ./internal/fsops/internal/probe/
-          go test -count=1 -v -run 'OtherVolumes|ReadOnly|NoSpace|MoveMethod|Warnings|TestDelete|TestRemoveRecorded|TestCopy|TestMove|TestTrash|Win32UnsafeNames|LongPath' ./internal/fsops/
+          go test -count=1 -v -run 'OtherVolumes|ReadOnly|NoSpace|MoveMethod|Warnings|TestDelete|TestRemoveRecorded|TestCopy|TestMove|TestTrash|Win32UnsafeNames|LongPath|AppleDouble' ./internal/fsops/
       # 動作確認用 CLI（fsopsctl）のテスト。ごみ箱が使えない環境で完全削除に切り替えないことも確かめる。
       - run: go test -count=1 -v ./cmd/...

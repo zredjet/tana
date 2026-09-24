@@ -40,6 +40,7 @@ func listFD(fd int, s string) ([]dirEntry, error) {
 		return nil, err
 	}
 	slices.Sort(names)
+	names = dropAppleDouble(fd, names)
 	entries := make([]dirEntry, 0, len(names))
 	for _, name := range names {
 		e, err := statAt(fd, name)

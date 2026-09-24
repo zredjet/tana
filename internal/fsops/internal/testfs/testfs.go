@@ -237,8 +237,15 @@ func Exists(t testing.TB, path string) bool {
 	return false
 }
 
-// ListNames は dir の中の名前を（ReadDir の順に）返す。
+// ListNames は dir の中の名前を（ReadDir の順に）返す。macOS の exFAT・FAT32 では、fsops と同じく、
+// 名前の付属の AppleDouble ファイル（._名前。OS が拡張属性の保存に使う）を除く（SPEC §8.5、V22）。
 func ListNames(t testing.TB, dir string) []string {
+	t.Helper()
+	return dropAppleDouble(dir, ListRawNames(t, dir))
+}
+
+// ListRawNames は dir の中の名前を（ReadDir の順に）、AppleDouble ファイルも含めてすべて返す。
+func ListRawNames(t testing.TB, dir string) []string {
 	t.Helper()
 	entries, err := os.ReadDir(ExtendedPath(dir))
 	if err != nil {

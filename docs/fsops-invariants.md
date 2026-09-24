@@ -26,6 +26,7 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 | 自動リネームの候補の確保（`copy.go` `autoRename`・`autoRenameName`） | TestCopyAutoRename（既存の `b (2).txt` を残す）、TestCopySelf、TestMoveConflicts | 共通 |
 | シンボリックリンクを最終名に直接作る（`copy.go` `copySymlink`） | TestCopySymlinkConflictAfterPlan、TestCopyTopLevelLinks | 共通 |
 | 同一ボリュームの移動のリネーム（`move.go` `rename`。トップレベルはパス、マージの中は開いたフォルダからの相対 `secDir.renameOut`） | TestMoveConflicts（計画後に現れた衝突）、TestMoveMerge、TestMoveMergeOtherVolumes | 共通・EXFAT/FAT32 |
+| 移動先・コピー先の孤立した AppleDouble ファイル（`._名前`）を、`名前` を作るときに OS が消す・置き換える（macOS の exFAT・FAT32） | 受け入れる制限事項（SPEC §8.5）。OS の動作は TestV22 で記録 | macOS・EXFAT/FAT32 |
 
 ## I2 移動元は最後に、コピーした分だけ消す
 
@@ -39,6 +40,7 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 | 移動元の削除の失敗・キャンセル（`remove.go` `remover`） | TestMoveCrossVolumeLocked、TestMoveCrossVolumeCancelRemoval、TestRemoveRecordedCancel | CROSSVOL・Windows |
 | 読み取り専用の移動元（`secdir_windows.go` `removeSys` の属性の扱い） | TestMoveCrossVolumeReadOnly、TestRemoveRecordedReadOnly | CROSSVOL・共通 |
 | ボリューム違いのエラーからの切り替え（`move.go` `moveItem`） | TestMoveRenameFallback | 共通 |
+| AppleDouble の付属（`._名前`）は項目として記録・削除せず、移動元の `名前` と一緒に OS が消す（`appledouble_darwin.go` `dropAppleDouble`。§15 の `com.apple.quarantine` は移動先に残る） | TestAppleDoubleQuarantineOtherVolumes（move across volumes・delete） | macOS・EXFAT/FAT32 |
 
 ## I3 書きかけのファイルを最終名で残さない
 
@@ -143,5 +145,7 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
     ボリュームをまたぐ移動（新しいフォルダ・マージ・移動元の削除）を、日本語・絵文字・NFD の名前で TestMoveNamesSameVolume・TestMoveNamesCrossVolume でテストした。
 11. （解決済み）ごみ箱へ移す操作が成功を返したのに元の場所に残っている場合を失敗にする経路（`trash.go` `trashItem`）。ごみ箱へ移す呼び出しを
     テスト用フック（`trashCall`）で差し替え、TestTrashReportedButLeft で `OutcomeFailed`（`KindUnknown`）になり、項目に手を付けないことをテストした。
-12. **手元の macOS での FAT 系ボリュームのテスト**。手元の Mac では AppleDouble ファイル（`._名前`）が作られ、名前の一覧を比べる一部のテストが失敗する
-    （TestRenameCaseOnlyOtherVolumes、TestRenameExclusiveOtherVolumes、TestMoveMergeOtherVolumes）。CI では作られず成功する。
+12. （解決済み）手元の macOS での FAT 系ボリュームのテスト。手元では OS がテストの作るファイルに拡張属性（`com.apple.provenance`）を付け、AppleDouble ファイル（`._名前`）が
+    できていた。調べると、fsops が `._名前` を独立した項目として扱うため、同一ボリュームのマージ移動で §15 の `com.apple.quarantine` が失われる不具合が見つかった（V22）。
+    macOS の exFAT・FAT32 では `名前` と並ぶ `._名前` を付属として列挙から除くようにし（SPEC §8.5）、TestAppleDoubleQuarantineOtherVolumes・TestAppleDoubleNamesOrdinary でテストした。
+    `testfs.ListNames` も同じ見方で付属を除くので、手元でも TestRenameCaseOnlyOtherVolumes などが成功する。

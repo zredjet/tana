@@ -537,7 +537,16 @@ const (
   操作ごとの結果（2026-09-24 の CI で確認。総点検の穴 9）: 完全削除ではそのファイルが `KindNotFound` の失敗で残り、項目は `OutcomePartial`。
   ボリュームをまたぐ移動では、コピーはでき、移動元の削除が `KindNotFound` で失敗して `OutcomeCopiedSourceKept`（両方に残る）。
   コピーは、列挙が返した名前（NFD）でコピーされる。同じ exFAT の中のマージ移動（リネーム）はできる。
-- macOS が FAT 系のボリュームに作る AppleDouble ファイル（`._名前`）は、ほかのファイルと同じ通常のファイルとして扱う。
+- AppleDouble ファイル（`._名前`。V22、総点検の穴 12）:
+  - macOS で、拡張属性を AppleDouble ファイルに保存するボリューム（`statfs` のファイルシステム名が `msdos`・`exfat`）では、`name` と同じフォルダにある
+    `._name` を `name` の付属として扱い、独立した項目にしない。OS は `name` の名前の変更・削除で `._name` を一緒に移す・消し、`name` の拡張属性を
+    そこから読み書きする。付属を独立した項目として先に移すと、`name` を移したときに OS がそれを消し、§15 の `com.apple.quarantine` が失われるため。
+  - 列挙（§13.1 の走査、コピー・移動の中身の処理、計画時の数え上げ・衝突の検出）で付属を飛ばす。
+  - コピーでは付属をファイルとしてコピーしない。§15 の `com.apple.quarantine` は `name` から読んで設定する。
+  - ボリュームをまたぐ移動で移動元を消すと、付属も OS が消す。§15 で保持しないそのほかの拡張属性・リソースフォークは、APFS からの移動と同じく失われる。
+  - `name` のない `._name`（孤立したもの）と、ほかの OS・ほかのボリュームの `._name` は、ほかのファイルと同じ通常のファイルとして扱う。
+  - 制限事項（受け入れる）: 移動先・コピー先に孤立した `._name` があるところへ `name` を作る・移すと、OS がそれを消すか置き換える（V22）。
+    OS の扱いでは `._name` は `name` の拡張属性の保存先で、`name` を作ることは `name` の上書きではない。防ぐための不可分な操作もない。
 
 ---
 
@@ -1105,6 +1114,8 @@ hdiutil detach /Volumes/fsopstest
 | 容量 | 容量不足の後も、同じボリュームへの移動（`MethodRename`）の項目は続行される | CROSSVOL |
 | ごみ箱 | ごみ箱に入り、元の場所から消えている（Windows: `$I` ファイル、macOS: `TrashedPath`） | TRASH（V5、V10） |
 | ごみ箱 | ごみ箱へ移す操作が成功を返したのに元の場所に残っている（フックで呼び出しを差し替えて注入。本物のごみ箱には触れない）→ その項目は `OutcomeFailed`（`KindUnknown`）で元のまま、ほかは続行 | Windows・macOS（cgo） |
+| AppleDouble | macOS の exFAT・FAT32 の中のコピー・マージを含む移動・ボリュームをまたぐ移動・完全削除 → `com.apple.quarantine` が残り、付属（`._名前`）がファイルとして増えず、衝突の決定でスキップした項目は付属ごと残る。孤立した `._名前` は通常のファイルとして扱う | macOS（`FSOPS_PROBE_EXFAT_DIR`・`FSOPS_PROBE_FAT32_DIR`。V22） |
+| AppleDouble | macOS 以外と APFS では、`名前` と並ぶ `._名前` も通常のファイルとしてコピー・移動される | 共通 |
 | I5 | ごみ箱が「すぐに削除する」設定のボリューム、ごみ箱の最大サイズを超える項目 → `KindTrashUnavailable`、ファイルは残る | Windows（TRASH、`FSOPS_PROBE_TRASH_NUKE_DIR`・`FSOPS_PROBE_TRASH_SMALL_DIR`。V13、V18） |
 | I5 | 260 文字以上のパスでごみ箱 → `KindTrashUnavailable`、ファイルは残る | Windows（TRASH。V4） |
 | I1 | 排他リネームの代わりの手段（§8.4）: macOS の exFAT へのコピー・移動・`Rename` ができ、既存のファイルは上書きされない | macOS（`FSOPS_PROBE_EXFAT_DIR`。V12） |
@@ -1143,6 +1154,7 @@ hdiutil detach /Volumes/fsopstest
   5. `go test -race -p 1 ./...`（テスト一式。ごみ箱が使えないことのテスト（§18.4 の I5 の行）と、動作確認用 CLI（`cmd/fsopsctl`）のテストを含む）
   6. プローブ（`internal/probe`）と、環境によって Skip しうるテストを `-v` で実行する
 - 要検証事項のプローブは、結果をログに残すため、各ジョブで `go test -v ./internal/fsops/internal/probe/` を別の手順として実行する。
+  失敗の原因を調べられるように、テスト一式が失敗しても実行する（`if: ${{ !cancelled() }}`）。
 - VHD とディスクイメージの作成はフェーズ2で追加する。フェーズ1では `go vet`・`go test` と ubuntu ジョブだけ。
 
 ---
@@ -1251,6 +1263,15 @@ hdiutil detach /Volumes/fsopstest
     Windows の exFAT・FAT32 では `MoveFileExW(0)` が使え（既存の名前には `ERROR_ALREADY_EXISTS`）、ハードリンクは `ERROR_INVALID_FUNCTION`。
     Linux の vfat では `RENAME_NOREPLACE`・`RENAME_EXCHANGE` が使え、ハードリンクは `EPERM`。どの環境でも、既存のファイルは上書きされなかった。
     → §8.4 の代わりの手段が使われるのは macOS の exFAT だけで、そこには代わりになる不可分な操作がない。§8.4 の残る危険は受け入れる。
+- **V22** macOS の exFAT・FAT32 で、拡張属性を保存する AppleDouble ファイル（`._名前`）が、名前の変更・削除でどう扱われるか。そうしたボリュームを見分けられるか
+  （総点検の穴 12。手元の Mac では、テストが作るファイルに OS が `com.apple.provenance` を付けるため `._名前` ができ、名前の一覧を比べるテストが失敗していた）。
+  - **結果（2026-09-24、macos-latest（macOS 26）と手元の macOS 26、Go 1.27.1）:** exFAT・FAT32 とも同じ。`name` に拡張属性を付けると `._name` ができ、
+    列挙には通常のファイルとして現れる。`name` の名前を変えると `._name` も一緒に移り（移動先の `._name` は置き換わる）、拡張属性は残る。
+    `name` を削除すると `._name` も消える（フォルダの `rmdir` も同じ）。`._name` を先に移すと `name` の拡張属性は読めなくなり、続けて `name` を移すと、
+    先に移した `._name` は OS に消される。拡張属性のない `name` を、`._name` だけがある場所へ移すと、その `._name` は消える。
+    `statfs` のファイルシステム名は APFS が `apfs`、exFAT が `exfat`、FAT32 が `msdos`。`pathconf(_PC_XATTR_SIZE_BITS)` は 56 と 31 で、見分けには使わない。
+    fsops は `._name` を独立した項目として扱っていたため、同一ボリュームのマージ移動で §15 の `com.apple.quarantine` が失われていた（`Done` と報告）。
+    → §8.5 のとおり、`msdos`・`exfat` では `name` と並ぶ `._name` を付属として扱う。
 
 ---
 
