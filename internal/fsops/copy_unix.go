@@ -19,12 +19,14 @@ func openSourceSys(s string, want fileID) (*os.File, srcMeta, error) {
 
 // openRegularAt は openSourceSys の、フォルダ dfd からの相対の名前 s で開く形（AT_FDCWD ならパス）。
 func openRegularAt(dfd int, s string, want fileID) (*os.File, srcMeta, error) {
-	fd, err := unix.Openat(dfd, s, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	fd, err := ignoringEINTR2(func() (int, error) {
+		return unix.Openat(dfd, s, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	})
 	if err != nil {
 		return nil, srcMeta{}, &os.PathError{Op: "open", Path: s, Err: err}
 	}
 	var st unix.Stat_t
-	if err := unix.Fstat(fd, &st); err != nil {
+	if err := ignoringEINTR(func() error { return unix.Fstat(fd, &st) }); err != nil {
 		unix.Close(fd)
 		return nil, srcMeta{}, &os.PathError{Op: "fstat", Path: s, Err: err}
 	}
@@ -33,7 +35,7 @@ func openRegularAt(dfd int, s string, want fileID) (*os.File, srcMeta, error) {
 		return nil, srcMeta{}, &OpError{Op: "open", Path: s, Kind: KindSourceChanged}
 	}
 	// 通常のファイルでは O_NONBLOCK は意味を持たないが、os.NewFile がポーラーに登録しようとしないよう外しておく。
-	if err := unix.SetNonblock(fd, false); err != nil {
+	if err := ignoringEINTR(func() error { return unix.SetNonblock(fd, false) }); err != nil {
 		unix.Close(fd)
 		return nil, srcMeta{}, &os.PathError{Op: "fcntl", Path: s, Err: err}
 	}
@@ -43,7 +45,7 @@ func openRegularAt(dfd int, s string, want fileID) (*os.File, srcMeta, error) {
 // fileIDOfFile は、開いたファイル f の fileID を返す。
 func fileIDOfFile(f *os.File) (fileID, error) {
 	var st unix.Stat_t
-	if err := unix.Fstat(int(f.Fd()), &st); err != nil {
+	if err := ignoringEINTR(func() error { return unix.Fstat(int(f.Fd()), &st) }); err != nil {
 		return fileID{}, err
 	}
 	return idStatFromStat(&st).id, nil
@@ -52,7 +54,7 @@ func fileIDOfFile(f *os.File) (fileID, error) {
 // createSymlinkSys は、s にリンク先の文字列 target のシンボリックリンクを作る（§14.2）。s が存在すれば EEXIST で失敗する。
 // dir は Windows のフォルダ用のリンクの区別で、Unix では使わない。
 func createSymlinkSys(target, s string, dir bool) error {
-	if err := unix.Symlink(target, s); err != nil {
+	if err := ignoringEINTR(func() error { return unix.Symlink(target, s) }); err != nil {
 		return &os.LinkError{Op: "symlink", Old: target, New: s, Err: err}
 	}
 	return nil

@@ -16,9 +16,9 @@ func statIDSys(p string, follow bool) (idStat, error) {
 	op := "lstat"
 	if follow {
 		op = "stat"
-		err = unix.Stat(p, &st)
+		err = ignoringEINTR(func() error { return unix.Stat(p, &st) })
 	} else {
-		err = unix.Lstat(p, &st)
+		err = ignoringEINTR(func() error { return unix.Lstat(p, &st) })
 	}
 	if err != nil {
 		return idStat{}, &os.PathError{Op: op, Path: p, Err: err}

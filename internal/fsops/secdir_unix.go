@@ -26,9 +26,9 @@ func openSecDir(parent *secDir, path, name string, want fileID) (*secDir, error)
 	var fd int
 	var err error
 	if parent == nil {
-		fd, err = unix.Open(path, flags, 0)
+		fd, err = ignoringEINTR2(func() (int, error) { return unix.Open(path, flags, 0) })
 	} else {
-		fd, err = unix.Openat(parent.fd, name, flags, 0)
+		fd, err = ignoringEINTR2(func() (int, error) { return unix.Openat(parent.fd, name, flags, 0) })
 	}
 	if err != nil {
 		if err == unix.ELOOP || err == unix.ENOTDIR {
@@ -37,7 +37,7 @@ func openSecDir(parent *secDir, path, name string, want fileID) (*secDir, error)
 		return nil, &OpError{Op: "open", Path: path, Kind: classify(err, classifyOpts{}), Err: &os.PathError{Op: "open", Path: path, Err: err}}
 	}
 	var st unix.Stat_t
-	if err := unix.Fstat(fd, &st); err != nil {
+	if err := ignoringEINTR(func() error { return unix.Fstat(fd, &st) }); err != nil {
 		unix.Close(fd)
 		return nil, &OpError{Op: "open", Path: path, Kind: classify(err, classifyOpts{}), Err: err}
 	}
@@ -51,7 +51,9 @@ func openSecDir(parent *secDir, path, name string, want fileID) (*secDir, error)
 // openNewSecDir は、フォルダ parent の中に作ったばかりのフォルダ name（パスは path）を、リンクを辿らずに開く（§10.2）。
 // fileID は、開いたものから記録する。リンクに置き換えられていれば KindSourceChanged の *OpError を返す。
 func openNewSecDir(parent *secDir, path, name string) (*secDir, error) {
-	fd, err := unix.Openat(parent.fd, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	fd, err := ignoringEINTR2(func() (int, error) {
+		return unix.Openat(parent.fd, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	})
 	if err != nil {
 		if err == unix.ELOOP || err == unix.ENOTDIR {
 			return nil, &OpError{Op: "open", Path: path, Kind: KindSourceChanged, Err: err}
@@ -59,7 +61,7 @@ func openNewSecDir(parent *secDir, path, name string) (*secDir, error) {
 		return nil, &OpError{Op: "open", Path: path, Kind: classify(err, classifyOpts{}), Err: &os.PathError{Op: "open", Path: path, Err: err}}
 	}
 	var st unix.Stat_t
-	if err := unix.Fstat(fd, &st); err != nil {
+	if err := ignoringEINTR(func() error { return unix.Fstat(fd, &st) }); err != nil {
 		unix.Close(fd)
 		return nil, &OpError{Op: "open", Path: path, Kind: classify(err, classifyOpts{}), Err: err}
 	}
@@ -69,12 +71,12 @@ func openNewSecDir(parent *secDir, path, name string) (*secDir, error) {
 // openDestRoot は、コピー先・移動先のフォルダ（DestDir）path を開き、fileID が計画時の want（リンクを辿った先）と一致することを確かめる（§13.1）。
 // DestDir 自体はリンクでもよいので、辿って開く。違えば KindSourceChanged の *OpError を返す。
 func openDestRoot(path string, want fileID) (*secDir, error) {
-	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	fd, err := ignoringEINTR2(func() (int, error) { return unix.Open(path, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0) })
 	if err != nil {
 		return nil, &OpError{Op: "open", Path: path, Kind: classify(err, classifyOpts{}), Err: &os.PathError{Op: "open", Path: path, Err: err}}
 	}
 	var st unix.Stat_t
-	if err := unix.Fstat(fd, &st); err != nil {
+	if err := ignoringEINTR(func() error { return unix.Fstat(fd, &st) }); err != nil {
 		unix.Close(fd)
 		return nil, &OpError{Op: "open", Path: path, Kind: classify(err, classifyOpts{}), Err: err}
 	}
@@ -90,7 +92,9 @@ func (d *secDir) join(name string) string { return d.path + "/" + name }
 
 // createFile は、中に name を O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW、0o600 で作る（§10.1 の一時ファイル）。
 func (d *secDir) createFile(name string) (*os.File, error) {
-	fd, err := unix.Openat(d.fd, name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
+	fd, err := ignoringEINTR2(func() (int, error) {
+		return unix.Openat(d.fd, name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
+	})
 	if err != nil {
 		return nil, &os.PathError{Op: "openat", Path: d.join(name), Err: err}
 	}
@@ -99,7 +103,7 @@ func (d *secDir) createFile(name string) (*os.File, error) {
 
 // mkdir は、中に name のフォルダを作る（§10.2。0o700 で作り、パーミッションは中身の後に設定する）。
 func (d *secDir) mkdir(name string) error {
-	if err := unix.Mkdirat(d.fd, name, 0o700); err != nil {
+	if err := ignoringEINTR(func() error { return unix.Mkdirat(d.fd, name, 0o700) }); err != nil {
 		return &os.PathError{Op: "mkdirat", Path: d.join(name), Err: err}
 	}
 	return nil
@@ -107,7 +111,7 @@ func (d *secDir) mkdir(name string) error {
 
 // symlink は、中に name のシンボリックリンクを作る（§14.2）。dir は Windows のフォルダ用のリンクの区別で、Unix では使わない。
 func (d *secDir) symlink(target, name string, dir bool) error {
-	if err := unix.Symlinkat(target, d.fd, name); err != nil {
+	if err := ignoringEINTR(func() error { return unix.Symlinkat(target, d.fd, name) }); err != nil {
 		return &os.LinkError{Op: "symlinkat", Old: target, New: d.join(name), Err: err}
 	}
 	return nil
@@ -115,7 +119,7 @@ func (d *secDir) symlink(target, name string, dir bool) error {
 
 // unlinkTemp は、中の fsops の一時ファイル name を削除する（§10.1 の手順 8）。
 func (d *secDir) unlinkTemp(name string) error {
-	if err := unix.Unlinkat(d.fd, name, 0); err != nil {
+	if err := ignoringEINTR(func() error { return unix.Unlinkat(d.fd, name, 0) }); err != nil {
 		return &os.PathError{Op: "unlinkat", Path: d.join(name), Err: err}
 	}
 	return nil
@@ -129,12 +133,12 @@ func (d *secDir) openRegular(name string, want fileID) (*os.File, srcMeta, error
 // targetReadOnly は、中の上書き先 name が読み取り専用（§9.3）かを返す。
 func (d *secDir) targetReadOnly(name string) bool {
 	var st unix.Stat_t
-	return unix.Fstatat(d.fd, name, &st, unix.AT_SYMLINK_NOFOLLOW) == nil && statReadOnly(&st)
+	return ignoringEINTR(func() error { return unix.Fstatat(d.fd, name, &st, unix.AT_SYMLINK_NOFOLLOW) }) == nil && statReadOnly(&st)
 }
 
 // sync は、このフォルダを同期する（§10.5。ディレクトリエントリの永続化）。
 func (d *secDir) sync() error {
-	dup, err := unix.Dup(d.fd)
+	dup, err := ignoringEINTR2(func() (int, error) { return unix.Dup(d.fd) })
 	if err != nil {
 		return &os.PathError{Op: "dup", Path: d.path, Err: err}
 	}
@@ -164,7 +168,7 @@ func (d *secDir) remove(e dirEntry, recorded bool) error {
 	if e.dirAttr {
 		flags = unix.AT_REMOVEDIR
 	}
-	if err := unix.Unlinkat(d.fd, e.name, flags); err != nil {
+	if err := ignoringEINTR(func() error { return unix.Unlinkat(d.fd, e.name, flags) }); err != nil {
 		return &os.PathError{Op: "unlinkat", Path: d.path + "/" + e.name, Err: err}
 	}
 	return nil
@@ -174,9 +178,9 @@ func (d *secDir) remove(e dirEntry, recorded bool) error {
 func removeTop(path string, e dirEntry, recorded bool) error {
 	var err error
 	if e.dirAttr {
-		err = unix.Rmdir(path)
+		err = ignoringEINTR(func() error { return unix.Rmdir(path) })
 	} else {
-		err = unix.Unlink(path)
+		err = ignoringEINTR(func() error { return unix.Unlink(path) })
 	}
 	if err != nil {
 		return &os.PathError{Op: "remove", Path: path, Err: err}
@@ -213,7 +217,7 @@ func renameBetween(from *secDir, fromName string, to *secDir, toName string, rep
 	if !replace {
 		return renameAtExclusiveSys(sfd, fromName, to.fd, toName)
 	}
-	if err := unix.Renameat(sfd, fromName, to.fd, toName); err != nil {
+	if err := ignoringEINTR(func() error { return unix.Renameat(sfd, fromName, to.fd, toName) }); err != nil {
 		return &os.LinkError{Op: "renameat", Old: fromName, New: to.join(toName), Err: err}
 	}
 	return nil

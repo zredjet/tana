@@ -14,7 +14,7 @@ import (
 // name のない ._name（孤立したもの）は残す。調べられなければ names をそのまま返す（通常のファイルとして扱う）。
 func dropAppleDouble(fd int, names []string) []string {
 	var st unix.Statfs_t
-	if err := unix.Fstatfs(fd, &st); err != nil {
+	if err := ignoringEINTR(func() error { return unix.Fstatfs(fd, &st) }); err != nil {
 		return names
 	}
 	if fs := unix.ByteSliceToString(st.Fstypename[:]); fs != "msdos" && fs != "exfat" {

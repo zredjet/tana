@@ -14,7 +14,9 @@ import (
 
 // readDirSys は、フォルダを O_NOFOLLOW で開き、名前を列挙して、各エントリを fstatat(AT_SYMLINK_NOFOLLOW) で調べる。
 func readDirSys(s string) ([]dirEntry, error) {
-	fd, err := unix.Open(s, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	fd, err := ignoringEINTR2(func() (int, error) {
+		return unix.Open(s, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	})
 	if err != nil {
 		return nil, &os.PathError{Op: "open", Path: s, Err: err}
 	}
@@ -26,13 +28,13 @@ func readDirSys(s string) ([]dirEntry, error) {
 func listFD(fd int, s string) ([]dirEntry, error) {
 	// os.File に渡すと Close で閉じられるので複製する。複製は読み進める位置（オフセット）を fd と共有するので、
 	// 続けて先頭に戻してから列挙する（同じフォルダを何度列挙しても全件を返すため）。
-	dup, err := unix.Dup(fd)
+	dup, err := ignoringEINTR2(func() (int, error) { return unix.Dup(fd) })
 	if err != nil {
 		return nil, &os.PathError{Op: "dup", Path: s, Err: err}
 	}
 	f := os.NewFile(uintptr(dup), s)
 	defer f.Close()
-	if _, err := unix.Seek(dup, 0, 0); err != nil {
+	if _, err := ignoringEINTR2(func() (int64, error) { return unix.Seek(dup, 0, 0) }); err != nil {
 		return nil, &os.PathError{Op: "seek", Path: s, Err: err}
 	}
 	names, err := f.Readdirnames(-1)
@@ -58,7 +60,7 @@ func listFD(fd int, s string) ([]dirEntry, error) {
 // statAt は、フォルダ fd の中の name を fstatat(AT_SYMLINK_NOFOLLOW) で調べる。
 func statAt(fd int, name string) (dirEntry, error) {
 	var st unix.Stat_t
-	if err := unix.Fstatat(fd, name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+	if err := ignoringEINTR(func() error { return unix.Fstatat(fd, name, &st, unix.AT_SYMLINK_NOFOLLOW) }); err != nil {
 		return dirEntry{}, err
 	}
 	t := entryTypeFromMode(fileModeFromStat(uint32(st.Mode)))

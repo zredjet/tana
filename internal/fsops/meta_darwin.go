@@ -14,7 +14,7 @@ const quarantineAttr = "com.apple.quarantine"
 func readExtra(f *os.File, s string) ([]byte, error) {
 	fd := int(f.Fd())
 	for range 4 { // 読む間に大きくなった場合は読み直す
-		n, err := unix.Fgetxattr(fd, quarantineAttr, nil)
+		n, err := ignoringEINTR2(func() (int, error) { return unix.Fgetxattr(fd, quarantineAttr, nil) })
 		if errors.Is(err, unix.ENOATTR) {
 			return nil, nil
 		}
@@ -22,7 +22,7 @@ func readExtra(f *os.File, s string) ([]byte, error) {
 			return nil, &os.PathError{Op: "getxattr", Path: s, Err: err}
 		}
 		buf := make([]byte, n)
-		n, err = unix.Fgetxattr(fd, quarantineAttr, buf)
+		n, err = ignoringEINTR2(func() (int, error) { return unix.Fgetxattr(fd, quarantineAttr, buf) })
 		if errors.Is(err, unix.ERANGE) {
 			continue
 		}
@@ -38,4 +38,6 @@ func readExtra(f *os.File, s string) ([]byte, error) {
 }
 
 // setExtraFd は、開いたファイル fd に com.apple.quarantine を設定する（§15）。
-func setExtraFd(fd int, data []byte) error { return unix.Fsetxattr(fd, quarantineAttr, data, 0) }
+func setExtraFd(fd int, data []byte) error {
+	return ignoringEINTR(func() error { return unix.Fsetxattr(fd, quarantineAttr, data, 0) })
+}

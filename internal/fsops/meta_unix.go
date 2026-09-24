@@ -18,7 +18,7 @@ func metaFromStat(st *unix.Stat_t) srcMeta {
 // dirMetaSys は、フォルダ s のメタデータ（更新日時・パーミッション）をリンクを辿らずに読む（§15）。
 func dirMetaSys(s string) (srcMeta, error) {
 	var st unix.Stat_t
-	if err := unix.Lstat(s, &st); err != nil {
+	if err := ignoringEINTR(func() error { return unix.Lstat(s, &st) }); err != nil {
 		return srcMeta{}, &os.PathError{Op: "lstat", Path: s, Err: err}
 	}
 	return metaFromStat(&st), nil
@@ -34,13 +34,13 @@ func setMetaIn(d *secDir, name string, want fileID, m srcMeta, isDir bool) error
 	if isDir {
 		flags |= unix.O_DIRECTORY
 	}
-	fd, err := unix.Openat(d.fd, name, flags, 0)
+	fd, err := ignoringEINTR2(func() (int, error) { return unix.Openat(d.fd, name, flags, 0) })
 	if err != nil {
 		return &os.PathError{Op: "open", Path: s, Err: err}
 	}
 	defer unix.Close(fd)
 	var st unix.Stat_t
-	if err := unix.Fstat(fd, &st); err != nil {
+	if err := ignoringEINTR(func() error { return unix.Fstat(fd, &st) }); err != nil {
 		return &os.PathError{Op: "fstat", Path: s, Err: err}
 	}
 	// ファイルは大きさも照合する（fileID だけでは、削除と作り直しで番号が再利用される ext4 で取り違えるため。§7.3、V16）。
@@ -55,12 +55,12 @@ func setMetaIn(d *secDir, name string, want fileID, m srcMeta, isDir bool) error
 	}
 	mt, err := unix.TimeToTimespec(m.mtime)
 	if err == nil {
-		err = unix.UtimesNanoAt(d.fd, name, []unix.Timespec{mt, mt}, unix.AT_SYMLINK_NOFOLLOW)
+		err = ignoringEINTR(func() error { return unix.UtimesNanoAt(d.fd, name, []unix.Timespec{mt, mt}, unix.AT_SYMLINK_NOFOLLOW) })
 	}
 	if err != nil {
 		errs = append(errs, &os.PathError{Op: "utimensat", Path: s, Err: err})
 	}
-	if err := unix.Fchmod(fd, m.perm); err != nil {
+	if err := ignoringEINTR(func() error { return unix.Fchmod(fd, m.perm) }); err != nil {
 		errs = append(errs, &os.PathError{Op: "fchmod", Path: s, Err: err})
 	}
 	return errors.Join(errs...)
