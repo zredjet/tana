@@ -332,6 +332,7 @@ const (
 	OutcomeFailed
 	OutcomePartial          // フォルダの一部だけ処理できた
 	OutcomeCopiedSourceKept // 移動: 移動先は完成したが、移動元の削除に失敗
+	OutcomeTrashUnconfirmed // ごみ箱: 元の場所から消えたが、ごみ箱に入ったことを確かめられなかった（§12.1）
 )
 
 // ---- 名前の変更 ----
@@ -461,9 +462,10 @@ const (
 | 処理中にキャンセルされ、途中までの結果が残った（コピー・移動では移動先の一部、完全削除では削除済みの一部） | Partial | `KindCanceled` |
 | `Details` に Err 付きのエントリがある | Partial | 最初のエラー |
 | 移動元の削除に一部失敗した、一部を保護した、または削除中にキャンセルされた（§13.3） | CopiedSourceKept | 最初のエラー |
+| ごみ箱へ移す操作の後、元の項目が元の場所になく、ごみ箱の中の項目も確かめられない（§12.1） | TrashUnconfirmed | ごみ箱へ移す呼び出しのエラー（なければ `KindUnknown`） |
 
 - Status: キャンセルされたら `StatusCanceled`。
-  それ以外で、Failed・Partial・CopiedSourceKept、または Err 付きの Skipped が 1 件でもあれば `StatusCompletedWithErrors`。それ以外は `StatusCompleted`。
+  それ以外で、Failed・Partial・CopiedSourceKept・TrashUnconfirmed、または Err 付きの Skipped が 1 件でもあれば `StatusCompletedWithErrors`。それ以外は `StatusCompleted`。
 
 ---
 
@@ -731,7 +733,13 @@ const (
 - `NewPlan` は、ごみ箱が使えるかの事前確認（§12.2 の `GetDriveType` など、ファイルシステムを変更しないもの）を行い、使えない項目の `Item.Err` に `KindTrashUnavailable` を入れる。
   UI は実行前に「この項目はごみ箱に入りません」と示して、完全削除に切り替えるかを利用者に確認できる。`Execute` でも同じ確認をもう一度行う。
   `Execute` の確認は、計画時ではなく実行時の項目の大きさで行う（計画の後に大きくなった項目を見逃さないため）。
-- ごみ箱へ移す操作が成功を返しても、元の場所に項目が残っていれば `OutcomeFailed`（`KindUnknown`）にする。
+- ごみ箱へ移す呼び出しの結果は、呼び出しが返した成否ではなく、呼び出しの後の状態で決める（利用者に項目の状態を誤って伝えないため）。
+  1. 元の場所に元の項目（fileID が同じもの）があれば `OutcomeFailed`。Err は、呼び出しがエラーを返していればそれ、成功を返していれば `KindUnknown`。
+  2. 元の場所になく、ごみ箱の中のパスを得られて、そこに項目があれば（`Lstat`）`OutcomeDone`。呼び出しがエラーを返していても Done にする
+     （ごみ箱に入ってから失敗が報告される場合がある）。ごみ箱の中の項目の fileID は比べない（Windows の exFAT・FAT32 では名前の変更で変わる。V16）。
+  3. 元の場所になく、ごみ箱の中のパスも確かめられなければ `OutcomeTrashUnconfirmed`（完全に削除された可能性がある。V18）。
+     Err は、呼び出しがエラーを返していればそれ、なければ `KindUnknown`。`TrashedPath` は空。
+  4. 元の場所を調べられなければ（`Lstat` が NotFound 以外で失敗）、状態がわからないので `OutcomeFailed`（そのエラー）。
 
 ### 12.2 Windows
 
@@ -763,7 +771,9 @@ const (
   3. `SHCreateItemFromParsingName` でパスから `IShellItem` を作り、自前の `IFileOperationProgressSink` を付けて `DeleteItem` する。1 回の操作で 1 項目だけ渡す。
   4. 進捗通知の `PreDeleteItem` で、フラグに `TSF_DELETE_RECYCLE_IF_POSSIBLE`（`0x80`）がなければ（ごみ箱に入らず完全削除になる場合）、`E_ABORT` を返して中止させ、その項目を `KindTrashUnavailable` にする（I5。V18 で、中止した項目が残ることを確認済み）。
   5. `PerformOperations` の後、`GetAnyOperationsAborted` と `PostDeleteItem` の結果で成否を決める。`PostDeleteItem` で渡されるごみ箱内の項目からパスが取れれば `TrashedPath` に入れる。
-     項目自体の `PostDeleteItem` が成功を通知しても、`psiNewlyCreated` が NULL なら、ごみ箱に入らず完全に削除されたので（V18）、`Done` にせず `OutcomeFailed`（`KindTrashUnavailable`）にする（I5。黙って完全削除にしない）。
+     項目自体の `PostDeleteItem` が成功を通知しても、`psiNewlyCreated` が NULL なら、ごみ箱に入らず完全に削除されたとみられるので（V18）、
+     `KindTrashUnavailable` のエラーを返す（結果は §12.1 の規則で決め、項目が消えていれば `OutcomeTrashUnconfirmed` になる。I5。黙って完全削除にしない）。
+     `PerformOperations` などが失敗しても、`PostDeleteItem` でごみ箱の中のパスを得ていれば、エラーと一緒にそのパスも返す（§12.1 の規則 2）。
   - COM の vtable の呼び出しと進捗通知の実装は、cgo を使わず `syscall.SyscallN` と `syscall.NewCallback`（または x/sys/windows の同等のもの）で行う。
     `syscall.NewCallback` で作るものは解放できず数に上限があるので、進捗通知の vtable はパッケージの初期化時に 1 回だけ作り、以後は変更しない。
     進捗通知の状態は、操作ごとの通知のオブジェクトが持つ（パッケージレベルの可変状態を持たない）。
@@ -778,7 +788,7 @@ const (
 ### 12.3 macOS
 
 - cgo と Objective-C で `NSFileManager` の `trashItemAtURL:resultingItemURL:error:` を呼ぶ（`#cgo LDFLAGS: -framework Foundation`）。autorelease pool で囲む。
-- 成功したら、ごみ箱内のパスを `ItemResult.TrashedPath` に入れる。
+- 成功したら、ごみ箱内のパスを `ItemResult.TrashedPath` に入れる。失敗しても `resultingItemURL` が得られていれば、エラーと一緒にそのパスも返す（結果は §12.1 の規則で決める）。
 - ネットワークボリュームなどで失敗した場合、エラーの内容から判断できれば `KindTrashUnavailable`、できなければ `KindUnknown`。
   `NSCocoaErrorDomain` の `NSFeatureUnsupportedError`（3328）は `KindTrashUnavailable`。ほかは `NSFileNoSuchFileError` → NotFound、
   `NSFileWriteNoPermissionError` → Permission、`NSFileWriteOutOfSpaceError` → NoSpace、`NSFileWriteVolumeReadOnlyError` → ReadOnly、
@@ -1172,6 +1182,7 @@ hdiutil detach /Volumes/fsopstest
 | 容量 | FAT32 の上限（4 GiB − 1 バイト）を超えるファイル → 計画が `KindFileTooLarge` で警告し、実行はそのファイルだけを書かずに `KindFileTooLarge` で失敗にして残りを続ける。移動では移動元に残る。コピー中に上限を超えた容量不足も `KindFileTooLarge`（§10.6） | 共通（フックの上限）・FAT32（`FSOPS_PROBE_FAT32_DIR`。V24） |
 | 容量 | 容量不足の後も、同じボリュームへの移動（`MethodRename`）の項目は続行される | CROSSVOL |
 | ごみ箱 | ごみ箱に入り、元の場所から消えている（Windows: `$I` ファイル、macOS: `TrashedPath`） | TRASH（V5、V10） |
+| ごみ箱 | ごみ箱へ移す呼び出しの報告と実際の状態が違う（成功を返したのに残っている、失敗を返したのにごみ箱に入った、消えたのにごみ箱の中の項目がない）→ §12.1 の規則どおり Failed・Done・TrashUnconfirmed。`TrashUnconfirmed` は `StatusCompletedWithErrors` | Windows・macOS（`trashCall` フックで呼び出しを差し替える。本物のごみ箱は使わない） |
 | ごみ箱 | ごみ箱へ移す操作が成功を返したのに元の場所に残っている（フックで呼び出しを差し替えて注入。本物のごみ箱には触れない）→ その項目は `OutcomeFailed`（`KindUnknown`）で元のまま、ほかは続行 | Windows・macOS（cgo） |
 | 削除 | Windows で、確かめた後・削除の直前（フックで注入）にファイルを別のファイルに置き換える・移動元のファイルを書き換える → 置き換えたもの・書き換えたものは消えず（属性も変わらず）、`KindSourceChanged` | Windows |
 | AppleDouble | macOS の exFAT・FAT32 の中のコピー・マージを含む移動・ボリュームをまたぐ移動・完全削除 → `com.apple.quarantine` が残り、付属（`._名前`）がファイルとして増えず、衝突の決定でスキップした項目は付属ごと残る。孤立した `._名前` は通常のファイルとして扱う | macOS（`FSOPS_PROBE_EXFAT_DIR`・`FSOPS_PROBE_FAT32_DIR`。V22） |
