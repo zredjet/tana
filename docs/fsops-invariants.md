@@ -86,6 +86,7 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 | 経路 | 防いでいるテスト | 条件 |
 |---|---|---|
 | コピー先の名前はコピー元の名前をそのまま使う（`plan.go` `item`、`copy.go`） | TestCopyTree（日本語・絵文字・NFD） | 共通 |
+| 移動先の名前は移動元の名前をそのまま使う（同一ボリュームの `move.go` `rename`・`mergeEntry`、ボリュームをまたぐ `copyThenRemove` のコピーと記録した名前での削除。日本語・絵文字・NFD の名前を、トップレベルの項目・フォルダの中身・マージ先の中身に置く） | TestMoveNamesSameVolume、TestMoveNamesCrossVolume | 共通・CROSSVOL |
 | macOS の exFAT で、列挙が NFD の名前を返す NFC の名前のファイル（名前を変換して探し直さず、失敗として報告する。§8.5、V17） | TestNFCOnExFATCopy、TestNFCOnExFATDelete、TestNFCOnExFATMove | macOS・EXFAT |
 | Windows の `\\?\` 変換（`path_windows.go` `sysPath`・`userPath`） | TestSysPathWindows、TestUserPathWindows、TestRenameHelpersWin32UnsafeNames、TestReadDirWin32UnsafeNames、TestFileIDWin32UnsafeNames、TestLstatEntryWin32UnsafeNames | Windows |
 | 末尾が `.`・空白の名前、予約名を含むコピー・移動で、同名の別ファイル（`foo`）と取り違えない（`\\?\` 変換を通る `copy.go`・`move.go`・`remove.go` の各経路） | TestCopyWin32UnsafeNames、TestMoveWin32UnsafeNames、TestMoveCrossVolumeWin32UnsafeNames | 共通・CROSSVOL |
@@ -137,8 +138,8 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
    Linux では exFAT を用意できないので、Linux の exFAT、および `renameat2` が `EINVAL` を返す場合の代わりの手段の経路（ext4・vfat では使われない）はテストされない。
 9. （解決済み）macOS の exFAT の NFC の名前（V17、§8.5 の制限事項）。コピー・完全削除・ボリュームをまたぐ移動・マージ移動で、データを失わず、
    移動元に残った項目を Done と報告しないことを TestNFCOnExFATCopy などでテストした（macOS・EXFAT。結果は SPEC §8.5）。
-10. **移動で名前をバイト単位でそのまま使うこと**（I6、§18.4 の I6 の「移動」）。コピーは日本語・絵文字・NFD の名前でテストしているが、
-    移動（同一ボリューム・ボリュームをまたぐ）のテストでは、そうした名前を使っていない。
+10. （解決済み）移動で名前をバイト単位でそのまま使うこと（I6、§18.4 の I6 の「移動」）。同一ボリュームの移動（リネーム・マージ）と
+    ボリュームをまたぐ移動（新しいフォルダ・マージ・移動元の削除）を、日本語・絵文字・NFD の名前で TestMoveNamesSameVolume・TestMoveNamesCrossVolume でテストした。
 11. **ごみ箱へ移す操作が成功を返したのに元の場所に残っている場合を失敗にする経路**（`trash.go` `trashItem`）。起こす方法がなく、テストがない。
 12. **手元の macOS での FAT 系ボリュームのテスト**。手元の Mac では AppleDouble ファイル（`._名前`）が作られ、名前の一覧を比べる一部のテストが失敗する
     （TestRenameCaseOnlyOtherVolumes、TestRenameExclusiveOtherVolumes、TestMoveMergeOtherVolumes）。CI では作られず成功する。
