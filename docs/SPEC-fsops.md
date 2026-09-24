@@ -761,6 +761,7 @@ const (
   3. `SHCreateItemFromParsingName` でパスから `IShellItem` を作り、自前の `IFileOperationProgressSink` を付けて `DeleteItem` する。1 回の操作で 1 項目だけ渡す。
   4. 進捗通知の `PreDeleteItem` で、フラグに `TSF_DELETE_RECYCLE_IF_POSSIBLE`（`0x80`）がなければ（ごみ箱に入らず完全削除になる場合）、`E_ABORT` を返して中止させ、その項目を `KindTrashUnavailable` にする（I5。V18 で、中止した項目が残ることを確認済み）。
   5. `PerformOperations` の後、`GetAnyOperationsAborted` と `PostDeleteItem` の結果で成否を決める。`PostDeleteItem` で渡されるごみ箱内の項目からパスが取れれば `TrashedPath` に入れる。
+     項目自体の `PostDeleteItem` が成功を通知しても、`psiNewlyCreated` が NULL なら、ごみ箱に入らず完全に削除されたので（V18）、`Done` にせず `OutcomeFailed`（`KindTrashUnavailable`）にする（I5。黙って完全削除にしない）。
   - COM の vtable の呼び出しと進捗通知の実装は、cgo を使わず `syscall.SyscallN` と `syscall.NewCallback`（または x/sys/windows の同等のもの）で行う。
     `syscall.NewCallback` で作るものは解放できず数に上限があるので、進捗通知の vtable はパッケージの初期化時に 1 回だけ作り、以後は変更しない。
     進捗通知の状態は、操作ごとの通知のオブジェクトが持つ（パッケージレベルの可変状態を持たない）。

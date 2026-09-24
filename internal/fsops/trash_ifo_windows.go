@@ -106,6 +106,7 @@ type progressSink struct {
 	posted      bool   // PostDeleteItem が呼ばれた
 	failedHR    uint32 // PostDeleteItem が失敗を通知した最初の結果（なければ 0）
 	trashed     string // ごみ箱の中の項目のパス（最初の PostDeleteItem で取得できた場合）
+	nuked       bool   // 最初の PostDeleteItem が成功を通知したのに psiNewlyCreated が NULL だった（完全に削除された。V18）
 }
 
 func newProgressSinkVtbl() *[progressSinkMethods]uintptr {
@@ -129,7 +130,7 @@ func newProgressSinkVtbl() *[progressSinkMethods]uintptr {
 		return this.preDelete(uint32(flags))
 	})
 	v[progressSinkPostDeleteItem] = syscall.NewCallback(func(this *progressSink, flags uintptr, item *comObj, hr uintptr, newly *comObj) uintptr {
-		this.postDelete(uint32(hr), newly.fileSysPath)
+		this.postDelete(uint32(hr), newly == nil, newly.fileSysPath)
 		return sOK
 	})
 	return &v
@@ -147,9 +148,11 @@ func (s *progressSink) preDelete(flags uint32) uintptr {
 
 // postDelete は PostDeleteItem の処理。フォルダの中身が 1 つずつ処理される場合は、中身ごとに呼ばれる。
 // 最初の通知（項目自体）のごみ箱の中のパスと、最初の失敗を覚える（後の成功で失敗を上書きしない）。trashed は最初の通知でだけ呼ぶ。
-func (s *progressSink) postDelete(hr uint32, trashed func() string) {
+// 最初の通知が成功なのに、ごみ箱の中の項目（newlyNull が真なら NULL）がなければ、完全に削除されたと覚える（V18。I5）。
+func (s *progressSink) postDelete(hr uint32, newlyNull bool, trashed func() string) {
 	if !s.posted {
 		s.trashed = trashed()
+		s.nuked = newlyNull && !hresultFailed(hr)
 	}
 	s.posted = true
 	if hresultFailed(hr) && s.failedHR == 0 {
@@ -204,6 +207,10 @@ func trashLocked(src string) (string, error) {
 	default:
 		return fail(KindUnknown, err)
 	}
+	// 進捗通知の受け取り口は、IFileOperation と IShellItem を解放し終えるまで生かしておく（解放のときに Release が呼ばれうるため）。
+	// defer は後に登録したものから実行されるので、それらの release より先に登録する。
+	sink := &progressSink{vtbl: progressSinkVtbl}
+	defer runtime.KeepAlive(sink)
 	var op *comObj
 	if hr, _, _ := procCoCreateInstance.Call(uintptr(unsafe.Pointer(&clsidFileOperation)), 0, clsctxInprocServer,
 		uintptr(unsafe.Pointer(&iidIFileOperation)), uintptr(unsafe.Pointer(&op))); hresultFailed(uint32(hr)) {
@@ -226,17 +233,18 @@ func trashLocked(src string) (string, error) {
 		return fail(classify(err, classifyOpts{}), err)
 	}
 	defer item.release()
-	sink := &progressSink{vtbl: progressSinkVtbl}
 	if hr := op.call(ifileOperationDeleteItem, uintptr(unsafe.Pointer(item)), uintptr(unsafe.Pointer(sink))); hresultFailed(uint32(hr)) {
 		return fail(KindUnknown, hresultErr(uint32(hr)))
 	}
 	perform := uint32(op.call(ifileOperationPerform))
 	var aborted int32
 	op.call(ifileOperationAnyAborted, uintptr(unsafe.Pointer(&aborted)))
-	runtime.KeepAlive(sink)
 	switch {
 	case sink.notRecycled:
 		return fail(KindTrashUnavailable, nil) // PreDeleteItem で中止した。項目は残る（V18）
+	case sink.nuked:
+		// ごみ箱に入らず完全に削除された（最大サイズを超えた項目。V18）。Done にしない（§12.2 の手順 5、I5）。
+		return fail(KindTrashUnavailable, nil)
 	case hresultFailed(perform):
 		err := hresultErr(perform)
 		return fail(classify(err, classifyOpts{}), err)

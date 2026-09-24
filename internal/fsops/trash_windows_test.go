@@ -279,11 +279,23 @@ func TestProgressSink(t *testing.T) {
 	var p progressSink
 	calls := 0
 	path := func(v string) func() string { return func() string { calls++; return v } }
-	p.postDelete(0x00270008, path(`C:\$Recycle.Bin\S\$Ritem`))
-	p.postDelete(0x80070020, path("child1"))
-	p.postDelete(sOK, path("child2"))
-	if p.trashed != `C:\$Recycle.Bin\S\$Ritem` || p.failedHR != 0x80070020 || !p.posted || calls != 1 {
+	p.postDelete(0x00270008, false, path(`C:\$Recycle.Bin\S\$Ritem`))
+	p.postDelete(0x80070020, false, path("child1"))
+	p.postDelete(sOK, true, path("child2"))
+	if p.trashed != `C:\$Recycle.Bin\S\$Ritem` || p.failedHR != 0x80070020 || !p.posted || p.nuked || calls != 1 {
 		t.Errorf("sink = %+v (path read %d times); want the first path and the first failure", p, calls)
+	}
+	// 項目自体の通知が成功でも psiNewlyCreated が NULL なら、完全に削除された（V18。I5）。
+	var n progressSink
+	n.postDelete(0x00270008, true, path(""))
+	if !n.nuked || n.trashed != "" {
+		t.Errorf("sink = %+v; want nuked (psiNewlyCreated was NULL on success)", n)
+	}
+	// 失敗の通知で NULL なのは、完全削除ではない（項目は残る）。
+	var f progressSink
+	f.postDelete(0x80070020, true, path(""))
+	if f.nuked {
+		t.Errorf("sink = %+v; a failed PostDeleteItem is not a permanent deletion", f)
 	}
 }
 
