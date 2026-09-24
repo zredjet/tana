@@ -237,8 +237,8 @@ func TestDestDirReplacedAfterPlan(t *testing.T) {
 			replaceWithRealDir(t, dest)
 			res := execPlan(t, context.Background(), plan, ExecOptions{})
 			for _, it := range res.Items {
-				if it.Outcome != OutcomeFailed || it.Err == nil || it.Err.Kind != KindSourceChanged {
-					t.Errorf("%s: %+v, want Failed with KindSourceChanged", it.Src, it)
+				if it.Outcome != OutcomeFailed || it.Err == nil || it.Err.Kind != KindDestChanged || !it.Err.OnDest {
+					t.Errorf("%s: %+v, want Failed with KindDestChanged on the destination side", it.Src, it)
 				}
 			}
 			if names := testfs.ListNames(t, dest); len(names) != 0 {

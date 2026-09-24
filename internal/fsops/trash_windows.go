@@ -142,7 +142,7 @@ func recycleCapacity(root string) (capacity int64, ok bool, err error) {
 	name := windows.UTF16ToString(buf)
 	i, j := strings.IndexByte(name, '{'), strings.IndexByte(name, '}')
 	if i < 0 || j < i {
-		return 0, false, nil
+		return 0, false, errTrashSettingsUnknown // 使えないとは確かめていない（§12.2）
 	}
 	guid := name[i : j+1]
 	volKey := bitBucketVolumeKey + guid
@@ -168,8 +168,11 @@ func recycleCapacity(root string) (capacity int64, ok bool, err error) {
 		return int64(total / 100 * percent), true, nil
 	}
 	v, found, err := readDWORD(registry.CURRENT_USER, volKey, "MaxCapacity")
-	if err != nil || !found {
+	if err != nil {
 		return 0, false, err
+	}
+	if !found {
+		return 0, false, errTrashSettingsUnknown // 最大サイズが分からない。使えないとは確かめていない（§12.2）
 	}
 	return int64(v) << 20, true, nil
 }

@@ -61,8 +61,8 @@ func TestCopyTempReplacedBeforeFinalRename(t *testing.T) {
 				}
 			}}
 			res := execPlan(t, context.Background(), plan, ExecOptions{hooks: h})
-			if it := res.Items[0]; it.Outcome != OutcomeFailed || it.Err == nil || it.Err.Kind != KindSourceChanged {
-				t.Errorf("result = %+v, want Failed with KindSourceChanged", it)
+			if it := res.Items[0]; it.Outcome != OutcomeFailed || it.Err == nil || it.Err.Kind != KindDestChanged || !it.Err.OnDest {
+				t.Errorf("result = %+v, want Failed with KindDestChanged on the destination side", it)
 			}
 			finalPath := filepath.Join(dest, tc.final)
 			if testfs.Exists(t, finalPath) && testfs.ReadFile(t, finalPath) == "intruder" {
@@ -87,9 +87,10 @@ func TestTempReplacedBeforeVerify(t *testing.T) {
 		name        string
 		verify      VerifyMode
 		touchSource bool
+		kind        Kind // 一時ファイルの置き換えはコピー先側、コピー元の変化はコピー元側
 	}{
-		{"hash", VerifyHash, false},
-		{"size with source changed", VerifySize, true},
+		{"hash", VerifyHash, false, KindDestChanged},
+		{"size with source changed", VerifySize, true, KindSourceChanged},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -106,8 +107,8 @@ func TestTempReplacedBeforeVerify(t *testing.T) {
 				}
 			}}
 			res := execPlan(t, context.Background(), plan, ExecOptions{Verify: tc.verify, hooks: h})
-			if it := res.Items[0]; it.Outcome != OutcomeFailed || it.Err == nil || it.Err.Kind != KindSourceChanged {
-				t.Errorf("result = %+v, want Failed with KindSourceChanged", it)
+			if it := res.Items[0]; it.Outcome != OutcomeFailed || it.Err == nil || it.Err.Kind != tc.kind {
+				t.Errorf("result = %+v, want Failed with %v", it, tc.kind)
 			}
 			if intruder == "" {
 				t.Fatal("no injection")
@@ -174,8 +175,8 @@ func TestTempReplacedDuringFinalRename(t *testing.T) {
 			if !injected {
 				t.Fatal("no injection")
 			}
-			if it := res.Items[0]; it.Outcome != OutcomePartial || it.Err == nil || it.Err.Kind != KindSourceChanged {
-				t.Errorf("result = %+v, want Partial with KindSourceChanged (something was placed at the final name)", it)
+			if it := res.Items[0]; it.Outcome != OutcomePartial || it.Err == nil || it.Err.Kind != KindDestChanged || !it.Err.OnDest {
+				t.Errorf("result = %+v, want Partial with KindDestChanged on the destination side (something was placed at the final name)", it)
 			}
 			if got := testfs.ReadFile(t, dst); got != "intruder" {
 				t.Errorf("final name = %q, want the replacing file", got)

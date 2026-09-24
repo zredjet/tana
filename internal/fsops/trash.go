@@ -1,17 +1,32 @@
 package fsops
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // trashPrecheck は、ごみ箱が使えるかの事前確認（§12.1）。ファイルシステムを変更しない。
 // 使えなければ KindTrashUnavailable、確認の途中で ctx がキャンセルされたら KindCanceled の *OpError を返す。
 // 計画時（NewPlan）と実行時（Execute）の両方で使う。
 func trashPrecheck(ctx context.Context, src string, info EntryInfo) *OpError {
 	ok, err := trashAvailable(ctx, src, info)
-	if err != nil && ctx.Err() != nil {
+	return precheckResult(ctx, src, ok, err)
+}
+
+// errTrashSettingsUnknown は、ごみ箱の設定（Windows の最大サイズなど）を読めず、使えるかを確かめられなかったことを表す（§12.2）。
+var errTrashSettingsUnknown = errors.New("fsops: the trash settings could not be determined")
+
+// precheckResult は、事前確認の結果（使えるか ok、確かめる途中のエラー err）を分類する（§12.1）。
+// KindTrashUnavailable は使えないと確かめた場合だけにし、確かめられなかった場合はそのエラーの Kind にする
+// （ごみ箱には入れない（I5）が、UI に完全削除を勧めさせないため）。
+func precheckResult(ctx context.Context, src string, ok bool, err error) *OpError {
+	switch {
+	case err != nil && ctx.Err() != nil:
 		return &OpError{Op: "trash", Path: src, Kind: KindCanceled, Err: ctx.Err()}
-	}
-	if !ok {
-		return &OpError{Op: "trash", Path: src, Kind: KindTrashUnavailable, Err: err}
+	case err != nil:
+		return &OpError{Op: "trash", Path: src, Kind: classify(err, classifyOpts{}), Err: err}
+	case !ok:
+		return &OpError{Op: "trash", Path: src, Kind: KindTrashUnavailable}
 	}
 	return nil
 }
@@ -71,6 +86,9 @@ func trashOutcome(src string, e dirEntry, trashed string, err error) (Outcome, *
 	switch {
 	case serr == nil && now.id == e.id:
 		return OutcomeFailed, callErr() // 1. 元の場所に残っている
+	case serr == nil && err != nil:
+		// 1. 元の場所に別のものがあり、呼び出しは失敗した。元の項目は別の場所へ移されたとみなす（消えたとは伝えない）。
+		return OutcomeFailed, &OpError{Op: "trash", Path: src, Kind: KindSourceChanged, Err: err}
 	case serr != nil && classify(serr, classifyOpts{}) != KindNotFound:
 		// 4. 元の場所を調べられない。状態がわからない
 		return OutcomeFailed, &OpError{Op: "trash", Path: src, Kind: classify(serr, classifyOpts{}), Err: serr}

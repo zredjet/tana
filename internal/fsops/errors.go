@@ -35,6 +35,8 @@ const (
 	KindVerifyFailed // コピーした内容が元と一致しない（§10.4）
 	KindSyncFailed   // 同期（fsync）に失敗した。書いた内容が永続化されたか保証できない（§10.5）
 	KindLinkSkipped  // LinkSkip の方針でリンクを複製しなかった（エラーではない。§14.2）
+	KindNameForm     // 名前の文字の表現（NFC・NFD）の違いで扱えない（macOS の exFAT。§8.5、V17）
+	KindDestChanged  // コピー先・移動先のフォルダやファイル（DestDir、作ったフォルダ、一時ファイル）が処理中に変更・置き換えられた
 )
 
 func (k Kind) String() string {
@@ -87,17 +89,22 @@ func (k Kind) String() string {
 		return "KindSyncFailed"
 	case KindLinkSkipped:
 		return "KindLinkSkipped"
+	case KindNameForm:
+		return "KindNameForm"
+	case KindDestChanged:
+		return "KindDestChanged"
 	}
 	return "Kind(" + strconv.Itoa(int(k)) + ")"
 }
 
 // OpError は fsops が返すエラー。
 type OpError struct {
-	Op   string // "copy", "rename", "remove" など
-	Path string
-	Dest string
-	Kind Kind
-	Err  error // 元のエラー
+	Op     string // "copy", "rename", "remove" など
+	Path   string
+	Dest   string
+	Kind   Kind
+	OnDest bool  // エラーが Dest 側（コピー先・移動先）で起きた。偽は Path の側か、どちらか分からない（§17）
+	Err    error // 元のエラー
 }
 
 // Error はログ用の技術的な文字列を返す。利用者向けのメッセージではない。
@@ -113,6 +120,9 @@ func (e *OpError) Error() string {
 		s += " -> " + e.Dest
 	}
 	s += ": " + e.Kind.String()
+	if e.OnDest {
+		s += " (on dest)"
+	}
 	if e.Err != nil {
 		s += ": " + e.Err.Error()
 	}
@@ -194,6 +204,19 @@ func classify(err error, o classifyOpts) Kind {
 func syncFailed(oe *OpError) *OpError {
 	if oe.Kind != KindNoSpace {
 		oe.Kind = KindSyncFailed
+	}
+	return oe
+}
+
+// destErr は、コピー先・移動先の側で起きたエラー oe に OnDest を付ける（§17）。コピー先側の置き換え（KindSourceChanged）は
+// KindDestChanged にする（利用者がコピー元の問題と受け取らないため）。キャンセルには付けない。oe を返す（nil ならそのまま）。
+func destErr(oe *OpError) *OpError {
+	if oe == nil || oe.Kind == KindCanceled {
+		return oe
+	}
+	oe.OnDest = true
+	if oe.Kind == KindSourceChanged {
+		oe.Kind = KindDestChanged
 	}
 	return oe
 }

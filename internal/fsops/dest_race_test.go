@@ -121,8 +121,8 @@ func TestCopyCreatedDestReplacedAfterMkdir(t *testing.T) {
 			var replaced bool
 			res := execPlan(t, context.Background(), plan, ExecOptions{hooks: destRaceHooks(t, when, root, filepath.Join(root, "src", "tree"), filepath.Join(dest, "tree"), &replaced)})
 			it := res.Items[0]
-			if when == "open" && replaced && !hasKind(it, KindSourceChanged) {
-				t.Errorf("result = %+v, want KindSourceChanged (the created folder was replaced)", it)
+			if when == "open" && replaced && !hasKind(it, KindDestChanged) {
+				t.Errorf("result = %+v, want KindDestChanged (the created folder was replaced)", it)
 			}
 			noWriteThroughLink(t, root, before)
 		})

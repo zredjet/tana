@@ -97,6 +97,7 @@ func TestTrashOutcomeFromState(t *testing.T) {
 		{"moved, path, success", "move", "moved", nil, OutcomeDone, 0, true},
 		{"left, failure", "none", "", &OpError{Op: "trash", Kind: KindPermission}, OutcomeFailed, KindPermission, false},
 		{"left, success", "none", "moved", nil, OutcomeFailed, KindUnknown, false},
+		{"replaced by another file, failure", "replace", "", failure, OutcomeFailed, KindSourceChanged, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -114,6 +115,11 @@ func TestTrashOutcomeFromState(t *testing.T) {
 					if err := os.Rename(testfs.ExtendedPath(p), testfs.ExtendedPath(moved)); err != nil {
 						t.Errorf("fake trash: %v", err)
 					}
+				case "replace": // 別のプロセスが元の項目を別の場所へ移し、同じ名前で別のファイルを作った
+					if err := os.Rename(testfs.ExtendedPath(p), testfs.ExtendedPath(moved)); err != nil {
+						t.Errorf("fake trash: %v", err)
+					}
+					testfs.WriteFile(t, p, "another file")
 				}
 				switch tc.path {
 				case "moved":

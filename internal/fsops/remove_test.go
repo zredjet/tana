@@ -2,6 +2,7 @@ package fsops
 
 import (
 	"context"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -425,4 +426,26 @@ func TestDeleteTopLevelMovedAway(t *testing.T) {
 		t.Errorf("status = %v, want CompletedWithErrors", res.Status)
 	}
 	wantFiles(t, root, map[string]string{"dir-moved/sub/b": "b", "f.txt-moved": "f"})
+}
+
+// TestRemoveErrNameForm は、削除が「見つからない」を返したのに、調べ直すと同じエントリがある場合（macOS の exFAT の NFC の名前。V17）を
+// KindNameForm にし、別のエントリがある場合や本当に消えた場合と区別することを確かめる（§8.5）。
+func TestRemoveErrNameForm(t *testing.T) {
+	t.Parallel()
+	e := dirEntry{name: "x", info: EntryInfo{Type: TypeFile}, id: fileID{method: idMethodDevIno, vol: 1, id: [16]byte{7}}}
+	notFound := &os.PathError{Op: "unlinkat", Path: "/d/x", Err: fs.ErrNotExist}
+	restat := func(now dirEntry, err error) func() (dirEntry, error) {
+		return func() (dirEntry, error) { return now, err }
+	}
+	if oe, vanished := removeErr("/d/x", notFound, e, restat(e, nil), "/d/x"); vanished || oe == nil || oe.Kind != KindNameForm {
+		t.Errorf("same entry still there: %v (vanished %v), want KindNameForm", oe, vanished)
+	}
+	other := e
+	other.id.id[0] = 8
+	if oe, _ := removeErr("/d/x", notFound, e, restat(other, nil), "/d/x"); oe == nil || oe.Kind == KindNameForm {
+		t.Errorf("another entry at the name: %v, want not KindNameForm", oe)
+	}
+	if oe, vanished := removeErr("/d/x", notFound, e, restat(dirEntry{}, notFound), "/d/x"); !vanished || oe != nil {
+		t.Errorf("really gone: %v (vanished %v), want vanished", oe, vanished)
+	}
 }

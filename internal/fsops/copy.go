@@ -139,7 +139,7 @@ func (cp *copier) syncDir(d *secDir) {
 	if err == nil {
 		return
 	}
-	oe := syncFailed(&OpError{Op: "sync", Path: d.path, Kind: classify(err, classifyOpts{}), Err: withUserPaths(err, d.path, "")})
+	oe := destErr(syncFailed(&OpError{Op: "sync", Path: d.path, Kind: classify(err, classifyOpts{}), Err: withUserPaths(err, d.path, "")}))
 	if cp.move {
 		if cp.firstErr == nil {
 			cp.firstErr = oe
@@ -177,7 +177,7 @@ func (ex *executor) copyTop(i int, it Item, move bool) (ItemResult, *recordEntry
 	// 書き込み先のフォルダ（DestDir）を、計画時と同じもの（fileID）であることを確かめて開き、項目の処理が終わるまで持つ（§13.1）。
 	dd, err := openDestRoot(ex.plan.req.DestDir, ex.plan.destID)
 	if err != nil {
-		res.Outcome, res.Err = OutcomeFailed, &OpError{Op: "copy", Path: it.Src, Dest: it.Dst, Kind: KindOf(err), Err: err}
+		res.Outcome, res.Err = OutcomeFailed, destErr(&OpError{Op: "copy", Path: it.Src, Dest: it.Dst, Kind: KindOf(err), Err: err})
 		return res, nil
 	}
 	defer dd.close()
@@ -267,6 +267,7 @@ func (cp *copier) copySymlink(src, dst string, e dirEntry, pc *planned, dd *secD
 	} else {
 		out, oe = createResult(src, dst, create(dst), true)
 	}
+	destErr(oe) // リンクの作成はコピー先側（§17）
 	if oe == nil {
 		cp.changed(dd)
 		cp.record(recordEntry{name: e.name, info: e.info, id: e.id})
@@ -383,7 +384,7 @@ func (t tempFile) matches(now dirEntry) bool {
 func (t tempFile) check() error {
 	now, err := t.dir.stat(t.name)
 	if err != nil || !t.matches(now) {
-		return &OpError{Op: "copy", Path: t.path, Kind: KindSourceChanged, Err: err}
+		return &OpError{Op: "copy", Path: t.path, Kind: KindDestChanged, OnDest: true, Err: err}
 	}
 	return nil
 }
@@ -452,7 +453,7 @@ func (cp *copier) finalize(src string, tmp tempFile, dst string, decision Decisi
 		return final, OutcomeSkipped, cp.canceledErr(src)
 	}
 	if oe != nil {
-		return final, out, oe
+		return final, out, destErr(oe) // 最終名にする段階の失敗・衝突は、すべてコピー先側（§17）
 	}
 	// リネームの直前の確認とリネームの間に置き換えられた場合（リネームをハンドルに結び付けられないので、ごく短い隙間が残る）を、
 	// 報告できるようにする。Windows の exFAT・FAT32 の fileID（ファイルインデックス）は、同じフォルダの中でも名前の長さが変わる
@@ -462,7 +463,7 @@ func (cp *copier) finalize(src string, tmp tempFile, dst string, decision Decisi
 			// 最終名には、書いたものではないものが置かれている（上書きでは元のファイルはもう置き換えられている）。
 			// 何も残らなかった Failed ではなく、途中までの結果が残った Partial と報告する（§10.1 の手順 7、§7.4）。
 			cp.changed(dd)
-			return final, OutcomePartial, &OpError{Op: "copy", Path: src, Dest: final, Kind: KindSourceChanged, Err: err}
+			return final, OutcomePartial, &OpError{Op: "copy", Path: src, Dest: final, Kind: KindDestChanged, OnDest: true, Err: err}
 		}
 	}
 	return final, OutcomeDone, nil
@@ -563,8 +564,9 @@ func (cp *copier) writeTemp(src, dst string, e dirEntry, dd *secDir) (tempFile, 
 		return tempFile{}, srcMeta{}, nil, &OpError{Op: "copy", Path: src, Dest: dst, Kind: KindFileTooLarge}
 	}
 	// writeFail は書き込みの失敗を分類する。上限を超える位置への書き込みでの容量不足は、KindFileTooLarge にする（§10.6）。
+	failDest := func(err error) *OpError { return destErr(fail(err)) } // 一時ファイル（コピー先側）の失敗
 	writeFail := func(err error, pos int64) *OpError {
-		oe := fail(err)
+		oe := failDest(err)
 		if oe.Kind == KindNoSpace && limit > 0 && pos > limit {
 			oe.Kind = KindFileTooLarge
 		}
@@ -578,7 +580,7 @@ func (cp *copier) writeTemp(src, dst string, e dirEntry, dd *secDir) (tempFile, 
 	tmpName, out, err := createTemp(dd)
 	tmp := dd.join(tmpName)
 	if err != nil {
-		return tempFile{}, srcMeta{}, nil, fail(err)
+		return tempFile{}, srcMeta{}, nil, failDest(err)
 	}
 	closed, keep := false, false
 	var recorded *tempFile // fileID を記録した後の一時ファイル
@@ -629,29 +631,29 @@ func (cp *copier) writeTemp(src, dst string, e dirEntry, dd *secDir) (tempFile, 
 	}
 	if cp.sync() {
 		if err := cp.ex.opt.hooks.syncFile(tmp); err != nil {
-			return tempFile{}, srcMeta{}, nil, syncFailed(fail(err))
+			return tempFile{}, srcMeta{}, nil, syncFailed(failDest(err))
 		}
 		if err := out.Sync(); err != nil {
-			return tempFile{}, srcMeta{}, nil, syncFailed(fail(withUserPaths(err, tmp, "")))
+			return tempFile{}, srcMeta{}, nil, syncFailed(failDest(withUserPaths(err, tmp, "")))
 		}
 	}
 	fi, err := out.Stat()
 	if err != nil {
-		return tempFile{}, srcMeta{}, nil, fail(withUserPaths(err, tmp, ""))
+		return tempFile{}, srcMeta{}, nil, failDest(withUserPaths(err, tmp, ""))
 	}
 	// 一時ファイルの fileID は、書き込んだ後に記録する。macOS の exFAT・FAT32 では、空のファイルに最初のデータ領域を
 	// 割り当てると fileID が変わる（2026-09-24 に手元の hdiutil のイメージで確認）。
 	tmpID, err := fileIDOfFile(out)
 	if err != nil {
-		return tempFile{}, srcMeta{}, nil, fail(withUserPaths(err, tmp, ""))
+		return tempFile{}, srcMeta{}, nil, failDest(withUserPaths(err, tmp, ""))
 	}
 	recorded = &tempFile{dir: dd, name: tmpName, path: tmp, id: tmpID, size: fi.Size()}
 	closed = true
 	if err := out.Close(); err != nil {
-		return tempFile{}, srcMeta{}, nil, fail(withUserPaths(err, tmp, ""))
+		return tempFile{}, srcMeta{}, nil, failDest(withUserPaths(err, tmp, ""))
 	}
 	if fi.Size() != written {
-		return tempFile{}, srcMeta{}, nil, &OpError{Op: "verify", Path: src, Dest: dst, Kind: KindVerifyFailed} // §10.4: 一時ファイルの大きさ
+		return tempFile{}, srcMeta{}, nil, &OpError{Op: "verify", Path: src, Dest: dst, Kind: KindVerifyFailed, OnDest: true} // §10.4: 一時ファイルの大きさ
 	}
 	cp.ex.opt.hooks.verify(tmp)
 	tf := tempFile{dir: dd, name: tmpName, path: tmp, id: tmpID, size: written}
@@ -659,13 +661,13 @@ func (cp *copier) writeTemp(src, dst string, e dirEntry, dd *secDir) (tempFile, 
 		return tempFile{}, srcMeta{}, nil, oe
 	}
 	if err := setMetaIn(dd, tmpName, tmpID, m, false, cp.ex.opt.hooks); err != nil {
-		warnings = append(warnings, &OpError{Op: "metadata", Path: src, Dest: dst, Kind: KindMetadata, Err: withUserPathsAll(err, dst)})
+		warnings = append(warnings, &OpError{Op: "metadata", Path: src, Dest: dst, Kind: KindMetadata, OnDest: true, Err: withUserPathsAll(err, dst)})
 	}
 	// 照合（tempFile.matches）に使う更新日時を、メタデータを設定した後の状態で記録する。
 	now, err := dd.stat(tmpName)
 	if err != nil || now.id != tmpID || now.info.Type != TypeFile || now.info.Size != written {
 		keep = true // 置き換えられていれば、それは fsops の一時ファイルではないので消さない
-		return tempFile{}, srcMeta{}, nil, &OpError{Op: "copy", Path: src, Dest: dst, Kind: KindSourceChanged, Err: err}
+		return tempFile{}, srcMeta{}, nil, &OpError{Op: "copy", Path: src, Dest: dst, Kind: KindDestChanged, OnDest: true, Err: err}
 	}
 	tf.mtime = now.info.ModTime
 	keep = true
@@ -703,7 +705,7 @@ func (cp *copier) verify(src, dst string, tmp tempFile, e dirEntry, m srcMeta, s
 		if KindOf(err) == KindCanceled && cp.checkCanceled() {
 			return cp.canceledErr(src)
 		}
-		return &OpError{Op: "verify", Path: src, Dest: dst, Kind: classify(err, classifyOpts{}), Err: withUserPaths(err, tmp.path, "")}
+		return destErr(&OpError{Op: "verify", Path: src, Dest: dst, Kind: classify(err, classifyOpts{}), Err: withUserPaths(err, tmp.path, "")})
 	}
 	defer f.Close()
 	h := sha256.New()
@@ -718,11 +720,11 @@ func (cp *copier) verify(src, dst string, tmp tempFile, e dirEntry, m srcMeta, s
 			break
 		}
 		if rerr != nil {
-			return &OpError{Op: "verify", Path: src, Dest: dst, Kind: classify(rerr, classifyOpts{}), Err: withUserPaths(rerr, tmp.path, "")}
+			return destErr(&OpError{Op: "verify", Path: src, Dest: dst, Kind: classify(rerr, classifyOpts{}), Err: withUserPaths(rerr, tmp.path, "")})
 		}
 	}
 	if !bytes.Equal(h.Sum(nil), sum.Sum(nil)) {
-		return &OpError{Op: "verify", Path: src, Dest: dst, Kind: KindVerifyFailed}
+		return &OpError{Op: "verify", Path: src, Dest: dst, Kind: KindVerifyFailed, OnDest: true}
 	}
 	return nil
 }
@@ -789,12 +791,12 @@ func (cp *copier) copyDir(src, dst string, e dirEntry, pc *planned, dd *secDir) 
 		gone, oe := checkTarget(src, dst, pc, dd)
 		switch {
 		case oe != nil && oe.Kind == KindExist:
-			return dst, OutcomeSkipped, oe
+			return dst, OutcomeSkipped, destErr(oe)
 		case oe != nil:
-			return dst, OutcomeFailed, oe
+			return dst, OutcomeFailed, destErr(oe)
 		case gone:
 			if out, oe := createResult(src, dst, mkdir(dst), false); oe != nil {
-				return dst, out, oe
+				return dst, out, destErr(oe)
 			}
 			cp.changed(dd)
 		default:
@@ -804,13 +806,13 @@ func (cp *copier) copyDir(src, dst string, e dirEntry, pc *planned, dd *secDir) 
 	case pc != nil && pc.c.Decision == DecisionAutoRename:
 		final, out, oe := autoRename(src, dst, true, false, mkdir)
 		if oe != nil {
-			return final, out, oe
+			return final, out, destErr(oe)
 		}
 		dst = final
 		cp.changed(dd)
 	default:
 		if out, oe := createResult(src, dst, mkdir(dst), false); oe != nil {
-			return dst, out, oe
+			return dst, out, destErr(oe)
 		}
 		cp.changed(dd)
 	}
@@ -833,9 +835,9 @@ func (cp *copier) copyDir(src, dst string, e dirEntry, pc *planned, dd *secDir) 
 		oe.Op, oe.Path, oe.Dest = "copy", src, dst
 		if !created && oe.Kind == KindSourceChanged {
 			oe.Kind = KindExist // マージ先が照合の後に置き換えられた（計画後に現れた衝突。§7.3）
-			return dst, OutcomeSkipped, oe
+			return dst, OutcomeSkipped, destErr(oe)
 		}
-		return dst, OutcomeFailed, oe
+		return dst, OutcomeFailed, destErr(oe) // 作ったフォルダが置き換えられた（KindDestChanged）など
 	}
 	closed := false
 	closeDir := func() {

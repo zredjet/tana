@@ -2,6 +2,8 @@ package fsops
 
 import (
 	"context"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -130,4 +132,36 @@ func noRealTrash(t *testing.T) *testHooks {
 		t.Errorf("I5: the precheck did not stop %s; the real trash would have been called", src)
 		return "", &OpError{Op: "trash", Path: src, Kind: KindTrashUnavailable}
 	}}
+}
+
+// TestTrashPrecheckKinds は、事前確認の結果の分類を確かめる（§12.1）。使えないと確かめた場合だけ KindTrashUnavailable にし、
+// 確かめられなかった場合（エラー、設定を読めない）は、そのエラーの Kind にする（UI に完全削除を勧めさせないため）。
+func TestTrashPrecheckKinds(t *testing.T) {
+	t.Parallel()
+	bg := context.Background()
+	canceled, cancel := context.WithCancel(bg)
+	cancel()
+	perm := &os.PathError{Op: "open", Path: "/x", Err: fs.ErrPermission}
+	for _, c := range []struct {
+		name    string
+		ctx     context.Context
+		ok      bool
+		err     error
+		want    Kind
+		wantNil bool // 使える（エラーなし）
+	}{
+		{"available", bg, true, nil, 0, true},
+		{"determined unavailable", bg, false, nil, KindTrashUnavailable, false},
+		{"permission error while checking", bg, false, perm, KindPermission, false},
+		{"settings unknown", bg, false, errTrashSettingsUnknown, KindUnknown, false},
+		{"canceled", canceled, false, context.Canceled, KindCanceled, false},
+	} {
+		oe := precheckResult(c.ctx, "/x", c.ok, c.err)
+		switch {
+		case c.wantNil && oe != nil:
+			t.Errorf("%s: %v, want nil", c.name, oe)
+		case !c.wantNil && (oe == nil || oe.Kind != c.want):
+			t.Errorf("%s: %v, want %v", c.name, oe, c.want)
+		}
+	}
 }

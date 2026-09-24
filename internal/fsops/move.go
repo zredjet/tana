@@ -91,7 +91,7 @@ func (ex *executor) moveItem(i int, it Item) ItemResult {
 	// 移動先のフォルダ（DestDir）を、計画時と同じもの（fileID）であることを確かめて開き、項目の処理が終わるまで持つ（§13.1）。
 	dd, err := openDestRoot(ex.plan.req.DestDir, ex.plan.destID)
 	if err != nil {
-		res.Outcome, res.Err = OutcomeFailed, &OpError{Op: "move", Path: it.Src, Dest: it.Dst, Kind: KindOf(err), Err: err}
+		res.Outcome, res.Err = OutcomeFailed, destErr(&OpError{Op: "move", Path: it.Src, Dest: it.Dst, Kind: KindOf(err), Err: err})
 		return res
 	}
 	defer dd.close()
@@ -205,9 +205,9 @@ func (mv *mover) merge(parent *secDir, src, dst string, e dirEntry, pc *planned,
 		doe.Op, doe.Path, doe.Dest = "move", src, dst
 		if doe.Kind == KindSourceChanged {
 			doe.Kind = KindExist // マージ先が照合の後に置き換えられた（計画後に現れた衝突。§7.3）
-			return OutcomeSkipped, doe, false
+			return OutcomeSkipped, destErr(doe), false
 		}
-		return OutcomeFailed, doe, false
+		return OutcomeFailed, destErr(doe), false
 	}
 	defer dd.close()
 	mv.ex.opt.hooks.enterDir(src)

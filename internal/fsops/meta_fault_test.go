@@ -27,8 +27,8 @@ func TestMetaTempReplaced(t *testing.T) {
 	var intruder string
 	h := &testHooks{beforeVerify: func(string) { intruder = replaceTemp(t, dest) }}
 	res := execPlan(t, context.Background(), plan, ExecOptions{hooks: h})
-	if it := res.Items[0]; it.Outcome != OutcomeFailed || it.Err == nil || it.Err.Kind != KindSourceChanged {
-		t.Errorf("result = %+v, want Failed with KindSourceChanged", it)
+	if it := res.Items[0]; it.Outcome != OutcomeFailed || it.Err == nil || it.Err.Kind != KindDestChanged || !it.Err.OnDest {
+		t.Errorf("result = %+v, want Failed with KindDestChanged on the destination side", it)
 	}
 	if intruder == "" {
 		t.Fatal("no injection")

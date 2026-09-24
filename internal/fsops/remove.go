@@ -54,6 +54,10 @@ func removeErr(path string, err error, e dirEntry, restat func() (dirEntry, erro
 	if isMismatchRemoveErr(err) && serr == nil && now.dirAttr != e.dirAttr {
 		return &OpError{Op: "remove", Path: path, Kind: KindSourceChanged, Err: err}, false
 	}
+	if serr == nil && now.id == e.id && classify(err, classifyOpts{}) == KindNotFound {
+		// 削除は「見つからない」を返したのに、同じエントリがある。列挙の名前の表現（NFD）では扱えない（macOS の exFAT。§8.5、V17）。
+		return &OpError{Op: "remove", Path: path, Kind: KindNameForm, Err: withUserPaths(err, path, "")}, false
+	}
 	return &OpError{Op: "remove", Path: path, Kind: classify(err, classifyOpts{readOnly: readOnlySys(sys)}), Err: withUserPaths(err, path, "")}, false
 }
 

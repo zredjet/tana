@@ -54,6 +54,9 @@ func TestNFCOnExFATDelete(t *testing.T) {
 	if left := realNames(t, filepath.Join(root, "tree")); len(left) > 0 && it.Outcome == OutcomeDone {
 		t.Errorf("the item was reported Done although %+q is left", left)
 	}
+	if testfs.Exists(t, nfc) && !slices.ContainsFunc(it.Details, func(e EntryResult) bool { return e.Err != nil && e.Err.Kind == KindNameForm }) {
+		t.Errorf("details = %+v, want the NFC-named file reported with KindNameForm (it exists, so not KindNotFound)", it.Details)
+	}
 }
 
 // realNames は、dir の名前のうち、macOS が作る AppleDouble ファイル（._名前）を除いたものを返す。

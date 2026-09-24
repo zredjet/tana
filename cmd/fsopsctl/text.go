@@ -179,6 +179,10 @@ func kindText(k fsops.Kind) string {
 		return "キャンセルしました"
 	case fsops.KindMetadata:
 		return "更新日時などの情報を保持できませんでした（データは無事です）"
+	case fsops.KindDestChanged:
+		return "処理中にコピー先・移動先のフォルダやファイルが変更されました"
+	case fsops.KindNameForm:
+		return "名前の文字の表現（NFC・NFD）の違いで、このボリュームでは扱えないファイルです"
 	case fsops.KindLinkSkipped:
 		return "リンクは設定によりコピーしませんでした"
 	case fsops.KindVerifyFailed:
@@ -200,6 +204,9 @@ func errorText(err error) string {
 		return err.Error()
 	}
 	s := kindText(oe.Kind)
+	if oe.OnDest {
+		s = "コピー先・移動先で: " + s
+	}
 	if oe.Err != nil {
 		s += fmt.Sprintf("（%v）", oe.Err)
 	}
