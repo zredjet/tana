@@ -134,6 +134,8 @@ func outcomeText(o fsops.Outcome) string {
 		return "一部"
 	case fsops.OutcomeCopiedSourceKept:
 		return "移動元を残した"
+	case fsops.OutcomeTrashUnconfirmed:
+		return "ごみ箱に入ったことを確認できず、元の場所からも消えています（完全に削除された可能性があります）"
 	}
 	return o.String()
 }

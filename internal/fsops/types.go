@@ -329,6 +329,7 @@ const (
 	OutcomeFailed
 	OutcomePartial          // フォルダの一部だけ処理できた
 	OutcomeCopiedSourceKept // 移動: 移動先は完成したが、移動元の削除に失敗
+	OutcomeTrashUnconfirmed // ごみ箱: 元の場所から消えたが、ごみ箱に入ったことを確かめられなかった（完全に削除された可能性がある。§12.1）
 )
 
 func (o Outcome) String() string {
@@ -343,6 +344,8 @@ func (o Outcome) String() string {
 		return "OutcomePartial"
 	case OutcomeCopiedSourceKept:
 		return "OutcomeCopiedSourceKept"
+	case OutcomeTrashUnconfirmed:
+		return "OutcomeTrashUnconfirmed"
 	}
 	return "Outcome(" + strconv.Itoa(int(o)) + ")"
 }

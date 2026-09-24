@@ -45,7 +45,7 @@ func TestStrings(t *testing.T) {
 	}
 	checkStrings(t, "Kind", "Kind", kinds, KindFileTooLarge+1)
 	checkStrings(t, "Outcome", "Outcome",
-		[]Outcome{OutcomeDone, OutcomeSkipped, OutcomeFailed, OutcomePartial, OutcomeCopiedSourceKept}, 0)
+		[]Outcome{OutcomeDone, OutcomeSkipped, OutcomeFailed, OutcomePartial, OutcomeCopiedSourceKept, OutcomeTrashUnconfirmed}, 0)
 	checkStrings(t, "Status", "Status",
 		[]Status{StatusCompleted, StatusCompletedWithErrors, StatusCanceled}, 0)
 	checkStrings(t, "Stage", "Stage",

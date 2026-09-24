@@ -12,6 +12,7 @@ package fsops
 // fsops_trash は、path（ファイルシステムの表現のまま。名前を変換しない）を NSFileManager でごみ箱へ移す（SPEC §12.3）。
 // 成功なら 0 を返し、*out にごみ箱の中のパス（取得できなければ NULL。malloc）を入れる。
 // 失敗なら 1 を返し、*domain（malloc）、*code と、下位の POSIX のエラー番号 *posix（なければ 0）を入れる。
+// 失敗でも、ごみ箱の中のパスが得られていれば *out に入れる（結果は SPEC §12.1 の規則で、呼び出しの後の状態から決める）。
 static int fsops_trash(const char *path, int isDir, char **out, char **domain, long *code, int *posix) {
 	@autoreleasepool {
 		NSURL *url = [NSURL fileURLWithFileSystemRepresentation:path isDirectory:(isDir ? YES : NO) relativeToURL:nil];
@@ -21,6 +22,7 @@ static int fsops_trash(const char *path, int isDir, char **out, char **domain, l
 			*out = res != nil ? strdup(res.fileSystemRepresentation) : NULL;
 			return 0;
 		}
+		*out = res != nil ? strdup(res.fileSystemRepresentation) : NULL;
 		*domain = strdup(err != nil ? err.domain.UTF8String : "");
 		*code = err != nil ? (long)err.code : 0;
 		NSError *u = err.userInfo[NSUnderlyingErrorKey];
@@ -116,6 +118,11 @@ func trashSys(src string, info EntryInfo) (string, error) {
 		return C.GoString(out), nil
 	}
 	defer C.free(unsafe.Pointer(domain))
+	trashed := ""
+	if out != nil {
+		defer C.free(unsafe.Pointer(out))
+		trashed = C.GoString(out)
+	}
 	e := &nsError{domain: C.GoString(domain), code: int64(code), posix: syscall.Errno(posix)}
-	return "", &OpError{Op: "trash", Path: src, Kind: e.kind(), Err: e}
+	return trashed, &OpError{Op: "trash", Path: src, Kind: e.kind(), Err: e}
 }

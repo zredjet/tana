@@ -129,7 +129,7 @@ func status(items []ItemResult, canceled bool) Status {
 	}
 	for _, it := range items {
 		switch it.Outcome {
-		case OutcomeFailed, OutcomePartial, OutcomeCopiedSourceKept:
+		case OutcomeFailed, OutcomePartial, OutcomeCopiedSourceKept, OutcomeTrashUnconfirmed:
 			return StatusCompletedWithErrors
 		case OutcomeSkipped:
 			if it.Err != nil {

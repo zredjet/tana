@@ -239,20 +239,25 @@ func trashLocked(src string) (string, error) {
 	perform := uint32(op.call(ifileOperationPerform))
 	var aborted int32
 	op.call(ifileOperationAnyAborted, uintptr(unsafe.Pointer(&aborted)))
+	// 失敗しても、PostDeleteItem でごみ箱の中のパスを得ていれば一緒に返す。結果は §12.1 の規則で、呼び出しの後の状態から決める。
+	failAfter := func(kind Kind, err error) (string, error) {
+		_, oe := fail(kind, err)
+		return sink.trashed, oe
+	}
 	switch {
 	case sink.notRecycled:
 		return fail(KindTrashUnavailable, nil) // PreDeleteItem で中止した。項目は残る（V18）
 	case sink.nuked:
-		// ごみ箱に入らず完全に削除された（最大サイズを超えた項目。V18）。Done にしない（§12.2 の手順 5、I5）。
+		// ごみ箱に入らず完全に削除されたとみられる（最大サイズを超えた項目。V18）。Done にしない（§12.2 の手順 5、I5）。
 		return fail(KindTrashUnavailable, nil)
 	case hresultFailed(perform):
 		err := hresultErr(perform)
-		return fail(classify(err, classifyOpts{}), err)
+		return failAfter(classify(err, classifyOpts{}), err)
 	case aborted != 0 || !sink.posted:
-		return fail(KindUnknown, hresultErr(eAbort))
+		return failAfter(KindUnknown, hresultErr(eAbort))
 	case sink.failedHR != 0:
 		err := hresultErr(sink.failedHR)
-		return fail(classify(err, classifyOpts{}), err)
+		return failAfter(classify(err, classifyOpts{}), err)
 	}
 	return sink.trashed, nil
 }
