@@ -68,6 +68,12 @@ const (
 // comObj は COM のオブジェクト（先頭が vtable へのポインタ）。
 type comObj struct{ vtbl *[32]uintptr }
 
+// call は、COM のメソッド method を呼ぶ。args には uintptr にしたポインタを渡してよい。
+// go:uintptrescapes により、それらが指すものはヒープに置かれ、呼び出しの間は保たれる（syscall.SyscallN を直接呼ぶ場合と同じ扱い）。
+// これがないと、スタックに置かれたもの（進捗通知の受け取り口など）を COM が使っている間に、
+// Go のコールバックでゴルーチンのスタックが伸びて移り、COM が古い場所を指し続ける。
+//
+//go:uintptrescapes
 func (o *comObj) call(method int, args ...uintptr) uintptr {
 	r, _, _ := syscall.SyscallN(o.vtbl[method], append([]uintptr{uintptr(unsafe.Pointer(o))}, args...)...)
 	return r
