@@ -177,6 +177,8 @@ func kindText(k fsops.Kind) string {
 		return "キャンセルしました"
 	case fsops.KindMetadata:
 		return "更新日時などの情報を保持できませんでした（データは無事です）"
+	case fsops.KindFileTooLarge:
+		return "コピー先のファイルシステムには大きすぎるファイルです（FAT32 は 4 GB 未満まで）"
 	}
 	return "原因不明のエラーです"
 }
