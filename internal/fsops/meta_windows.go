@@ -74,7 +74,8 @@ func setMetaIn(d *secDir, name string, want fileID, m srcMeta, isDir bool, hooks
 	}
 	// 共有モードに FILE_SHARE_DELETE を含めない。開いている間は名前の変更・削除ができないので、照合した後に
 	// パスで書く Zone.Identifier も、照合したファイルに書かれる（名前をリンクへ置き換えられない。I4）。
-	h, err := windows.CreateFile(s16, windows.FILE_READ_ATTRIBUTES|windows.FILE_WRITE_ATTRIBUTES,
+	// 属性だけのアクセス権で開いたハンドルは共有モードの検査の対象にならないので、FILE_READ_DATA（フォルダでは FILE_LIST_DIRECTORY）も要求する。
+	h, err := windows.CreateFile(s16, windows.FILE_READ_DATA|windows.FILE_READ_ATTRIBUTES|windows.FILE_WRITE_ATTRIBUTES,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil,
 		windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
 	if err != nil {
