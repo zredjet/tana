@@ -121,3 +121,13 @@ func TestTrash(t *testing.T) {
 		t.Errorf("final progress = %+v, want %d files and %d bytes", last, plan.TotalFiles(), plan.TotalBytes())
 	}
 }
+
+// noRealTrash は、ごみ箱へ移す呼び出し（trashSys）を、呼ばれたらテストを失敗させるものに置き換えるフックを返す。
+// ごみ箱が使えないことを確かめるテストが、防御が壊れたときに本物のごみ箱を呼ばないようにする
+// （ごみ箱のテストは FSOPS_TEST_TRASH=1 のときだけ本物を使う。§18.2）。事前確認・実行時の再確認は通常どおり行われる。
+func noRealTrash(t *testing.T) *testHooks {
+	return &testHooks{trashCall: func(src string, info EntryInfo) (string, error) {
+		t.Errorf("I5: the precheck did not stop %s; the real trash would have been called", src)
+		return "", &OpError{Op: "trash", Path: src, Kind: KindTrashUnavailable}
+	}}
+}

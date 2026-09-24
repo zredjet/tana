@@ -166,7 +166,7 @@ func TestTrashWindowsUnavailable(t *testing.T) {
 		before[p] = testfs.ReadFile(t, p)
 	}
 	plan := mustPlan(t, Request{Op: OpTrash, Sources: srcs})
-	res := execPlan(t, context.Background(), plan, ExecOptions{})
+	res := execPlan(t, context.Background(), plan, ExecOptions{hooks: noRealTrash(t)})
 	for i, it := range res.Items {
 		if KindOf(plan.Items()[i].Err) != KindTrashUnavailable || it.Outcome != OutcomeFailed || it.Err == nil || it.Err.Kind != KindTrashUnavailable {
 			t.Errorf("%s: Item.Err %v, result %+v; want KindTrashUnavailable", it.Src, plan.Items()[i].Err, it)
@@ -190,7 +190,7 @@ func TestTrashExecuteRecheck(t *testing.T) {
 	}
 	big := strings.Repeat("x", 2<<20)
 	testfs.WriteFile(t, p, big)
-	res := execPlan(t, context.Background(), plan, ExecOptions{})
+	res := execPlan(t, context.Background(), plan, ExecOptions{hooks: noRealTrash(t)})
 	if it := res.Items[0]; it.Outcome != OutcomeFailed || it.Err == nil || it.Err.Kind != KindTrashUnavailable {
 		t.Errorf("result = %+v, want Failed with KindTrashUnavailable", it)
 	}
