@@ -120,26 +120,35 @@ func newProgressSinkVtbl() *[progressSinkMethods]uintptr {
 	v[iunknownAddRef] = syscall.NewCallback(func(this *progressSink) uintptr { return 1 })
 	v[iunknownRelease] = syscall.NewCallback(func(this *progressSink) uintptr { return 1 })
 	v[progressSinkPreDeleteItem] = syscall.NewCallback(func(this *progressSink, flags uintptr, item *comObj) uintptr {
-		if flags&tsfDeleteRecycleIfPossible == 0 {
-			// ごみ箱に入らず完全削除になる。中止して項目を残す（I5）。
-			this.notRecycled = true
-			return eAbort
-		}
-		return sOK
+		return this.preDelete(uint32(flags))
 	})
 	v[progressSinkPostDeleteItem] = syscall.NewCallback(func(this *progressSink, flags uintptr, item *comObj, hr uintptr, newly *comObj) uintptr {
-		// フォルダの中身が 1 つずつ処理される場合は、中身ごとに呼ばれる。最初の通知（項目自体）のパスと、
-		// 最初の失敗を覚える（後の成功で失敗を上書きしない）。
-		if !this.posted {
-			this.trashed = newly.fileSysPath()
-		}
-		this.posted = true
-		if hresultFailed(uint32(hr)) && this.failedHR == 0 {
-			this.failedHR = uint32(hr)
-		}
+		this.postDelete(uint32(hr), newly.fileSysPath)
 		return sOK
 	})
 	return &v
+}
+
+// preDelete は PreDeleteItem の処理。ごみ箱に入らず完全削除になる項目（フラグに TSF_DELETE_RECYCLE_IF_POSSIBLE がない）は、
+// 中止して残す（§12.2 の手順 4、I5）。最大サイズを超えるフォルダの中身もこれで中止される（V19）。
+func (s *progressSink) preDelete(flags uint32) uintptr {
+	if flags&tsfDeleteRecycleIfPossible == 0 {
+		s.notRecycled = true
+		return eAbort
+	}
+	return sOK
+}
+
+// postDelete は PostDeleteItem の処理。フォルダの中身が 1 つずつ処理される場合は、中身ごとに呼ばれる。
+// 最初の通知（項目自体）のごみ箱の中のパスと、最初の失敗を覚える（後の成功で失敗を上書きしない）。trashed は最初の通知でだけ呼ぶ。
+func (s *progressSink) postDelete(hr uint32, trashed func() string) {
+	if !s.posted {
+		s.trashed = trashed()
+	}
+	s.posted = true
+	if hresultFailed(hr) && s.failedHR == 0 {
+		s.failedHR = hr
+	}
 }
 
 // hresultError は、分類できない HRESULT（§12.2）。

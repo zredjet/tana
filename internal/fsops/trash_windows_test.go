@@ -208,20 +208,82 @@ func TestTrashPreDeleteAbort(t *testing.T) {
 	d := testfs.EnvDir(t, testfs.TrashNukeEnv)
 	p := filepath.Join(d, "nuke.bin")
 	testfs.WriteFile(t, p, "keep me")
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestTrashPreDeleteAbortHelper$", "-test.v")
-	cmd.Env = append(os.Environ(), "FSOPS_TRASH_HELPER_PATH="+p)
-	out, err := cmd.CombinedOutput()
-	t.Logf("helper: err=%v timedOut=%v\n%s", err, ctx.Err() != nil, out)
-	if ctx.Err() != nil {
+	out, timedOut := runTrashHelper(t, p, time.Minute)
+	if timedOut {
 		t.Error("the helper timed out (a confirmation dialog may have been shown)")
 	}
-	if !strings.Contains(string(out), "HELPER-RESULT: "+KindTrashUnavailable.String()) {
+	if !strings.Contains(out, "HELPER-RESULT: "+KindTrashUnavailable.String()) {
 		t.Error("the item was not reported as KindTrashUnavailable")
 	}
 	if got := testfs.ReadFile(t, p); got != "keep me" {
 		t.Errorf("I5 violated: %q", got)
+	}
+}
+
+// runTrashHelper は、事前確認を飛ばして p をごみ箱へ入れる TestTrashPreDeleteAbortHelper を別のプロセスで実行する。
+// timeout を過ぎたら（確認ダイアログで止まった場合など）強制終了する。出力と、時間切れだったかを返す。
+func runTrashHelper(t *testing.T, p string, timeout time.Duration) (string, bool) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestTrashPreDeleteAbortHelper$", "-test.v")
+	cmd.Env = append(os.Environ(), "FSOPS_TRASH_HELPER_PATH="+p)
+	out, err := cmd.CombinedOutput()
+	timedOut := ctx.Err() != nil
+	t.Logf("helper: err=%v timedOut=%v\n%s", err, timedOut, out)
+	return string(out), timedOut
+}
+
+// TestTrashOverCapacityBypass は、事前確認を飛ばして（総点検の穴 7）ごみ箱の最大サイズを超える項目をごみ箱へ入れようとしても、
+// 黙って完全削除されないことを確かめる（I5、V18、V19）。
+//   - ファイル: PreDeleteItem では見分けられない（V18）ので、最後の防御は FOF_WANTNUKEWARNING の確認ダイアログ。ダイアログで止まる
+//     （時間切れで強制終了する）か、KindTrashUnavailable になり、どちらでもファイルは残る。
+//   - フォルダ: 中身ごとの PreDeleteItem で中止され（V19）、KindTrashUnavailable になり、中身も含めてすべて残る。
+func TestTrashOverCapacityBypass(t *testing.T) {
+	testfs.RequireTrash(t)
+	t.Parallel()
+	d := testfs.EnvDir(t, testfs.TrashSmallEnv) // 最大サイズ 1 MB
+	big := strings.Repeat("x", 2<<20)
+	testfs.Build(t, d, testfs.Tree{"big.bin": testfs.File(big), "dir/a.bin": testfs.File(strings.Repeat("a", 600000)), "dir/b.bin": testfs.File(strings.Repeat("b", 600000))})
+	for _, tc := range []struct {
+		name  string
+		files map[string]string
+	}{
+		{"big.bin", map[string]string{"big.bin": big}},
+		{"dir", map[string]string{"dir/a.bin": strings.Repeat("a", 600000), "dir/b.bin": strings.Repeat("b", 600000)}},
+	} {
+		out, timedOut := runTrashHelper(t, filepath.Join(d, tc.name), 30*time.Second)
+		switch {
+		case strings.Contains(out, "HELPER-RESULT: "+KindTrashUnavailable.String()):
+			t.Logf("%s: aborted (KindTrashUnavailable)", tc.name)
+		case timedOut:
+			t.Logf("%s: stopped at the confirmation dialog (FOF_WANTNUKEWARNING); the helper was killed", tc.name)
+		default:
+			t.Errorf("%s: neither aborted nor stopped at the confirmation dialog", tc.name)
+		}
+		wantFiles(t, d, tc.files) // I5: 黙って完全削除されていない
+	}
+}
+
+// TestProgressSink は、IFileOperation の進捗通知の処理（§12.2 の手順 4・5）を確かめる。
+// PreDeleteItem は、ごみ箱に入らない項目を中止する。PostDeleteItem は、フォルダの中身ごとに届いても、最初の通知のパスと最初の失敗を覚える。
+func TestProgressSink(t *testing.T) {
+	t.Parallel()
+	var s progressSink
+	if got := s.preDelete(0x282); got != sOK || s.notRecycled {
+		t.Errorf("preDelete(0x282) = %#x, notRecycled %v; want S_OK", got, s.notRecycled)
+	}
+	if got := s.preDelete(0x202); got != eAbort || !s.notRecycled {
+		t.Errorf("preDelete(0x202) = %#x, notRecycled %v; want E_ABORT", got, s.notRecycled)
+	}
+	var p progressSink
+	calls := 0
+	path := func(v string) func() string { return func() string { calls++; return v } }
+	p.postDelete(0x00270008, path(`C:\$Recycle.Bin\S\$Ritem`))
+	p.postDelete(0x80070020, path("child1"))
+	p.postDelete(sOK, path("child2"))
+	if p.trashed != `C:\$Recycle.Bin\S\$Ritem` || p.failedHR != 0x80070020 || !p.posted || calls != 1 {
+		t.Errorf("sink = %+v (path read %d times); want the first path and the first failure", p, calls)
 	}
 }
 
