@@ -40,6 +40,7 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 | 移動元の削除の失敗・キャンセル（`remove.go` `remover`） | TestMoveCrossVolumeLocked、TestMoveCrossVolumeCancelRemoval、TestRemoveRecordedCancel | CROSSVOL・Windows |
 | 読み取り専用の移動元（`secdir_windows.go` `removeSys` の属性の扱い） | TestMoveCrossVolumeReadOnly、TestRemoveRecordedReadOnly | CROSSVOL・共通 |
 | ボリューム違いのエラーからの切り替え（`move.go` `moveItem`） | TestMoveRenameFallback | 共通 |
+| 照合の後・削除の直前に書き換えられた移動元を消さない（Windows: `removeVerified` の削除するハンドルでの照合。Unix は受け入れる危険。SPEC §13.3） | TestRemoveRecordedFileEditedBeforeRemove | Windows |
 | AppleDouble の付属（`._名前`）は項目として記録・削除せず、移動元の `名前` と一緒に OS が消す（`appledouble_darwin.go` `dropAppleDouble`。§15 の `com.apple.quarantine` は移動先に残る） | TestAppleDoubleQuarantineOtherVolumes（move across volumes・delete） | macOS・EXFAT/FAT32 |
 
 ## I3 書きかけのファイルを最終名で残さない
@@ -62,7 +63,8 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 | リンクを辿らない列挙（`walk*.go` `readDir`） | TestReadDirNotADir、TestReadDirJunction | 共通・Windows |
 | 完全削除の走査で、開いたハンドルで確かめてから入る（`secdir_*.go` `openSecDir`、`remove.go` `enter`・`deleteContents`） | TestDeleteKeepsLinkTargets、TestDeleteDirReplacedByLinkBeforeEnter、TestDeleteTopLevelLinks、TestDeleteDirReplacedByFileBeforeRemove | 共通・Windows |
 | 移動元の削除の走査（`remove.go` `removeRecorded`） | TestRemoveRecordedDirReplacedByLink、TestMoveCrossVolumeLinks | 共通・CROSSVOL |
-| ハンドルを閉じた後のフォルダの削除（Windows: `secdir_windows.go` `removeDirVerified` の確かめたハンドルでの削除、Unix: `rmdir`・`unlinkat(AT_REMOVEDIR)`） | TestDeleteDirReplacedByLinkBeforeRemove、TestRemoveRecordedDirReplacedByLinkBeforeRemove、TestMoveMergeDirReplacedByLinkBeforeRemove | 共通 |
+| ハンドルを閉じた後のフォルダの削除（Windows: `secdir_windows.go` `removeVerified` の確かめたハンドルでの削除、Unix: `rmdir`・`unlinkat(AT_REMOVEDIR)`） | TestDeleteDirReplacedByLinkBeforeRemove、TestRemoveRecordedDirReplacedByLinkBeforeRemove、TestMoveMergeDirReplacedByLinkBeforeRemove | 共通 |
+| 確かめた後に置き換えられたファイルを消さない（Windows: `secdir_windows.go` `removeVerified`・`markDelete`。Unix の `unlink`・`unlinkat` は受け入れる危険。SPEC §13.2） | TestDeleteFileReplacedBeforeRemove、TestRemoveRecordedFileReplacedBeforeRemove（読み取り専用の属性も変えない） | Windows |
 | コピーでリンクに入らない（`copy.go` `copyEntry`・`copyDir`・`copySymlink`） | TestCopyTreeWithLinks、TestCopyDirReplacedByLink、TestCopyLinkSkip | 共通 |
 | コピーのメタデータの設定がリンクを辿らない（`meta_*.go` `setMetaIn` の O_NOFOLLOW・リパースポイントを開かない、fileID の確認） | TestCopyTreeWithLinks（リンク先の更新日時・権限が変わらない）、TestCopyQuarantine | 共通・macOS |
 | メタデータを fsops が作ったもの以外に設定しない（`setMetaIn` の fileID の照合）、読めなければ警告にする（`copy.go` `copyDir`） | TestMetaTempReplaced、TestMetaCreatedDirReplaced、TestMetaSourceDirUnreadable | 共通 |
@@ -119,7 +121,9 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 
 1. （解決済み）Windows の、別名になりうる名前と長いパスのコピー・移動。I6 の表の TestCopyWin32UnsafeNames などでテストした。
 2. （解決済み）ハンドルを閉じた後のパスでのフォルダの削除。Windows では確かめたハンドルで削除するように直した（§13.2）。I4 の表の TestDeleteDirReplacedByLinkBeforeRemove などでテストした。
-   ファイル（`DeleteFileW`）は、まだパスで削除している（判定の後に別のファイルへ置き換えられると、それを消しうる）。
+   ファイルも、`DeleteFileW` の代わりに確かめたハンドルで削除するように直した（TestDeleteFileReplacedBeforeRemove など。POSIX 形式の削除の扱いは V23）。
+   §13.3 では、削除するハンドルで大きさ・更新日時も照合し直す（TestRemoveRecordedFileEditedBeforeRemove）。
+   Unix の `unlink`・`unlinkat` は名前で消すので、確かめた後の置き換え・書き換えは防げない（開いたハンドルで削除する方法がない。SPEC §13.2 で受け入れる危険）。
 3. （解決済み。ごく短い隙間は残る）一時ファイルが最終名にする前に置き換えられた場合。リネームの直前に一時ファイルの fileID・大きさを確かめ、
    置き換えられていれば最終名にせず、置き換えたものも消さないように直した（§10.1 の手順 7・8）。I3 の表の TestCopyTempReplacedBeforeFinalRename でテストした。
    確かめてからリネームするまでの間の、ごく短い隙間は残る（リネームは名前で行うため）。

@@ -807,16 +807,20 @@ const (
 
   | 種類 | Unix | Windows |
   |---|---|---|
-  | ファイル・特殊なファイル・ファイル用のシンボリックリンク | `unlink`（§13.1 のハンドルで入ったフォルダの中では `unlinkat(fd, name, 0)`） | `DeleteFileW` |
+  | ファイル・特殊なファイル・ファイル用のシンボリックリンク | `unlink`（§13.1 のハンドルで入ったフォルダの中では `unlinkat(fd, name, 0)`） | 確かめたハンドルでの削除（下記） |
   | フォルダ | `rmdir`（同 `unlinkat(fd, name, AT_REMOVEDIR)`） | 確かめたハンドルでの削除（下記） |
   | フォルダ用のシンボリックリンク・ジャンクション（Windows） | — | 確かめたハンドルでの削除（下記） |
 
-  - Windows のフォルダ属性のあるエントリ（フォルダ、フォルダ用のリンク、ジャンクション）は、`RemoveDirectoryW` をパスで呼ぶ代わりに、
-    削除のアクセス権で `FILE_FLAG_OPEN_REPARSE_POINT` を付けて開き、fileID と種類（§14.1）が走査で得たものと一致することを確かめてから、
-    同じハンドルに `FileDispositionInfo` で削除の印を付ける。一致しなければ削除せず `KindSourceChanged`。
-    フォルダのハンドルを閉じてから削除するまでの間にジャンクションへ置き換えられても、置き換えたものを消さないため（2026-09-24 の CI で、
-    `RemoveDirectoryW` ではジャンクションが消えることを確認した）。
+  - Windows のエントリはすべて、`DeleteFileW`・`RemoveDirectoryW` をパスで呼ぶ代わりに、削除のアクセス権で `FILE_FLAG_OPEN_REPARSE_POINT` を付けて開き、
+    fileID・フォルダ属性・種類（§14.1）が走査で得たものと一致することを確かめてから、同じハンドルに削除の印を付ける。一致しなければ削除せず `KindSourceChanged`。
+    確かめた後（フォルダでは中身を処理してハンドルを閉じた後）に別のファイルやジャンクションへ置き換えられても、置き換えたものを消さないため
+    （2026-09-24 の CI で、`RemoveDirectoryW` ではジャンクションが、`DeleteFileW` では置き換えたファイルが消えることを確認した。総点検の穴 2）。
+    削除の印は、`DeleteFileW`・`RemoveDirectoryW` と同じ結果にするため、POSIX 形式の `FileDispositionInfoEx`（`FILE_DISPOSITION_DELETE | FILE_DISPOSITION_POSIX_SEMANTICS`。
+    ほかのハンドルが開いていても名前がすぐ消える）で付け、それを受け付けないボリューム（exFAT・FAT32 は `ERROR_INVALID_PARAMETER` を返し、何もしない）では
+    `FileDispositionInfo` で付ける（V23）。
     Unix の `rmdir`・`unlinkat(AT_REMOVEDIR)` は、シンボリックリンクに置き換えられていれば失敗するので、そのままでよい。
+    Unix の `unlink`・`unlinkat` は名前で消すので、確かめた後に別のファイルへ置き換えられると、それを消しうる。Unix には開いたハンドルで削除する方法がないため、
+    この危険は受け入れる。
 
   - Windows のフォルダ用・ファイル用の区別は、エントリの属性（`FILE_ATTRIBUTE_DIRECTORY`）で決める。`TypeSpecial` も同じ。
   - Windows では、パスは §8.2 の helper で `\\?\` 形式にしてから渡す。
@@ -829,7 +833,7 @@ const (
 - 種類に合わない方法での削除は、何も消さずに失敗する（V3）。判定の後にエントリが置き換えられた場合に誤った分類にしないため、
   削除が `ERROR_ACCESS_DENIED`・`ERROR_DIRECTORY`（Unix では `EISDIR`・`ENOTDIR`・`EPERM`）で失敗したら `Lstat` し直し、種類が変わっていれば `KindSourceChanged` とする。
 - 1 件失敗しても残りは続け、トップレベルの結果を `OutcomePartial` にする。
-- Windows の読み取り専用ファイルは削除に失敗する（`DeleteFileW` は `ERROR_ACCESS_DENIED` を返し、ファイルと属性は残る。V15 で確認済み）。属性を勝手に外さず `KindReadOnly` として報告する。
+- Windows の読み取り専用ファイルは削除に失敗する（`DeleteFileW` もハンドルでの削除も `ERROR_ACCESS_DENIED` を返し、ファイルと属性は残る。V15、V23 で確認済み）。属性を勝手に外さず `KindReadOnly` として報告する。
 - Windows のフォルダの読み取り専用属性は保護を意味しないため、フォルダに限り属性を外してから削除する（読み取り専用属性の付いたフォルダは、空でも `RemoveDirectoryW` が `ERROR_ACCESS_DENIED` で失敗する。V15）。
   属性は、上記の確かめたハンドルで外し、削除に失敗したら元に戻す。
 
@@ -841,9 +845,11 @@ const (
   照合するのは、ファイルとリンクでは fileID・種類・サイズ・更新日時、フォルダでは fileID と種類だけとする（フォルダの更新日時は中身を消すと変わるため）。
   一致しないもの（コピー後に変更・置き換えられたもの）は削除せず、`Details` に `KindSourceChanged` で報告する。
   コピー後・削除前に移動元のファイルが編集・保存された場合に、その変更を失わないため（I2）。
+  Windows では、§13.2 の削除するハンドルで、同じ項目（ファイルとリンクでは大きさ・更新日時も）をもう一度照合する（照合から削除までの間の書き換え・置き換えも消さない）。
+  Unix では、照合から `unlinkat` までの間の書き換え・置き換えは防げない（§13.2 と同じ理由で受け入れる）。
 - ファイルとリンクを先に消し、フォルダは深い順に消す。削除の方法は §13.2 と同じ。フォルダは空でなければ残す（コピー中に追加されたファイルがあると空にならないため、そのファイルは残る）。
 - フォルダへの入り方は §13.1 に従う。
-- Windows では、照合で一致したエントリに読み取り専用属性があれば、属性を外してから削除する。
+- Windows では、照合で一致したエントリに読み取り専用属性があれば、属性を外してから削除する（§13.2 の確かめたハンドルで外す）。
   移動先には属性を保持した複製があり、利用者は移動を指示しているため。削除に失敗したら属性を元に戻す。macOS のロック（`UF_IMMUTABLE`）は外さない。
 
 ---
@@ -1114,6 +1120,7 @@ hdiutil detach /Volumes/fsopstest
 | 容量 | 容量不足の後も、同じボリュームへの移動（`MethodRename`）の項目は続行される | CROSSVOL |
 | ごみ箱 | ごみ箱に入り、元の場所から消えている（Windows: `$I` ファイル、macOS: `TrashedPath`） | TRASH（V5、V10） |
 | ごみ箱 | ごみ箱へ移す操作が成功を返したのに元の場所に残っている（フックで呼び出しを差し替えて注入。本物のごみ箱には触れない）→ その項目は `OutcomeFailed`（`KindUnknown`）で元のまま、ほかは続行 | Windows・macOS（cgo） |
+| 削除 | Windows で、確かめた後・削除の直前（フックで注入）にファイルを別のファイルに置き換える・移動元のファイルを書き換える → 置き換えたもの・書き換えたものは消えず（属性も変わらず）、`KindSourceChanged` | Windows |
 | AppleDouble | macOS の exFAT・FAT32 の中のコピー・マージを含む移動・ボリュームをまたぐ移動・完全削除 → `com.apple.quarantine` が残り、付属（`._名前`）がファイルとして増えず、衝突の決定でスキップした項目は付属ごと残る。孤立した `._名前` は通常のファイルとして扱う | macOS（`FSOPS_PROBE_EXFAT_DIR`・`FSOPS_PROBE_FAT32_DIR`。V22） |
 | AppleDouble | macOS 以外と APFS では、`名前` と並ぶ `._名前` も通常のファイルとしてコピー・移動される | 共通 |
 | I5 | ごみ箱が「すぐに削除する」設定のボリューム、ごみ箱の最大サイズを超える項目 → `KindTrashUnavailable`、ファイルは残る | Windows（TRASH、`FSOPS_PROBE_TRASH_NUKE_DIR`・`FSOPS_PROBE_TRASH_SMALL_DIR`。V13、V18） |
@@ -1263,6 +1270,14 @@ hdiutil detach /Volumes/fsopstest
     Windows の exFAT・FAT32 では `MoveFileExW(0)` が使え（既存の名前には `ERROR_ALREADY_EXISTS`）、ハードリンクは `ERROR_INVALID_FUNCTION`。
     Linux の vfat では `RENAME_NOREPLACE`・`RENAME_EXCHANGE` が使え、ハードリンクは `EPERM`。どの環境でも、既存のファイルは上書きされなかった。
     → §8.4 の代わりの手段が使われるのは macOS の exFAT だけで、そこには代わりになる不可分な操作がない。§8.4 の残る危険は受け入れる。
+- **V23** Windows で、開いたハンドルでファイル・フォルダを削除する方法（`SetFileInformationByHandle` の `FileDispositionInfo`・`FileDispositionInfoEx`）が
+  NTFS・exFAT・FAT32 で使えるか、ほかのハンドルが開いているときに名前がすぐ消えるか（`DeleteFileW`・`RemoveDirectoryW` と比べる）、読み取り専用のファイルでどう失敗するか
+  （§13.2 のファイルの削除をハンドルで行うため。総点検の穴 2 の残り）。
+  - **結果（2026-09-24、windows-latest（build 26100）、Go 1.27.1）:** NTFS では `DeleteFileW`・`RemoveDirectoryW` と `FileDispositionInfoEx`（POSIX 形式）は、
+    ほかのハンドル（`FILE_SHARE_DELETE` つき）が開いていても名前がすぐ消えた。`FileDispositionInfo` では、そのハンドルが閉じるまで名前が削除待ちで残った
+    （`Lstat` が `ERROR_ACCESS_DENIED`）。exFAT・FAT32 では `FileDispositionInfoEx`（POSIX 形式）が `ERROR_INVALID_PARAMETER` で何もせず失敗し、
+    `DeleteFileW`・`RemoveDirectoryW` と `FileDispositionInfo` はどちらも削除待ちで残した。読み取り専用のファイルは、どの方法でも `ERROR_ACCESS_DENIED` で失敗し、残った。
+    → §13.2 は POSIX 形式で印を付け、`ERROR_INVALID_PARAMETER` なら `FileDispositionInfo` にする（`DeleteFileW`・`RemoveDirectoryW` と同じ結果になる）。
 - **V22** macOS の exFAT・FAT32 で、拡張属性を保存する AppleDouble ファイル（`._名前`）が、名前の変更・削除でどう扱われるか。そうしたボリュームを見分けられるか
   （総点検の穴 12。手元の Mac では、テストが作るファイルに OS が `com.apple.provenance` を付けるため `._名前` ができ、名前の一覧を比べるテストが失敗していた）。
   - **結果（2026-09-24、macos-latest（macOS 26）と手元の macOS 26、Go 1.27.1）:** exFAT・FAT32 とも同じ。`name` に拡張属性を付けると `._name` ができ、
