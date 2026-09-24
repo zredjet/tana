@@ -90,6 +90,7 @@ fsops のすべての操作は、正常終了・失敗・キャンセルのど�
     errors.go                 Kind・OpError・KindOf・共通の分類
     errors_windows.go         Windows のエラー番号の分類
     errors_unix.go            //go:build unix。errno の分類
+    eintr_unix.go             //go:build unix。EINTR でのやり直し（§4 のシステムコールのルール）
     path.go                   絶対パスの検査、祖先の判定（§8.3）
     path_windows.go           \\?\ 形式への変換（§8.2）、実パスの取得（GetFinalPathNameByHandle）
     path_unix.go              //go:build unix
@@ -141,6 +142,16 @@ fsops のすべての操作は、正常終了・失敗・キャンセルのど�
 - `golang.org/x/text` は、必要になるまで `go.mod` に入れない（I6 により、ファイル名の正規化には使わない）。
 - `deps_test.go` は、`GOOS`（windows・darwin・linux）・`GOARCH`（amd64・arm64）・`CGO_ENABLED`（0・1）のすべての組み合わせで `go list -deps -test` を実行し、どの組み合わせでも許可リスト外の依存（テストの依存を含む）があればテストを失敗させる。
 - 将来ほかのプロジェクトから使う必要が出たら、`internal/` の外へ移動するか別モジュールに切り出す。それまでは `internal/` に置く。
+
+システムコールのルール（Unix）:
+
+- `golang.org/x/sys/unix` の関数を直接呼ぶときは、`eintr_unix.go` の `ignoringEINTR`（値を返すものは `ignoringEINTR2`）で包み、`EINTR` が返れば同じ引数でやり直す。
+  Go のランタイムはシグナルハンドラを `SA_RESTART` で入れるが、SMB・NFS・FUSE などでは遅いシステムコールが `EINTR` で返ることがある。`os` パッケージは内部でやり直すが、`x/sys/unix` はやり直さない。
+  `EINTR` は何も実行されなかったことを表すので、やり直しは I1〜I7 に影響しない（排他リネーム・`O_EXCL`・`mkdirat` をやり直して `EEXIST` になれば、衝突・失敗として安全側に扱われる）。
+- ただし `unix.Close` は包まない（Linux では `EINTR` が返っても fd は閉じられており、やり直すと別の fd を閉じうる）。
+- 値を変換するだけの関数（`unix.TimeToTimespec`・`unix.ByteSliceToString` など）は包まなくてよい。
+- `os.File` を通す読み書き・列挙・同期は `os` がやり直すので、包まない。
+- `eintr_test.go` は、`internal/fsops` のテスト以外の Go ファイル（ビルド条件にかかわらずすべて）を構文解析し、包まれていない `unix` の関数の呼び出しと、包まれた `unix.Close` があればテストを失敗させる。
 
 ---
 
