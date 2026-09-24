@@ -132,9 +132,12 @@ func (cp *copier) changed(dir string) {
 // 移動では、同期できなければ移動元を消さない（I2）ので、失敗として記録する。
 func (cp *copier) syncChanged() {
 	for _, dir := range cp.dirOrder {
-		s, err := sysPath(dir)
+		err := cp.ex.opt.hooks.syncDir(dir)
 		if err == nil {
-			err = syncDirSys(s)
+			var s string
+			if s, err = sysPath(dir); err == nil {
+				err = syncDirSys(s)
+			}
 		}
 		if err == nil {
 			continue
@@ -733,7 +736,7 @@ func (cp *copier) copyDir(src, dst string, e dirEntry, pc *planned) (string, Out
 		childSrc, childDst := filepath.Join(src, ce.name), filepath.Join(dst, ce.name)
 		final, out, oe := cp.copyEntry(childSrc, childDst, ce, inner[ce.name])
 		cp.entry(childSrc, final, out, oe)
-		if out == OutcomeSkipped && oe == nil {
+		if cp.move && out == OutcomeSkipped && oe == nil {
 			rec.skipped = append(rec.skipped, ce.name) // 衝突の決定による Skip。移動元に残す（§11.2 の手順 2）
 		}
 		if cp.stopped() {

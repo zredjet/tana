@@ -136,13 +136,16 @@ func TestMoveMerge(t *testing.T) {
 		"src/m/sub/inner.txt": testfs.File("new inner"), "dest/m/sub/inner.txt": testfs.File("old inner"),
 		"src/m/sub/deep/d.txt": testfs.File("d"),
 		"src/m/gone/g.txt":     testfs.File("g"), "dest/m/gone/h.txt": testfs.File("h"),
-		"dest/m/keep.txt": testfs.File("keep"),
+		"src/m/sub/nest/skip2.txt": testfs.File("new skip2"), "dest/m/sub/nest/skip2.txt": testfs.File("old skip2"),
+		"src/m/sub/nest/n.txt": testfs.File("n"),
+		"dest/m/keep.txt":      testfs.File("keep"),
 	})
 	dest := filepath.Join(root, "dest")
 	plan := sameMove(t, root, "m")
 	for rel, d := range map[string]Decision{
 		"m": DecisionMerge, "m/over.txt": DecisionOverwrite, "m/skip.txt": DecisionSkip, "m/ren.txt": DecisionAutoRename,
 		"m/sub": DecisionMerge, "m/sub/inner.txt": DecisionOverwrite, "m/gone": DecisionMerge,
+		"m/sub/nest": DecisionMerge, "m/sub/nest/skip2.txt": DecisionSkip,
 	} {
 		decide(t, plan, filepath.Join(dest, filepath.FromSlash(rel)), d)
 	}
@@ -151,17 +154,25 @@ func TestMoveMerge(t *testing.T) {
 	if it.Outcome != OutcomeDone || it.Err != nil || res.Status != StatusCompleted {
 		t.Errorf("result = %+v, want Done", it)
 	}
-	if len(it.Details) != 1 || filepath.Base(it.Details[0].Src) != "skip.txt" || it.Details[0].Outcome != OutcomeSkipped || it.Details[0].Err != nil {
-		t.Errorf("details = %+v, want only skip.txt skipped by decision", it.Details)
+	var skipped []string
+	for _, d := range it.Details {
+		if d.Outcome != OutcomeSkipped || d.Err != nil {
+			t.Errorf("detail %+v, want only skips by decision", d)
+		}
+		skipped = append(skipped, filepath.Base(d.Src))
+	}
+	if !slices.Equal(skipped, []string{"skip.txt", "skip2.txt"}) {
+		t.Errorf("skipped = %+q, want [skip.txt skip2.txt]", skipped)
 	}
 	wantFiles(t, dest, map[string]string{
 		"m/new.txt": "new", "m/over.txt": "new over", "m/skip.txt": "old skip", "m/ren.txt": "old ren", "m/ren (2).txt": "new ren",
 		"m/sub/inner.txt": "new inner", "m/sub/deep/d.txt": "d", "m/gone/g.txt": "g", "m/gone/h.txt": "h", "m/keep.txt": "keep",
+		"m/sub/nest/skip2.txt": "old skip2", "m/sub/nest/n.txt": "n",
 	})
-	if got := testfs.ListNames(t, filepath.Join(root, "src", "m")); !slices.Equal(got, []string{"skip.txt"}) {
-		t.Errorf("left in src/m: %+q, want [skip.txt]", got)
+	if got := testfs.ListNames(t, filepath.Join(root, "src", "m")); !slices.Equal(got, []string{"skip.txt", "sub"}) {
+		t.Errorf("left in src/m: %+q, want [skip.txt sub]", got)
 	}
-	wantFiles(t, root, map[string]string{"src/m/skip.txt": "new skip"})
+	wantFiles(t, root, map[string]string{"src/m/skip.txt": "new skip", "src/m/sub/nest/skip2.txt": "new skip2"})
 }
 
 // TestMoveMergeDirReplacedByLink は、同一ボリュームのマージ移動の走査で、フォルダと判定した後・入り込む前にリンクへ置き換えても（フックで注入）、

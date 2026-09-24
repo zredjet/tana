@@ -26,6 +26,9 @@ type testHooks struct {
 	// beforeMoveRename は、同一ボリュームの移動（§11.1）でリネームする直前に呼ばれる。error を返すと、リネームせずにそのエラーで失敗させる
 	// （ボリューム違いのエラーの注入用。§11.1 の §11.2 への切り替えを確かめるため）。
 	beforeMoveRename func(src, dst string) error
+	// beforeSyncDir は、フォルダの同期（§10.5）の直前に呼ばれる。error を返すと、同期せずにそのエラーで失敗させる
+	// （Unix のフォルダの同期の失敗の注入用）。
+	beforeSyncDir func(dir string) error
 }
 
 func (h *testHooks) enterDir(path string) {
@@ -75,6 +78,13 @@ func (h *testHooks) removeSource(src string) {
 func (h *testHooks) moveRename(src, dst string) error {
 	if h != nil && h.beforeMoveRename != nil {
 		return h.beforeMoveRename(src, dst)
+	}
+	return nil
+}
+
+func (h *testHooks) syncDir(dir string) error {
+	if h != nil && h.beforeSyncDir != nil {
+		return h.beforeSyncDir(dir)
 	}
 	return nil
 }

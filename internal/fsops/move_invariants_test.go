@@ -414,3 +414,52 @@ func TestMoveOtherVolumes(t *testing.T) {
 		})
 	}
 }
+
+// TestMoveCrossVolumeDetailsOrder は、ボリュームをまたぐ移動の Details が、コピーの結果と移動元の削除の結果を合わせて名前順になることを確かめる（§5）。
+func TestMoveCrossVolumeDetailsOrder(t *testing.T) {
+	t.Parallel()
+	dest := testfs.CrossVolDir(t)
+	root := testfs.TempDir(t)
+	testfs.Build(t, root, testfs.Tree{"src/tree/a.txt": testfs.File("a"), "src/tree/m-x.txt": testfs.File("m"), "src/tree/sub/b.txt": testfs.File("b"), "src/tree/z.txt": testfs.File("new z")})
+	testfs.Build(t, dest, testfs.Tree{"tree/z.txt": testfs.File("old z"), "tree/m-x.txt": testfs.File("old m")})
+	plan := crossMove(t, root, dest, "tree")
+	decide(t, plan, filepath.Join(dest, "tree"), DecisionMerge)
+	decide(t, plan, filepath.Join(dest, "tree", "z.txt"), DecisionSkip)
+	decide(t, plan, filepath.Join(dest, "tree", "m-x.txt"), DecisionSkip)
+	h := &testHooks{beforeRemoveSource: func(string) {
+		testfs.WriteFile(t, filepath.Join(root, "src", "tree", "a.txt"), "edited")
+		testfs.WriteFile(t, filepath.Join(root, "src", "tree", "sub", "b.txt"), "edited")
+	}}
+	res := execPlan(t, context.Background(), plan, ExecOptions{hooks: h})
+	var got []string
+	for _, d := range res.Items[0].Details {
+		rel, _ := filepath.Rel(filepath.Join(root, "src", "tree"), d.Src)
+		got = append(got, filepath.ToSlash(rel))
+	}
+	if want := []string{"a.txt", "m-x.txt", "sub/b.txt", "z.txt"}; !slices.Equal(got, want) {
+		t.Errorf("Details = %+q, want %+q (name order)", got, want)
+	}
+}
+
+// TestMoveSyncFailureKeepsSource は、ボリュームをまたぐ移動で Unix のフォルダの同期に失敗したら（フックで注入）、
+// 移動元を削除しないことを確かめる（§11.2 の手順 1、I2）。§11.1 の切り替えを使い、同じボリュームの中で §11.2 の方式を実行する。
+func TestMoveSyncFailureKeepsSource(t *testing.T) {
+	t.Parallel()
+	root := testfs.TempDir(t)
+	moveTree(t, root)
+	testfs.MkdirAll(t, filepath.Join(root, "dest"))
+	before := testfs.Take(t, filepath.Join(root, "src", "tree"))
+	plan := mustPlan(t, Request{Op: OpMove, Sources: []string{filepath.Join(root, "src", "tree")}, DestDir: filepath.Join(root, "dest")})
+	injected := errors.New("injected sync failure")
+	h := &testHooks{
+		beforeMoveRename: func(src, dst string) error {
+			return &os.LinkError{Op: "rename", Old: src, New: dst, Err: crossDeviceErr()}
+		},
+		beforeSyncDir: func(string) error { return injected },
+	}
+	res := execPlan(t, context.Background(), plan, ExecOptions{hooks: h})
+	if it := res.Items[0]; it.Outcome != OutcomePartial || it.Err == nil || !errors.Is(it.Err, injected) {
+		t.Errorf("result = %+v, want Partial with the sync error", it)
+	}
+	checkUnchanged(t, before, filepath.Join(root, "src", "tree"))
+}
