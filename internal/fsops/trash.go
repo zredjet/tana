@@ -43,7 +43,7 @@ func (ex *executor) trashItem(it Item) ItemResult {
 		res.Outcome, res.Err = OutcomeSkipped, &OpError{Op: "trash", Path: it.Src, Kind: KindCanceled, Err: err}
 		return res
 	}
-	trashed, err := trashSys(it.Src, e.info)
+	trashed, err := ex.opt.hooks.trash(it.Src, e.info)
 	if err != nil {
 		oe, ok := err.(*OpError)
 		if !ok {

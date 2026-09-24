@@ -75,6 +75,7 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 | 計画時の事前確認（`trash.go` `trashPrecheck`、`trash_windows.go` `trashAvailable`・`recycleCapacity`・`hasWin32UnsafeComponent`） | TestNewPlanTrashPrecheck、TestTrashPrecheckWindows、TestTrashPrecheckCapacity | 共通・Windows・NUKE/SMALL |
 | 実行時にもう一度、今の大きさで確かめる（`trash.go` `trashItem`） | TestTrashExecuteRecheck | Windows・SMALL |
 | 計画時に使えない項目を、実行時に何もせず失敗にする（`execute.go` `run`、`trash.go` `trashItem`） | TestTrashWindowsUnavailable、TestTrashUnavailable | Windows・ubuntu・macOS（`CGO_ENABLED=0`） |
+| ごみ箱へ移す操作が成功を返しても、元の場所に残っていれば失敗にする（`trash.go` `trashItem`。ごみ箱に入ったと報告しない） | TestTrashReportedButLeft（`trashCall` フックで、成功を返して何もしない呼び出しに差し替える） | Windows・macOS（cgo） |
 | PreDeleteItem での中止（二つ目の防御。`trash_ifo_windows.go` `progressSink.preDelete`） | TestTrashPreDeleteAbort、TestProgressSink | TRASH・NUKE・Windows |
 | 事前確認が見落とした最大サイズ超過の最後の防御（`FOF_WANTNUKEWARNING` の確認ダイアログ） | TestTrashOverCapacityBypass | TRASH・SMALL |
 | フォルダの中身ごとの結果の扱い（`progressSink.postDelete`。最初のパスと最初の失敗） | TestProgressSink | Windows |
@@ -140,6 +141,7 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
    移動元に残った項目を Done と報告しないことを TestNFCOnExFATCopy などでテストした（macOS・EXFAT。結果は SPEC §8.5）。
 10. （解決済み）移動で名前をバイト単位でそのまま使うこと（I6、§18.4 の I6 の「移動」）。同一ボリュームの移動（リネーム・マージ）と
     ボリュームをまたぐ移動（新しいフォルダ・マージ・移動元の削除）を、日本語・絵文字・NFD の名前で TestMoveNamesSameVolume・TestMoveNamesCrossVolume でテストした。
-11. **ごみ箱へ移す操作が成功を返したのに元の場所に残っている場合を失敗にする経路**（`trash.go` `trashItem`）。起こす方法がなく、テストがない。
+11. （解決済み）ごみ箱へ移す操作が成功を返したのに元の場所に残っている場合を失敗にする経路（`trash.go` `trashItem`）。ごみ箱へ移す呼び出しを
+    テスト用フック（`trashCall`）で差し替え、TestTrashReportedButLeft で `OutcomeFailed`（`KindUnknown`）になり、項目に手を付けないことをテストした。
 12. **手元の macOS での FAT 系ボリュームのテスト**。手元の Mac では AppleDouble ファイル（`._名前`）が作られ、名前の一覧を比べる一部のテストが失敗する
     （TestRenameCaseOnlyOtherVolumes、TestRenameExclusiveOtherVolumes、TestMoveMergeOtherVolumes）。CI では作られず成功する。

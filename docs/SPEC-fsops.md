@@ -1104,6 +1104,7 @@ hdiutil detach /Volumes/fsopstest
 | 容量 | 書き込み中の容量不足 → `KindNoSpace`、残りは Skipped | CROSSVOL（他のテストと並行実行しない） |
 | 容量 | 容量不足の後も、同じボリュームへの移動（`MethodRename`）の項目は続行される | CROSSVOL |
 | ごみ箱 | ごみ箱に入り、元の場所から消えている（Windows: `$I` ファイル、macOS: `TrashedPath`） | TRASH（V5、V10） |
+| ごみ箱 | ごみ箱へ移す操作が成功を返したのに元の場所に残っている（フックで呼び出しを差し替えて注入。本物のごみ箱には触れない）→ その項目は `OutcomeFailed`（`KindUnknown`）で元のまま、ほかは続行 | Windows・macOS（cgo） |
 | I5 | ごみ箱が「すぐに削除する」設定のボリューム、ごみ箱の最大サイズを超える項目 → `KindTrashUnavailable`、ファイルは残る | Windows（TRASH、`FSOPS_PROBE_TRASH_NUKE_DIR`・`FSOPS_PROBE_TRASH_SMALL_DIR`。V13、V18） |
 | I5 | 260 文字以上のパスでごみ箱 → `KindTrashUnavailable`、ファイルは残る | Windows（TRASH。V4） |
 | I1 | 排他リネームの代わりの手段（§8.4）: macOS の exFAT へのコピー・移動・`Rename` ができ、既存のファイルは上書きされない | macOS（`FSOPS_PROBE_EXFAT_DIR`。V12） |

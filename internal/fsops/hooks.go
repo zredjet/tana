@@ -37,6 +37,9 @@ type testHooks struct {
 	beforeOpenDest func(dst string)
 	// beforeDirMeta は、コピーで作ったフォルダのメタデータ（§15）を設定する直前に、そのパスで呼ばれる（フォルダの置き換えの注入用。総点検の穴 6）。
 	beforeDirMeta func(dst string)
+	// trashCall は、ごみ箱へ移す呼び出し（§12.2〜§12.4 の trashSys）の代わりに呼ばれる。ごみ箱へ移す操作が成功を返したのに
+	// 元の場所に残っている場合（§12.1）の注入用で、本物のごみ箱には触れない（総点検の穴 11）。
+	trashCall func(src string, info EntryInfo) (string, error)
 	// dirMetaFault は、コピー元のフォルダのメタデータを読む直前に呼ばれる。error を返すと、読めなかったものとして扱う（総点検の穴 6）。
 	dirMetaFault func(src string) error
 }
@@ -118,4 +121,11 @@ func (h *testHooks) dirMetaRead(src string) error {
 		return h.dirMetaFault(src)
 	}
 	return nil
+}
+
+func (h *testHooks) trash(src string, info EntryInfo) (string, error) {
+	if h != nil && h.trashCall != nil {
+		return h.trashCall(src, info)
+	}
+	return trashSys(src, info)
 }
