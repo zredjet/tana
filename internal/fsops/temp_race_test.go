@@ -100,7 +100,7 @@ func TestTempReplacedBeforeVerify(t *testing.T) {
 			plan := mustPlan(t, Request{Op: OpCopy, Sources: []string{src}, DestDir: dest})
 			var intruder string
 			h := &testHooks{beforeVerify: func(string) {
-				intruder = replaceTemp(t, dest)
+				intruder = replaceTempNewID(t, dest)
 				if tc.touchSource {
 					testfs.WriteFile(t, src, "changed source")
 				}
@@ -120,4 +120,24 @@ func TestTempReplacedBeforeVerify(t *testing.T) {
 			}
 		})
 	}
+}
+
+// replaceTempNewID は replaceTemp と同じく一時ファイルを別のファイル（"intruder"）に置き換えるが、新しいファイルを別名で作ってから
+// 名前を置き換えるので、fileID は必ず変わる（先に消すと、ext4 は番号を再利用しうる。V16）。
+func replaceTempNewID(t *testing.T, dir string) string {
+	t.Helper()
+	for _, name := range testfs.ListNames(t, dir) {
+		if strings.HasPrefix(name, ".fsops-") {
+			p := filepath.Join(dir, name)
+			other := filepath.Join(dir, "intruder.new")
+			testfs.WriteFile(t, other, "intruder")
+			if err := os.Rename(testfs.ExtendedPath(other), testfs.ExtendedPath(p)); err != nil {
+				t.Errorf("inject: %v", err)
+				return ""
+			}
+			return p
+		}
+	}
+	t.Error("inject: no temporary file")
+	return ""
 }
