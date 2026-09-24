@@ -144,8 +144,9 @@ jobs:
           sudo mount -o loop,uid=$(id -u),gid=$(id -g) "$RUNNER_TEMP/fsopsvfat.img" /mnt/fsopsvfat
           mount | grep fsopsvfat
           echo "FSOPS_PROBE_FAT32_DIR=/mnt/fsopsvfat" >> "$GITHUB_ENV"
-      # Linux の実装もテストで確かめる（総点検の穴 8）。ボリュームをまたぐテスト用の ext4 と、exFAT のイメージを loop マウントする。
-      - name: Mount ext4 and exFAT images
+      # Linux の実装もテストで確かめる（総点検の穴 8）。ボリュームをまたぐテスト用に ext4 のイメージを loop マウントする。
+      # exFAT は、ランナーのカーネルに exfat モジュールがなく、exfat-fuse でもマウントできなかったので使わない。
+      - name: Mount an ext4 image
         run: |
           truncate -s 64M "$RUNNER_TEMP/fsopstest.img"
           mkfs.ext4 -q "$RUNNER_TEMP/fsopstest.img"
@@ -153,19 +154,7 @@ jobs:
           sudo mount -o loop "$RUNNER_TEMP/fsopstest.img" /mnt/fsopstest
           sudo chown "$(id -u):$(id -g)" /mnt/fsopstest
           echo "FSOPS_CROSSVOL_DIR=/mnt/fsopstest" >> "$GITHUB_ENV"
-          truncate -s 64M "$RUNNER_TEMP/fsopsexfat.img"
-          command -v mkfs.exfat || sudo apt-get install -y exfatprogs
-          sudo mkfs.exfat "$RUNNER_TEMP/fsopsexfat.img"
-          sudo mkdir -p /mnt/fsopsexfat
-          # カーネルの exfat モジュールがなければ、FUSE 版（exfat-fuse）でマウントする。
-          if sudo modprobe exfat 2>/dev/null; then
-            sudo mount -o loop,uid=$(id -u),gid=$(id -g) "$RUNNER_TEMP/fsopsexfat.img" /mnt/fsopsexfat
-          else
-            sudo apt-get install -y exfat-fuse
-            sudo mount.exfat-fuse -o uid=$(id -u),gid=$(id -g),allow_other "$RUNNER_TEMP/fsopsexfat.img" /mnt/fsopsexfat
-          fi
-          echo "FSOPS_PROBE_EXFAT_DIR=/mnt/fsopsexfat" >> "$GITHUB_ENV"
-          mount | grep -E "fsopstest|fsopsexfat"
+          mount | grep fsopstest
       # TestCopyNoSpaceCrossVolume が別ボリュームを一杯にするので、パッケージを並行させない（-p 1。§18.4「容量」）。
       - run: go test -race -p 1 ./...
       # 要検証事項のプローブと、環境によって Skip しうるテストは、結果をログに残すため -v で実行する（SPEC §20）。
