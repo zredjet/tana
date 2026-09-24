@@ -32,6 +32,8 @@ const (
 	KindMetadata
 	KindFileTooLarge // コピー先のファイルシステムの、ファイルの大きさの上限を超える（§10.6）
 	KindMountPoint   // 別のボリュームがマウントされたフォルダ。削除のために中に入らない（§13.1）
+	KindVerifyFailed // コピーした内容が元と一致しない（§10.4）
+	KindSyncFailed   // 同期（fsync）に失敗した。書いた内容が永続化されたか保証できない（§10.5）
 )
 
 func (k Kind) String() string {
@@ -78,6 +80,10 @@ func (k Kind) String() string {
 		return "KindFileTooLarge"
 	case KindMountPoint:
 		return "KindMountPoint"
+	case KindVerifyFailed:
+		return "KindVerifyFailed"
+	case KindSyncFailed:
+		return "KindSyncFailed"
 	}
 	return "Kind(" + strconv.Itoa(int(k)) + ")"
 }
@@ -179,4 +185,12 @@ func classify(err error, o classifyOpts) Kind {
 		return KindPermission
 	}
 	return KindUnknown
+}
+
+// syncFailed は、同期の失敗を分類した oe を KindSyncFailed にする。容量不足は §7.2 の打ち切りのため KindNoSpace のままにする（§10.5）。
+func syncFailed(oe *OpError) *OpError {
+	if oe.Kind != KindNoSpace {
+		oe.Kind = KindSyncFailed
+	}
+	return oe
 }

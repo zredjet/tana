@@ -95,6 +95,9 @@ func TestCopyVerifyHash(t *testing.T) {
 			if it.Outcome != tc.want {
 				t.Errorf("result = %+v (%v), want %v", it, it.Err, tc.want)
 			}
+			if tc.want == OutcomeFailed && (it.Err == nil || it.Err.Kind != KindVerifyFailed) {
+				t.Errorf("err = %v, want KindVerifyFailed (§10.4)", it.Err)
+			}
 			if tc.want == OutcomeFailed && testfs.Exists(t, filepath.Join(root, "dest", "f")) {
 				t.Error("a file that failed verification has its final name")
 			}

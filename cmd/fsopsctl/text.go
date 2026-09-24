@@ -179,6 +179,10 @@ func kindText(k fsops.Kind) string {
 		return "キャンセルしました"
 	case fsops.KindMetadata:
 		return "更新日時などの情報を保持できませんでした（データは無事です）"
+	case fsops.KindVerifyFailed:
+		return "コピーした内容が元と一致しませんでした"
+	case fsops.KindSyncFailed:
+		return "ディスクへの書き込みを確定できませんでした（同期に失敗しました）"
 	case fsops.KindMountPoint:
 		return "別のボリュームがマウントされたフォルダです（中は削除しません）"
 	case fsops.KindFileTooLarge:

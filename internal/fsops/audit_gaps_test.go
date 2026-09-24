@@ -197,8 +197,8 @@ func TestFileSyncFailure(t *testing.T) {
 		dest := filepath.Join(root, "dest")
 		plan := mustPlan(t, Request{Op: OpCopy, Sources: []string{filepath.Join(root, "src", "f.txt")}, DestDir: dest})
 		res := execPlan(t, context.Background(), plan, ExecOptions{Sync: SyncAlways, hooks: h})
-		if it := res.Items[0]; it.Outcome != OutcomeFailed || !errors.Is(it.Err, injected) {
-			t.Errorf("result = %+v, want Failed with the injected error", it)
+		if it := res.Items[0]; it.Outcome != OutcomeFailed || !errors.Is(it.Err, injected) || it.Err.Kind != KindSyncFailed {
+			t.Errorf("result = %+v, want Failed with the injected error (KindSyncFailed)", it)
 		}
 		if names := testfs.ListNames(t, dest); len(names) != 0 {
 			t.Errorf("dest has %v, want nothing", names)

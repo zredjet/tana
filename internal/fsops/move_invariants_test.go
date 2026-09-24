@@ -459,8 +459,23 @@ func TestMoveSyncFailureKeepsSource(t *testing.T) {
 		beforeSyncDir: func(string) error { return injected },
 	}
 	res := execPlan(t, context.Background(), plan, ExecOptions{hooks: h})
-	if it := res.Items[0]; it.Outcome != OutcomePartial || it.Err == nil || !errors.Is(it.Err, injected) {
-		t.Errorf("result = %+v, want Partial with the sync error", it)
+	if it := res.Items[0]; it.Outcome != OutcomePartial || it.Err == nil || !errors.Is(it.Err, injected) || it.Err.Kind != KindSyncFailed {
+		t.Errorf("result = %+v, want Partial with the sync error (KindSyncFailed)", it)
 	}
 	checkUnchanged(t, before, filepath.Join(root, "src", "tree"))
+}
+
+// TestCopyDirSyncFailureWarning は、SyncAlways のコピーで、フォルダの同期に失敗したら（フックで注入）、データは書き終えているので Done のまま
+// KindSyncFailed の警告にすることを確かめる（§10.5）。
+func TestCopyDirSyncFailureWarning(t *testing.T) {
+	t.Parallel()
+	root := testfs.TempDir(t)
+	testfs.Build(t, root, testfs.Tree{"src/f.txt": testfs.File("f"), "dest": testfs.Dir()})
+	plan := mustPlan(t, Request{Op: OpCopy, Sources: []string{filepath.Join(root, "src", "f.txt")}, DestDir: filepath.Join(root, "dest")})
+	injected := errors.New("injected sync failure")
+	res := execPlan(t, context.Background(), plan, ExecOptions{Sync: SyncAlways, hooks: &testHooks{beforeSyncDir: func(string) error { return injected }}})
+	it := res.Items[0]
+	if it.Outcome != OutcomeDone || len(it.Warnings) != 1 || it.Warnings[0].Kind != KindSyncFailed || !errors.Is(it.Warnings[0], injected) {
+		t.Errorf("result = %+v (warnings %v), want Done with a KindSyncFailed warning", it, it.Warnings)
+	}
 }

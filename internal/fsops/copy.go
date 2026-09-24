@@ -137,7 +137,7 @@ func (cp *copier) syncDir(d *secDir) {
 	if err == nil {
 		return
 	}
-	oe := &OpError{Op: "sync", Path: d.path, Kind: classify(err, classifyOpts{}), Err: withUserPaths(err, d.path, "")}
+	oe := syncFailed(&OpError{Op: "sync", Path: d.path, Kind: classify(err, classifyOpts{}), Err: withUserPaths(err, d.path, "")})
 	if cp.move {
 		if cp.firstErr == nil {
 			cp.firstErr = oe
@@ -627,10 +627,10 @@ func (cp *copier) writeTemp(src, dst string, e dirEntry, dd *secDir) (tempFile, 
 	}
 	if cp.sync() {
 		if err := cp.ex.opt.hooks.syncFile(tmp); err != nil {
-			return tempFile{}, srcMeta{}, nil, fail(err)
+			return tempFile{}, srcMeta{}, nil, syncFailed(fail(err))
 		}
 		if err := out.Sync(); err != nil {
-			return tempFile{}, srcMeta{}, nil, fail(withUserPaths(err, tmp, ""))
+			return tempFile{}, srcMeta{}, nil, syncFailed(fail(withUserPaths(err, tmp, "")))
 		}
 	}
 	fi, err := out.Stat()
@@ -649,7 +649,7 @@ func (cp *copier) writeTemp(src, dst string, e dirEntry, dd *secDir) (tempFile, 
 		return tempFile{}, srcMeta{}, nil, fail(withUserPaths(err, tmp, ""))
 	}
 	if fi.Size() != written {
-		return tempFile{}, srcMeta{}, nil, &OpError{Op: "verify", Path: src, Dest: dst, Kind: KindUnknown} // §10.4: 一時ファイルの大きさ
+		return tempFile{}, srcMeta{}, nil, &OpError{Op: "verify", Path: src, Dest: dst, Kind: KindVerifyFailed} // §10.4: 一時ファイルの大きさ
 	}
 	cp.ex.opt.hooks.verify(tmp)
 	tf := tempFile{dir: dd, name: tmpName, path: tmp, id: tmpID, size: written}
@@ -720,7 +720,7 @@ func (cp *copier) verify(src, dst string, tmp tempFile, e dirEntry, m srcMeta, s
 		}
 	}
 	if !bytes.Equal(h.Sum(nil), sum.Sum(nil)) {
-		return &OpError{Op: "verify", Path: src, Dest: dst, Kind: KindUnknown}
+		return &OpError{Op: "verify", Path: src, Dest: dst, Kind: KindVerifyFailed}
 	}
 	return nil
 }
