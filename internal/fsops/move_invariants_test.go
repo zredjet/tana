@@ -138,7 +138,8 @@ func TestMoveCrossVolumeCancel(t *testing.T) {
 	noTempFiles(t, dest)
 }
 
-// TestMoveCrossVolumeAddedFile は、コピーの後・移動元の削除の前に移動元へ追加したファイルが消えないことを確かめる（§18.4 の I2）。
+// TestMoveCrossVolumeAddedFile は、コピーの後・移動元の削除の前に移動元へ追加したファイルが消えず、
+// そのファイル自体が Details で報告されることを確かめる（§18.4 の I2、§11.2 の手順 4）。
 func TestMoveCrossVolumeAddedFile(t *testing.T) {
 	t.Parallel()
 	dest := testfs.CrossVolDir(t)
@@ -149,8 +150,8 @@ func TestMoveCrossVolumeAddedFile(t *testing.T) {
 	h := &testHooks{beforeRemoveSource: func(string) { testfs.WriteFile(t, added, "added during the move") }}
 	res := execPlan(t, context.Background(), plan, ExecOptions{hooks: h})
 	it := res.Items[0]
-	if it.Outcome != OutcomeCopiedSourceKept || !keptInDetails(it, filepath.Join(root, "src", "tree", "sub"), KindNotEmpty) {
-		t.Errorf("result = %+v, want CopiedSourceKept with sub kept by KindNotEmpty", it)
+	if it.Outcome != OutcomeCopiedSourceKept || !keptInDetails(it, added, KindSourceChanged) {
+		t.Errorf("result = %+v, want CopiedSourceKept with added.txt kept by KindSourceChanged (it is not in the destination)", it)
 	}
 	if got := testfs.ReadFile(t, added); got != "added during the move" {
 		t.Errorf("I2 violated: added.txt = %q", got)

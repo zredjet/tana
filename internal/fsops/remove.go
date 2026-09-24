@@ -194,16 +194,22 @@ func deleteItem(lr *lockRetrier, it Item, onRemoved func(string, EntryInfo)) Ite
 		res.Outcome, res.Err = OutcomeFailed, &OpError{Op: "remove", Path: it.Src, Kind: KindSourceChanged}
 		return res
 	}
+	// 確かめた後にトップレベルの項目が消えていた（別の場所へ移されたなど）ら、何も削除していないので失敗にする（§7.3）。
+	gone := func() { r.fail(it.Src, &OpError{Op: "remove", Path: it.Src, Kind: KindNotFound}) }
 	if e.info.Type == TypeDir {
-		if d, _ := r.enter(nil, it.Src, filepath.Base(it.Src), e.id); d != nil {
+		d, vanished := r.enter(nil, it.Src, filepath.Base(it.Src), e.id)
+		switch {
+		case vanished:
+			gone()
+		case d != nil:
 			ok := r.deleteContents(d)
 			d.close()
 			if ok {
 				r.removeTopEntry(it.Src, e)
 			}
 		}
-	} else {
-		r.removeTopEntry(it.Src, e)
+	} else if r.removeTopEntry(it.Src, e) && !r.removedAny {
+		gone() // 削除する前に消えていた
 	}
 	res.Details = r.details
 	switch {
@@ -294,7 +300,7 @@ func removeRecorded(lr *lockRetrier, path string, rec recordEntry, onRemoved fun
 		r.fail(path, &OpError{Op: "remove", Path: path, Kind: KindSourceChanged})
 	case rec.info.Type == TypeDir:
 		if d, _ := r.enter(nil, path, filepath.Base(path), rec.id); d != nil {
-			ok, kept := r.removeRecordedContents(d, rec.children)
+			ok, kept := r.removeRecordedContents(d, rec.children, rec.skipped)
 			if ok && !r.canceled && onlyNames(d, append(kept, rec.skipped...)) {
 				out.keptBySkip = true
 				ok = false
@@ -311,11 +317,38 @@ func removeRecorded(lr *lockRetrier, path string, rec recordEntry, onRemoved fun
 	return out
 }
 
+// reportAdded は、開いたフォルダ d の中の、記録 recs にも衝突の決定による Skip（skipped）にもないエントリを、
+// コピーの後に追加されたもの（移動先にはない）として Details に KindSourceChanged で報告する（§11.2 の手順 4、§13.3）。
+// 報告したものがあれば真。列挙できなければ何もしない（フォルダの削除の失敗として報告される）。
+func (r *remover) reportAdded(d *secDir, recs []recordEntry, skipped []string) bool {
+	entries, err := d.list()
+	if err != nil {
+		return false
+	}
+	added := false
+	for _, e := range entries {
+		if slices.ContainsFunc(recs, func(rec recordEntry) bool { return rec.name == e.name }) || slices.Contains(skipped, e.name) {
+			continue
+		}
+		path := filepath.Join(d.path, e.name)
+		r.fail(path, &OpError{Op: "remove", Path: path, Kind: KindSourceChanged})
+		added = true
+	}
+	return added
+}
+
 // removeRecordedContents は、開いたフォルダ d の中の、記録 recs のエントリだけを削除する。
 // 記録したものをすべて削除できた（衝突の決定による Skip で残したものだけのために残したフォルダを除く）なら all が真。
 // kept は、衝突の決定による Skip で残したものだけのために残したフォルダの名前。
-func (r *remover) removeRecordedContents(d *secDir, recs []recordEntry) (all bool, kept []string) {
+// skipped は、このフォルダの中の、衝突の決定による Skip でコピーしなかったエントリの名前（記録にないが、報告しない）。
+func (r *remover) removeRecordedContents(d *secDir, recs []recordEntry, skipped []string) (all bool, kept []string) {
 	all = true
+	defer func() {
+		// 記録の後に追加されたエントリは消さずに残るので、1 件ずつ報告する（§11.2 の手順 4）。そのフォルダは空にならない。
+		if !r.canceled && r.reportAdded(d, recs, skipped) {
+			all = false
+		}
+	}()
 	for _, rec := range recs {
 		if r.checkCanceled() {
 			return false, kept
@@ -345,7 +378,7 @@ func (r *remover) removeRecordedContents(d *secDir, recs []recordEntry) (all boo
 				all = false
 				continue
 			}
-			ok, childKept := r.removeRecordedContents(cd, rec.children)
+			ok, childKept := r.removeRecordedContents(cd, rec.children, rec.skipped)
 			if ok && !r.canceled && onlyNames(cd, append(childKept, rec.skipped...)) {
 				cd.close()
 				kept = append(kept, rec.name)

@@ -215,3 +215,40 @@ func TestRemoveRecordedReadOnly(t *testing.T) {
 		t.Skip("covered on Windows and macOS")
 	}
 }
+
+// TestRemoveRecordedReportsAdded は、記録の後に移動元へ追加されたエントリ（移動先にはない）を、消さずに Details で 1 件ずつ報告することを
+// 確かめる（§11.2 の手順 4「残ったパスを Details で報告する」、§13.3）。同じフォルダの中で別のエントリが失敗した場合も報告する。
+// 衝突の決定による Skip で残したものは報告しない。
+func TestRemoveRecordedReportsAdded(t *testing.T) {
+	t.Parallel()
+	root := testfs.TempDir(t)
+	testfs.Build(t, root, testfs.Tree{
+		"src/a.txt":       testfs.File("a"),
+		"src/sub/c.txt":   testfs.File("c"),
+		"src/clean/d.txt": testfs.File("d"),
+		"src/skipped.txt": testfs.File("s"),
+	})
+	src := filepath.Join(root, "src")
+	rec := recordOf(t, src)
+	// skipped.txt は、衝突の決定による Skip でコピーしなかったものとして記録から外す。
+	rec.children = slices.DeleteFunc(rec.children, func(c recordEntry) bool { return c.name == "skipped.txt" })
+	rec.skipped = []string{"skipped.txt"}
+	testfs.WriteFile(t, filepath.Join(src, "new.txt"), "added at the top")
+	testfs.WriteFile(t, filepath.Join(src, "sub", "added.txt"), "added next to an edited file")
+	testfs.WriteFile(t, filepath.Join(src, "sub", "c.txt"), "c, edited after the copy")
+	testfs.WriteFile(t, filepath.Join(src, "clean", "added2.txt"), "added in a folder whose recorded entries were all removed")
+
+	out := removeRec(t, context.Background(), nil, src, rec)
+	for _, rel := range []string{"new.txt", "sub/added.txt", "clean/added2.txt", "sub/c.txt"} {
+		if !keptWith(out, filepath.Join(src, filepath.FromSlash(rel)), KindSourceChanged) {
+			t.Errorf("%s was not reported as kept with KindSourceChanged: %+v", rel, out.details)
+		}
+	}
+	if keptWith(out, filepath.Join(src, "skipped.txt"), KindSourceChanged) {
+		t.Errorf("skipped.txt (kept by a decision) was reported: %+v", out.details)
+	}
+	wantFiles(t, src, map[string]string{
+		"new.txt": "added at the top", "sub/added.txt": "added next to an edited file", "sub/c.txt": "c, edited after the copy",
+		"clean/added2.txt": "added in a folder whose recorded entries were all removed", "skipped.txt": "s",
+	})
+}
