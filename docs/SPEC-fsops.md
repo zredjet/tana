@@ -828,6 +828,14 @@ const (
 - fileID は、計画の走査では衝突先と §8.3 の判定に必要なものだけ取得する。実行時の走査では列挙で得たものを使う。
 - 入り込むのは、§14.1 で `TypeDir` と判定したエントリだけ。`TypeSymlink`、`TypeJunction`、`TypeSpecial` には入り込まない（I4）。
 - 名前順に処理する。
+- 削除（§13.2、§13.3）では、マウントポイント（別のボリュームがマウントされたフォルダ）には入らず、削除もしない。
+  そのエントリを `KindMountPoint` で失敗として報告する（中身は別のボリュームのもので、利用者が削除を指示したフォルダの一部ではないため）。
+  - Unix: フォルダの `Dev` が、それを含むフォルダの `Dev` と違えばマウントポイントとみなす。同じデバイスのバインドマウント（Linux）は見分けられない（受け入れる）。
+  - Windows: マウントされたフォルダはリパースポイント（`IO_REPARSE_TAG_MOUNT_POINT`。`TypeJunction`）なので、もともと入らない。
+  - トップレベルの項目がマウントポイントなら、`OpDelete` と `OpMove` の計画で `Item.Err` に `KindMountPoint` を入れ、実行時にも確かめる。
+  - 計画の走査（`OpDelete`）ではマウントポイントの中を数えず、`Warnings` に `KindMountPoint` を加える（削除の前に UI が示せるように）。
+  - コピー（ボリュームをまたぐ移動のコピーを含む）はマウントポイントの中も複製する（`cp -R` と同じ）。移動元の削除（§13.3）では入らないので、
+    移動元のマウントポイントは残り、`OutcomeCopiedSourceKept` になる。
 - 走査は、計画（§6.3）、コピー（§10.2）、移動（§11）、完全削除（§13.2）で使う。
 - 削除（§13.2、§13.3）と、同一ボリュームのマージ移動（§11.1）のために入り込むフォルダは、パスで `ReadDir` せず、開いたハンドルで確認してから列挙する。
   `Lstat` でフォルダと判定してから中に入るまでの間に、フォルダ（またはその途中の階層）がリンクに置き換えられても、リンク先に入り込まないようにするため（I4）。
@@ -1029,6 +1037,7 @@ const (
 	KindCanceled
 	KindMetadata
 	KindFileTooLarge     // コピー先のファイルシステムの、ファイルの大きさの上限を超える（§10.6）
+	KindMountPoint       // 別のボリュームがマウントされたフォルダ。削除のために中に入らない（§13.1）
 )
 
 type OpError struct {
@@ -1193,6 +1202,7 @@ hdiutil detach /Volumes/fsopstest
 | 容量 | 空き容量不足の見込みが `Warnings` に入る | CROSSVOL |
 | 容量 | 書き込み中の容量不足 → `KindNoSpace`、残りは Skipped | CROSSVOL（他のテストと並行実行しない） |
 | 容量 | FAT32 の上限（4 GiB − 1 バイト）を超えるファイル → 計画が `KindFileTooLarge` で警告し、実行はそのファイルだけを書かずに `KindFileTooLarge` で失敗にして残りを続ける。移動では移動元に残る。コピー中に上限を超えた容量不足も `KindFileTooLarge`（§10.6） | 共通（フックの上限）・FAT32（`FSOPS_PROBE_FAT32_DIR`。V24） |
+| I4 | 完全削除するフォルダの中のマウントポイント → 中に入らず、マウントされたボリュームの中身が残り、そのエントリが `KindMountPoint` で報告される。トップレベルのマウントポイントは計画で `KindMountPoint` | macOS（`hdiutil` でテストの中にイメージをマウントする） |
 | 容量 | 容量不足の後も、同じボリュームへの移動（`MethodRename`）の項目は続行される | CROSSVOL |
 | ごみ箱 | ごみ箱に入り、元の場所から消えている（Windows: `$I` ファイル、macOS: `TrashedPath`） | TRASH（V5、V10） |
 | ごみ箱 | ごみ箱へ移す呼び出しの報告と実際の状態が違う（成功を返したのに残っている、失敗を返したのにごみ箱に入った、消えたのにごみ箱の中の項目がない）→ §12.1 の規則どおり Failed・Done・TrashUnconfirmed。`TrashUnconfirmed` は `StatusCompletedWithErrors` | Windows・macOS（`trashCall` フックで呼び出しを差し替える。本物のごみ箱は使わない） |
