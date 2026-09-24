@@ -108,10 +108,12 @@ jobs:
       # TestCopyNoSpaceCrossVolume が別ボリュームを一杯にするので、パッケージを並行させない（-p 1。§18.4「容量」）。
       - run: go test -race -p 1 ./...
       # 要検証事項のプローブと、環境によって Skip しうるテストは、結果をログに残すため -v で実行する（SPEC §20）。
+      # テストが失敗しても、原因を調べられるようにプローブの結果を残す。
       - name: Probes (verbose)
+        if: ${{ !cancelled() }}
         run: |
           go test -count=1 -v ./internal/fsops/internal/probe/
-          go test -count=1 -v -run 'OtherVolumes|ReadOnly|NoSpace|MoveMethod|Warnings|TestDelete|TestRemoveRecorded|TestCopy|TestMove|TestTrash|NFCOnExFAT' ./internal/fsops/
+          go test -count=1 -v -run 'OtherVolumes|ReadOnly|NoSpace|MoveMethod|Warnings|TestDelete|TestRemoveRecorded|TestCopy|TestMove|TestTrash|NFCOnExFAT|AppleDouble' ./internal/fsops/
       - run: CGO_ENABLED=0 go vet ./...
       # cgo なしのビルドでは、ごみ箱が使えないこと（KindTrashUnavailable）を確かめる（§18.4 の I5、§19）。
       - run: CGO_ENABLED=0 go test -count=1 -v -run 'TestTrashUnavailable|TestNewPlanTrashPrecheck' ./internal/fsops/
