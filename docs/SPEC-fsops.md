@@ -404,6 +404,8 @@ const (
 
 - `OpCopy` と `MethodCopyThenRemove` では、書き込むバイト数とコピー先ボリュームの空き容量を比べ、足りなければ `Warnings` に `KindNoSpace` を加える。実行は妨げない。
 - 空き容量は、Windows では `GetDiskFreeSpaceEx`、Unix では `statfs` の `Bavail` × ブロックサイズ（macOS は `Bsize`、Linux は `Frsize`）で求める。
+- 同じく、コピー先のファイルシステムのファイルの大きさの上限（§10.6）を超えるファイルがあれば、そのファイルごとに `Warnings` に `KindFileTooLarge`
+  （`Path` はコピー元のファイル）を加える。実行は妨げない。上限は `DestDir` のファイルシステムで決める。
 
 ---
 
@@ -423,6 +425,7 @@ const (
 - 1 件が失敗しても、残りの項目の処理は続ける。
 - ただし容量不足（`KindNoSpace`）が起きたら、その後の書き込みを伴う項目（`MethodCopy`・`MethodCopyThenRemove`）はすべて `OutcomeSkipped`（`KindNoSpace`）にする。
   書き込みを伴わない項目（`MethodRename`）は続ける。
+  ファイルの大きさの上限を超えた（`KindFileTooLarge`。§10.6）場合は、そのファイルだけを失敗にし、残りは続ける。
 - キャンセルされたら、処理中の項目を安全に中断し（§16）、残りを `OutcomeSkipped`（`KindCanceled`）にして `StatusCanceled` で返す。
 
 ### 7.3 計画後の変化
@@ -659,6 +662,21 @@ const (
     トップレベルの項目ごとに、移動元を消す前にまとめて行ってよい。
   - Windows: 同じフォルダを `FILE_FLAG_BACKUP_SEMANTICS` で書き込み可能に開いて `FlushFileBuffers` する。失敗しても処理は続け、警告にもしない。
 - コピーでは `SyncAlways` のときだけ、同じ手順で同期する（USB メモリなどで遅くなるため）。
+
+
+### 10.6 ファイルの大きさの上限
+
+- FAT 系のファイルシステムには、ファイルの大きさの上限（4 GiB − 1 バイト）がある。Windows はそれを超える書き込みを容量不足（`ERROR_DISK_FULL`）で
+  失敗させ、エラー番号では区別できない（V24）ので、コピー先のファイルシステムの種類と大きさで書く前に判断する。
+- 上限は、§13.1 の方法で開いて持っている書き込み先のフォルダから、ファイルシステムの種類を調べて決める。FAT 系なら 4 GiB − 1 バイト、それ以外は上限なしとする。
+  Windows は `GetVolumeInformationByHandleW` のファイルシステム名が `FAT`・`FAT32`、macOS は `fstatfs` の `f_fstypename` が `msdos`、
+  Linux は `fstatfs` の `f_type` が `MSDOS_SUPER_MAGIC`（vfat・msdos）。調べられなければ上限なしとする。
+- §10.1 の手順 1 で開いたコピー元の大きさが上限を超えていれば、一時ファイルを作らずに、そのファイルを `OutcomeFailed`（`KindFileTooLarge`）にする。
+  フォルダの中なら、そのエントリだけを失敗にして残りを続ける（フォルダは `OutcomePartial`）。ボリュームをまたぐ移動では移動元は残る（§11.2）。
+- コピー中にコピー元が大きくなって上限を超えた場合に備え、書き込み中の容量不足（§10.3）で、上限があり、書き込もうとした位置が上限を超えていれば、
+  `KindNoSpace` ではなく `KindFileTooLarge` にする（§7.2 の打ち切りをしない）。
+- Unix の `EFBIG` と Windows の `ERROR_FILE_TOO_LARGE` は `KindFileTooLarge` にする（§17）。
+- テストでは、`hooks` の `fileSizeLimit` で実行時の上限を置き換えて、小さなファイルで確かめる。
 
 ---
 
@@ -984,6 +1002,7 @@ const (
 	KindInvalidRequest
 	KindCanceled
 	KindMetadata
+	KindFileTooLarge     // コピー先のファイルシステムの、ファイルの大きさの上限を超える（§10.6）
 )
 
 type OpError struct {
@@ -1011,6 +1030,7 @@ type OpError struct {
 | Locked | `ERROR_SHARING_VIOLATION`、`ERROR_LOCK_VIOLATION` | `EBUSY` |
 | ReadOnly | `ERROR_ACCESS_DENIED` かつ読み取り専用属性、`ERROR_WRITE_PROTECT` | `EROFS`、`EPERM` かつ `UF_IMMUTABLE` |
 | NoSpace | `ERROR_DISK_FULL`、`ERROR_HANDLE_DISK_FULL` | `ENOSPC`、`EDQUOT` |
+| FileTooLarge | `ERROR_FILE_TOO_LARGE`（Windows は FAT32 の上限でも `ERROR_DISK_FULL` を返すので、§10.6 で書く前に判断する） | `EFBIG` |
 | NotEmpty | `ERROR_DIR_NOT_EMPTY` | `ENOTEMPTY` |
 | CrossDevice | `ERROR_NOT_SAME_DEVICE` | `EXDEV` |
 | LinkUnsupported | `ERROR_PRIVILEGE_NOT_HELD`、`ERROR_INVALID_FUNCTION`（リンク作成時） | `EPERM`（リンク作成時。読み取り専用でない場合） |
@@ -1146,6 +1166,7 @@ hdiutil detach /Volumes/fsopstest
 | 検証 | コピー中にコピー元が変更された → `KindSourceChanged`、一時ファイルなし | 共通 |
 | 容量 | 空き容量不足の見込みが `Warnings` に入る | CROSSVOL |
 | 容量 | 書き込み中の容量不足 → `KindNoSpace`、残りは Skipped | CROSSVOL（他のテストと並行実行しない） |
+| 容量 | FAT32 の上限（4 GiB − 1 バイト）を超えるファイル → 計画が `KindFileTooLarge` で警告し、実行はそのファイルだけを書かずに `KindFileTooLarge` で失敗にして残りを続ける。移動では移動元に残る。コピー中に上限を超えた容量不足も `KindFileTooLarge`（§10.6） | 共通（フックの上限）・FAT32（`FSOPS_PROBE_FAT32_DIR`。V24） |
 | 容量 | 容量不足の後も、同じボリュームへの移動（`MethodRename`）の項目は続行される | CROSSVOL |
 | ごみ箱 | ごみ箱に入り、元の場所から消えている（Windows: `$I` ファイル、macOS: `TrashedPath`） | TRASH（V5、V10） |
 | ごみ箱 | ごみ箱へ移す操作が成功を返したのに元の場所に残っている（フックで呼び出しを差し替えて注入。本物のごみ箱には触れない）→ その項目は `OutcomeFailed`（`KindUnknown`）で元のまま、ほかは続行 | Windows・macOS（cgo） |
@@ -1338,6 +1359,7 @@ hdiutil detach /Volumes/fsopstest
     1 MiB ずつ上限ちょうど（4294967295 バイト）まで順に書いた後の 1 バイトの書き込みも、`ERROR_DISK_FULL`（112）で失敗した（大きさは上限のまま）。
     → Windows では、上限を超えたことをエラー番号で容量不足と区別できない。今の分類では `KindNoSpace` になり、§7.2 により残りの書き込みを伴う項目がすべて Skipped になる。
     コピー先のファイルシステムの種類とファイルの大きさで、書く前に判断する必要がある。
+  - → `KindFileTooLarge` を設け、コピー先のファイルシステムの種類とファイルの大きさで、計画時に警告し、実行時は書く前に失敗にする（§6.4、§10.6、§17）。
 
 ---
 
