@@ -34,6 +34,7 @@ const (
 	KindMountPoint   // 別のボリュームがマウントされたフォルダ。削除のために中に入らない（§13.1）
 	KindVerifyFailed // コピーした内容が元と一致しない（§10.4）
 	KindSyncFailed   // 同期（fsync）に失敗した。書いた内容が永続化されたか保証できない（§10.5）
+	KindLinkSkipped  // LinkSkip の方針でリンクを複製しなかった（エラーではない。§14.2）
 )
 
 func (k Kind) String() string {
@@ -84,6 +85,8 @@ func (k Kind) String() string {
 		return "KindVerifyFailed"
 	case KindSyncFailed:
 		return "KindSyncFailed"
+	case KindLinkSkipped:
+		return "KindLinkSkipped"
 	}
 	return "Kind(" + strconv.Itoa(int(k)) + ")"
 }

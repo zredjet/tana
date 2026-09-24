@@ -132,7 +132,7 @@ func status(items []ItemResult, canceled bool) Status {
 		case OutcomeFailed, OutcomePartial, OutcomeCopiedSourceKept, OutcomeTrashUnconfirmed:
 			return StatusCompletedWithErrors
 		case OutcomeSkipped:
-			if it.Err != nil {
+			if it.Err != nil && it.Err.Kind != KindLinkSkipped { // LinkSkip は利用者が選んだ方針（§14.2）
 				return StatusCompletedWithErrors
 			}
 		}

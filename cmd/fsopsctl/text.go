@@ -179,6 +179,8 @@ func kindText(k fsops.Kind) string {
 		return "キャンセルしました"
 	case fsops.KindMetadata:
 		return "更新日時などの情報を保持できませんでした（データは無事です）"
+	case fsops.KindLinkSkipped:
+		return "リンクは設定によりコピーしませんでした"
 	case fsops.KindVerifyFailed:
 		return "コピーした内容が元と一致しませんでした"
 	case fsops.KindSyncFailed:

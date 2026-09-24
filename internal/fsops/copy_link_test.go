@@ -101,7 +101,8 @@ func TestCopyTreeWithLinks(t *testing.T) {
 	noTempFiles(t, root)
 }
 
-// TestCopyLinkSkip は、LinkSkip ではシンボリックリンクを複製せず Skipped（KindLinkUnsupported）にすることを確かめる（§14.2）。
+// TestCopyLinkSkip は、LinkSkip ではシンボリックリンクを複製せず Skipped（KindLinkSkipped）にし、利用者が選んだ方針なので
+// エラーとは扱わない（フォルダは Done、Status は Completed）ことを確かめる（§14.2）。
 func TestCopyLinkSkip(t *testing.T) {
 	t.Parallel()
 	root := testfs.TempDir(t)
@@ -112,11 +113,14 @@ func TestCopyLinkSkip(t *testing.T) {
 	})
 	plan := mustPlan(t, Request{Op: OpCopy, Sources: []string{filepath.Join(root, "src", "tree"), filepath.Join(root, "src", "top")}, DestDir: filepath.Join(root, "dest")})
 	res := execPlan(t, context.Background(), plan, ExecOptions{Links: LinkSkip})
-	if it := res.Items[0]; it.Outcome != OutcomePartial || len(it.Details) != 1 || it.Details[0].Err == nil || it.Details[0].Err.Kind != KindLinkUnsupported {
-		t.Errorf("tree = %+v, want Partial with the link skipped", it)
+	if it := res.Items[0]; it.Outcome != OutcomeDone || len(it.Details) != 1 || it.Details[0].Outcome != OutcomeSkipped || it.Details[0].Err == nil || it.Details[0].Err.Kind != KindLinkSkipped {
+		t.Errorf("tree = %+v, want Done with the link skipped (KindLinkSkipped) in Details", it)
 	}
-	if it := res.Items[1]; it.Outcome != OutcomeSkipped || it.Err == nil || it.Err.Kind != KindLinkUnsupported {
-		t.Errorf("top = %+v, want Skipped with KindLinkUnsupported", it)
+	if it := res.Items[1]; it.Outcome != OutcomeSkipped || it.Err == nil || it.Err.Kind != KindLinkSkipped {
+		t.Errorf("top = %+v, want Skipped with KindLinkSkipped", it)
+	}
+	if res.Status != StatusCompleted {
+		t.Errorf("status = %v, want Completed (skipping links was the user's choice)", res.Status)
 	}
 	for _, rel := range []string{"tree/link", "top"} {
 		if testfs.Exists(t, filepath.Join(root, "dest", filepath.FromSlash(rel))) {
@@ -235,5 +239,22 @@ func TestCopySymlinkToFATVolumes(t *testing.T) {
 			}
 			wantFiles(t, dest, map[string]string{"tree/a.txt": "a"})
 		})
+	}
+}
+
+// TestMoveLinkSkipKeepsSource は、ボリュームをまたぐ移動で LinkSkip によりリンクを複製しなかったら、移動元のリンクが残るので
+// フォルダを Partial（KindLinkSkipped）にし、移動元に手を付けないことを確かめる（§14.2、§11.2 の手順 2）。
+func TestMoveLinkSkipKeepsSource(t *testing.T) {
+	t.Parallel()
+	root := testfs.TempDir(t)
+	dest := testfs.CrossVolDir(t)
+	testfs.Build(t, root, testfs.Tree{"src/tree/a.txt": testfs.File("a"), "src/tree/link": testfs.Symlink("a.txt")})
+	plan := mustPlan(t, Request{Op: OpMove, Sources: []string{filepath.Join(root, "src", "tree")}, DestDir: dest})
+	res := execPlan(t, context.Background(), plan, ExecOptions{Links: LinkSkip})
+	if it := res.Items[0]; it.Outcome != OutcomePartial || it.Err == nil || it.Err.Kind != KindLinkSkipped {
+		t.Errorf("result = %+v, want Partial with KindLinkSkipped", it)
+	}
+	if got := testfs.ReadFile(t, filepath.Join(root, "src", "tree", "a.txt")); got != "a" {
+		t.Errorf("src/tree/a.txt = %q (the source must be untouched)", got)
 	}
 }

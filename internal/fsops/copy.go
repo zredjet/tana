@@ -71,7 +71,9 @@ func (cp *copier) entry(src, dst string, out Outcome, err *OpError) {
 		return // キャンセルで打ち切ったエントリは Details に入れない（項目全体を KindCanceled で報告する）
 	}
 	cp.details = append(cp.details, EntryResult{Src: src, Dst: dst, Outcome: out, Err: err})
-	if err != nil && cp.firstErr == nil {
+	// LinkSkip で複製しなかったリンクは、コピーではエラーにしない（衝突の決定による Skip と同じ）。移動では移動元のリンクが残るので、
+	// 移動元に手を付けないようエラーとして扱う（§14.2、§11.2 の手順 2）。
+	if err != nil && cp.firstErr == nil && (err.Kind != KindLinkSkipped || cp.move) {
 		cp.firstErr = err
 	}
 	if out == OutcomeFailed && err != nil && err.Kind == KindNoSpace && cp.noSpace == nil {
@@ -227,7 +229,7 @@ func (cp *copier) copyEntry(src, dst string, e dirEntry, pc *planned, dd *secDir
 		return cp.copyDir(src, dst, e, pc, dd)
 	case TypeSymlink:
 		if cp.ex.opt.Links == LinkSkip {
-			return dst, OutcomeSkipped, &OpError{Op: "copy", Path: src, Dest: dst, Kind: KindLinkUnsupported}
+			return dst, OutcomeSkipped, &OpError{Op: "copy", Path: src, Dest: dst, Kind: KindLinkSkipped} // 利用者が選んだ方針（§14.2）
 		}
 		return cp.copySymlink(src, dst, e, pc, dd)
 	case TypeJunction:
