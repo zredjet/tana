@@ -189,18 +189,18 @@ func (d *secDir) stat(name string) (dirEntry, error) {
 	return e, withUserPaths(err, d.path+`\`+name, "")
 }
 
-// remove は、中の e を §13.2 の方法（DeleteFileW・RemoveDirectoryW）で削除する。
-func (d *secDir) remove(e dirEntry, clearReadOnly bool) error {
-	return removeSys(d.sys+`\`+e.name, e, clearReadOnly)
+// remove は、中の e を §13.2 の方法（確かめたハンドルでの削除）で削除する。recorded は §13.3 の削除か。
+func (d *secDir) remove(e dirEntry, recorded bool) error {
+	return removeSys(d.sys+`\`+e.name, e, recorded)
 }
 
 // removeTop は、トップレベルのエントリ path を §13.2 の方法で削除する。
-func removeTop(path string, e dirEntry, clearReadOnly bool) error {
+func removeTop(path string, e dirEntry, recorded bool) error {
 	s, err := sysPath(path)
 	if err != nil {
 		return err
 	}
-	return withUserPaths(removeSys(s, e, clearReadOnly), path, "")
+	return withUserPaths(removeSys(s, e, recorded), path, "")
 }
 
 // statTop は、トップレベルのエントリ path をリンクを辿らずに調べる。
@@ -251,50 +251,38 @@ func statEntrySys(s string) (dirEntry, error) {
 	return dirEntry{info: info, id: st.id, dirAttr: bi.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0}, nil
 }
 
-// removeSys は、\\?\ 形式のパス s にあるエントリ e を削除する（§13.2）。フォルダ属性のあるもの（フォルダ用のリンク・ジャンクションを含む）は
-// removeDirVerified（確かめたハンドルでの削除。RemoveDirectoryW と同じ結果になる）、それ以外は DeleteFileW。
-// フォルダの読み取り専用属性は外してから削除する（V15）。clearReadOnly が真なら、ファイルの読み取り専用属性も外す（§13.3）。
-// 属性を外すのは、s にあるものが e と同じ fileID の場合だけ（確かめていないエントリの属性を変えない）。削除に失敗したら元に戻す。
-func removeSys(s string, e dirEntry, clearReadOnly bool) error {
-	s16, err := windows.UTF16PtrFromString(s)
-	if err != nil {
-		return err
-	}
-	restore := func() {}
-	if !e.dirAttr && clearReadOnly {
-		if a, err := windows.GetFileAttributes(s16); err == nil && a&windows.FILE_ATTRIBUTE_READONLY != 0 {
-			if now, err := statIDSys(s, false); err == nil && now.id == e.id &&
-				windows.SetFileAttributes(s16, a&^windows.FILE_ATTRIBUTE_READONLY) == nil {
-				restore = func() { windows.SetFileAttributes(s16, a) }
-			}
-		}
-	}
-	if e.dirAttr {
-		return removeDirVerified(s, e) // フォルダの読み取り専用属性も、確かめたハンドルで扱う
-	}
-	if err := windows.DeleteFile(s16); err != nil {
-		restore()
-		return &os.PathError{Op: "remove", Path: s, Err: err}
-	}
-	return nil
+// removeSys は、\\?\ 形式のパス s にあるエントリ e を削除する（§13.2）。s を削除のアクセス権でリンクを辿らずに開き、
+// そのハンドルで e と同じものか確かめてから、同じハンドルに削除の印を付ける（removeVerified）。
+// フォルダの読み取り専用属性は外してから削除する（V15）。recorded が真なら（§13.3）、ファイルの読み取り専用属性も外す。
+func removeSys(s string, e dirEntry, recorded bool) error {
+	return removeVerified(s, e, recorded)
 }
 
 // fileDispositionInfo は FILE_DISPOSITION_INFO（x/sys/windows に定義がない）。
 type fileDispositionInfo struct{ DeleteFile bool }
 
-// removeDirVerified は、フォルダ属性のあるエントリ e（フォルダ、フォルダ用のリンク・ジャンクション）を、s を開いたハンドルで
-// 確かめてから、同じハンドルで削除する（総点検の穴 2）。
-// パスで RemoveDirectoryW を呼ぶと、中身を処理してフォルダのハンドルを閉じた後に、そのフォルダがジャンクションなどに置き換えられた場合、
-// 置き換えたものを消してしまう。リパースポイントを開かずに（FILE_FLAG_OPEN_REPARSE_POINT）削除のアクセス権で開き、
-// fileID と種類（§14.1）が e と一致することを確かめてから、そのハンドルに削除の印（FileDispositionInfo）を付ける。
-// 確かめたものと消すものが同じになる。一致しなければ KindSourceChanged。
-// 読み取り専用属性（空でも RemoveDirectoryW が失敗する。V15）は、確かめたハンドルで外し、削除に失敗したら元に戻す。
-func removeDirVerified(s string, e dirEntry) error {
+// fileDispositionInfoEx は FILE_DISPOSITION_INFO_EX（x/sys/windows に定義がない）。
+type fileDispositionInfoEx struct{ Flags uint32 }
+
+// removeVerified は、エントリ e を、s を開いたハンドルで確かめてから、同じハンドルで削除する（総点検の穴 2）。
+// パスで DeleteFileW・RemoveDirectoryW を呼ぶと、確かめた後（フォルダでは中身を処理してハンドルを閉じた後）に、そのエントリが
+// 別のファイルやジャンクションなどに置き換えられた場合、置き換えたものを消してしまう。リパースポイントを開かずに
+// （FILE_FLAG_OPEN_REPARSE_POINT）削除のアクセス権で開き、fileID・フォルダ属性・種類（§14.1）が e と一致することを確かめる。
+// recorded が真なら（§13.3）、フォルダ以外は大きさ・更新日時も e と比べる（照合の後に書き換えられた移動元を消さない。I2）。
+// 一致しなければ削除せず KindSourceChanged。確かめたものと消すものが同じになる。
+// 読み取り専用属性（フォルダは空でも削除に失敗する。V15）は、確かめたハンドルで外し、削除に失敗したら元に戻す。
+// ファイルの読み取り専用属性は recorded のときだけ外す（§13.2 では外さず、削除が ERROR_ACCESS_DENIED で失敗する。V15、V23）。
+func removeVerified(s string, e dirEntry, recorded bool) error {
 	s16, err := windows.UTF16PtrFromString(s)
 	if err != nil {
 		return err
 	}
-	h, err := windows.CreateFile(s16, windows.DELETE|windows.FILE_READ_ATTRIBUTES|windows.FILE_WRITE_ATTRIBUTES,
+	access := uint32(windows.DELETE | windows.FILE_READ_ATTRIBUTES)
+	clearRO := e.dirAttr || recorded
+	if clearRO {
+		access |= windows.FILE_WRITE_ATTRIBUTES
+	}
+	h, err := windows.CreateFile(s16, access,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING,
 		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
 	if err != nil {
@@ -318,21 +306,42 @@ func removeDirVerified(s string, e dirEntry) error {
 		}
 		tag = ti.ReparseTag
 	}
-	if st.id != e.id || bi.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY == 0 || entryTypeFromAttrs(bi.FileAttributes, tag) != e.info.Type {
+	t := entryTypeFromAttrs(bi.FileAttributes, tag)
+	same := st.id == e.id && (bi.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0) == e.dirAttr && t == e.info.Type
+	if same && recorded && t != TypeDir {
+		var size int64
+		if t == TypeFile {
+			size = int64(bi.FileSizeHigh)<<32 | int64(bi.FileSizeLow)
+		}
+		same = size == e.info.Size && time.Unix(0, bi.LastWriteTime.Nanoseconds()).Equal(e.info.ModTime)
+	}
+	if !same {
 		return &OpError{Op: "remove", Kind: KindSourceChanged}
 	}
 	restore := func() {}
-	if a := bi.FileAttributes; a&windows.FILE_ATTRIBUTE_READONLY != 0 {
+	if a := bi.FileAttributes; clearRO && a&windows.FILE_ATTRIBUTE_READONLY != 0 {
 		if setAttrsHandle(h, a&^windows.FILE_ATTRIBUTE_READONLY) == nil {
 			restore = func() { setAttrsHandle(h, a) }
 		}
 	}
-	info := fileDispositionInfo{DeleteFile: true}
-	if err := windows.SetFileInformationByHandle(h, windows.FileDispositionInfo, (*byte)(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil {
+	if err := markDelete(h); err != nil {
 		restore()
 		return &os.PathError{Op: "remove", Path: s, Err: err}
 	}
 	return nil
+}
+
+// markDelete は、開いたハンドル h に削除の印を付ける（閉じると削除される）。DeleteFileW・RemoveDirectoryW と同じ結果にするため、
+// POSIX 形式（ほかのハンドルが開いていても名前がすぐ消える）の FileDispositionInfoEx を使い、それを受け付けないボリューム
+// （exFAT・FAT32 は ERROR_INVALID_PARAMETER を返し、何もしない）では FileDispositionInfo を使う（V23）。
+func markDelete(h windows.Handle) error {
+	ex := fileDispositionInfoEx{Flags: windows.FILE_DISPOSITION_DELETE | windows.FILE_DISPOSITION_POSIX_SEMANTICS}
+	err := windows.SetFileInformationByHandle(h, windows.FileDispositionInfoEx, (*byte)(unsafe.Pointer(&ex)), uint32(unsafe.Sizeof(ex)))
+	if !errors.Is(err, windows.ERROR_INVALID_PARAMETER) && !errors.Is(err, windows.ERROR_NOT_SUPPORTED) && !errors.Is(err, windows.ERROR_INVALID_FUNCTION) {
+		return err
+	}
+	info := fileDispositionInfo{DeleteFile: true}
+	return windows.SetFileInformationByHandle(h, windows.FileDispositionInfo, (*byte)(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info)))
 }
 
 // setAttrsHandle は、開いたハンドル h のファイル属性を a にする（時刻は変えない）。

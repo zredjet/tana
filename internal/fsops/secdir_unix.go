@@ -157,8 +157,9 @@ func (d *secDir) stat(name string) (dirEntry, error) {
 	return e, nil
 }
 
-// remove は、中の e を §13.2 の方法（unlinkat）で削除する。clearReadOnly は Unix では使わない。
-func (d *secDir) remove(e dirEntry, clearReadOnly bool) error {
+// remove は、中の e を §13.2 の方法（unlinkat）で削除する。recorded（§13.3 の削除か）は Unix では使わない。
+// unlinkat は名前で消すので、確かめた後に置き換えられたものを消しうる（Unix には、開いたハンドルで削除する方法がない。§13.2）。
+func (d *secDir) remove(e dirEntry, recorded bool) error {
 	flags := 0
 	if e.dirAttr {
 		flags = unix.AT_REMOVEDIR
@@ -170,7 +171,7 @@ func (d *secDir) remove(e dirEntry, clearReadOnly bool) error {
 }
 
 // removeTop は、トップレベルのエントリ path を §13.2 の方法（rmdir・unlink）で削除する。
-func removeTop(path string, e dirEntry, clearReadOnly bool) error {
+func removeTop(path string, e dirEntry, recorded bool) error {
 	var err error
 	if e.dirAttr {
 		err = unix.Rmdir(path)
