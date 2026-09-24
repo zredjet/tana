@@ -1,6 +1,7 @@
 package probe
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"unsafe"
@@ -53,25 +54,25 @@ func TestV23(t *testing.T) {
 				p := filepath.Join(dir, "plain", string(rune('a'+i))+kind)
 				v23Build(t, p, isDir, false)
 				err := m.del(t, p, isDir)
-				t.Logf("V23: %s: %s: %s: err=%v (errno %d) exists after=%v", label, m.name, kind, err, errnoOf(err), testfs.Exists(t, p))
+				t.Logf("V23: %s: %s: %s: err=%v (errno %d) after=%s", label, m.name, kind, err, errnoOf(err), v23State(p))
 				// ほかのハンドル（FILE_SHARE_DELETE つき）が開いている場合。閉じる前に名前が残っているか。
 				p = filepath.Join(dir, "held", string(rune('a'+i))+kind)
 				v23Build(t, p, isDir, false)
 				other, oerr := windows.CreateFile(u16(t, testfs.ExtendedPath(p)), windows.FILE_READ_ATTRIBUTES,
 					windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
 				err = m.del(t, p, isDir)
-				before := testfs.Exists(t, p)
+				before := v23State(p)
 				if oerr == nil {
 					windows.CloseHandle(other)
 				}
-				t.Logf("V23: %s: %s: %s with another handle open: err=%v (errno %d) exists while held=%v exists after close=%v",
-					label, m.name, kind, err, errnoOf(err), before, testfs.Exists(t, p))
+				t.Logf("V23: %s: %s: %s with another handle open: err=%v (errno %d) while held=%s after close=%s",
+					label, m.name, kind, err, errnoOf(err), before, v23State(p))
 			}
 			// 読み取り専用のファイル。
 			p := filepath.Join(dir, "ro", string(rune('a'+i))+"file")
 			v23Build(t, p, false, true)
 			err := m.del(t, p, false)
-			t.Logf("V23: %s: %s: read-only file: err=%v (errno %d) exists after=%v", label, m.name, err, errnoOf(err), testfs.Exists(t, p))
+			t.Logf("V23: %s: %s: read-only file: err=%v (errno %d) after=%s", label, m.name, err, errnoOf(err), v23State(p))
 		}
 	}
 	check(t, "NTFS (temp dir)", testfs.TempDir(t))
@@ -91,4 +92,16 @@ func v23Build(t *testing.T, p string, isDir, readOnly bool) {
 		e = e.RO()
 	}
 	testfs.Build(t, filepath.Dir(p), testfs.Tree{filepath.Base(p): e})
+}
+
+// v23State は、p を Lstat した結果（ある・ない・エラー）を返す。削除待ちの名前は ERROR_ACCESS_DENIED になるので、止めずに記録する。
+func v23State(p string) string {
+	_, err := os.Lstat(testfs.ExtendedPath(p))
+	switch {
+	case err == nil:
+		return "exists"
+	case os.IsNotExist(err):
+		return "gone"
+	}
+	return "lstat error: " + err.Error()
 }
