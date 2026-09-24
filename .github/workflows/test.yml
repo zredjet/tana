@@ -144,10 +144,28 @@ jobs:
           sudo mount -o loop,uid=$(id -u),gid=$(id -g) "$RUNNER_TEMP/fsopsvfat.img" /mnt/fsopsvfat
           mount | grep fsopsvfat
           echo "FSOPS_PROBE_FAT32_DIR=/mnt/fsopsvfat" >> "$GITHUB_ENV"
-      # 要検証事項のプローブは、結果をログに残すため -v で実行する（SPEC §20）。
+      # Linux の実装もテストで確かめる（総点検の穴 8）。ボリュームをまたぐテスト用の ext4 と、exFAT のイメージを loop マウントする。
+      - name: Mount ext4 and exFAT images
+        run: |
+          truncate -s 64M "$RUNNER_TEMP/fsopstest.img"
+          mkfs.ext4 -q "$RUNNER_TEMP/fsopstest.img"
+          sudo mkdir -p /mnt/fsopstest
+          sudo mount -o loop "$RUNNER_TEMP/fsopstest.img" /mnt/fsopstest
+          sudo chown "$(id -u):$(id -g)" /mnt/fsopstest
+          echo "FSOPS_CROSSVOL_DIR=/mnt/fsopstest" >> "$GITHUB_ENV"
+          truncate -s 64M "$RUNNER_TEMP/fsopsexfat.img"
+          command -v mkfs.exfat || sudo apt-get install -y exfatprogs
+          sudo mkfs.exfat "$RUNNER_TEMP/fsopsexfat.img"
+          sudo mkdir -p /mnt/fsopsexfat
+          sudo mount -o loop,uid=$(id -u),gid=$(id -g) "$RUNNER_TEMP/fsopsexfat.img" /mnt/fsopsexfat
+          echo "FSOPS_PROBE_EXFAT_DIR=/mnt/fsopsexfat" >> "$GITHUB_ENV"
+          mount | grep -E "fsopstest|fsopsexfat"
+      # TestCopyNoSpaceCrossVolume が別ボリュームを一杯にするので、パッケージを並行させない（-p 1。§18.4「容量」）。
+      - run: go test -race -p 1 ./...
+      # 要検証事項のプローブと、環境によって Skip しうるテストは、結果をログに残すため -v で実行する（SPEC §20）。
       - name: Probes (verbose)
-        run: go test -count=1 -v ./internal/fsops/internal/probe/
-      # ごみ箱が使えないこと（KindTrashUnavailable）を確かめる（§18.4 の I5、§19）。
-      - run: go test -count=1 -v -run 'TestTrashUnavailable|TestNewPlanTrashPrecheck' ./internal/fsops/
+        run: |
+          go test -count=1 -v ./internal/fsops/internal/probe/
+          go test -count=1 -v -run 'OtherVolumes|ReadOnly|NoSpace|MoveMethod|Warnings|TestDelete|TestRemoveRecorded|TestCopy|TestMove|TestTrash|Win32UnsafeNames|LongPath' ./internal/fsops/
       # 動作確認用 CLI（fsopsctl）のテスト。ごみ箱が使えない環境で完全削除に切り替えないことも確かめる。
       - run: go test -count=1 -v ./cmd/...
