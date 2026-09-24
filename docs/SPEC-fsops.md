@@ -1083,7 +1083,7 @@ hdiutil detach /Volumes/fsopstest
 - **ubuntu ジョブ（`ubuntu-latest`、公開・非公開に関わらず毎回実行）**
   1. `gofmt -l .` の出力が空であること
   2. `go vet ./...`、`GOOS=windows go vet ./...`、`GOOS=darwin CGO_ENABLED=0 go vet ./...`
-  3. ごみ箱が使えないことを確かめるテスト（§18.4 の I5 の行）の実行（フェーズ10で追加）
+  3. ごみ箱が使えないことを確かめるテスト（§18.4 の I5 の行）の実行
   4. 64 MB の vfat のイメージを `sudo mount -o loop` でマウントして `FSOPS_PROBE_FAT32_DIR` に設定し、プローブ（`internal/probe`）を実行する
 - 要検証事項のプローブは、結果をログに残すため、各ジョブで `go test -v ./internal/fsops/internal/probe/` を別の手順として実行する。
 - VHD とディスクイメージの作成はフェーズ2で追加する。フェーズ1では `go vet`・`go test` と ubuntu ジョブだけ。

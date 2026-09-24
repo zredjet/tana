@@ -75,7 +75,7 @@ jobs:
       - name: Probes (verbose)
         run: |
           go test -count=1 -v ./internal/fsops/internal/probe/
-          go test -count=1 -v -run 'TestLstatEntryWOF|OtherVolumes|ShortName|Junction|ReadOnly|TrashPrecheck|NoSpace|MoveMethod|TestDelete|TestRemoveRecorded|TestCopy|TestMove' ./internal/fsops/
+          go test -count=1 -v -run 'TestLstatEntryWOF|OtherVolumes|ShortName|Junction|ReadOnly|TrashPrecheck|NoSpace|MoveMethod|TestDelete|TestRemoveRecorded|TestCopy|TestMove|TestTrash' ./internal/fsops/
 
   macos:
     # 非公開リポジトリでは、macOS のジョブは pull_request と workflow_dispatch のときだけ実行する（SPEC §19）。
@@ -111,8 +111,10 @@ jobs:
       - name: Probes (verbose)
         run: |
           go test -count=1 -v ./internal/fsops/internal/probe/
-          go test -count=1 -v -run 'OtherVolumes|ReadOnly|NoSpace|MoveMethod|Warnings|TestDelete|TestRemoveRecorded|TestCopy|TestMove' ./internal/fsops/
+          go test -count=1 -v -run 'OtherVolumes|ReadOnly|NoSpace|MoveMethod|Warnings|TestDelete|TestRemoveRecorded|TestCopy|TestMove|TestTrash' ./internal/fsops/
       - run: CGO_ENABLED=0 go vet ./...
+      # cgo なしのビルドでは、ごみ箱が使えないこと（KindTrashUnavailable）を確かめる（§18.4 の I5、§19）。
+      - run: CGO_ENABLED=0 go test -count=1 -v -run 'TestTrashUnavailable|TestNewPlanTrashPrecheck' ./internal/fsops/
 
   ubuntu:
     runs-on: ubuntu-latest
@@ -145,4 +147,5 @@ jobs:
       # 要検証事項のプローブは、結果をログに残すため -v で実行する（SPEC §20）。
       - name: Probes (verbose)
         run: go test -count=1 -v ./internal/fsops/internal/probe/
-      # ごみ箱が使えないことを確かめるテストはフェーズ10で追加する（SPEC §19）。
+      # ごみ箱が使えないこと（KindTrashUnavailable）を確かめる（§18.4 の I5、§19）。
+      - run: go test -count=1 -v -run 'TestTrashUnavailable|TestNewPlanTrashPrecheck' ./internal/fsops/

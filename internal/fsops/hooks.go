@@ -29,6 +29,9 @@ type testHooks struct {
 	// beforeSyncDir は、フォルダの同期（§10.5）の直前に呼ばれる。error を返すと、同期せずにそのエラーで失敗させる
 	// （Unix のフォルダの同期の失敗の注入用）。
 	beforeSyncDir func(dir string) error
+	// bypassTrashPrecheck は、実行時のごみ箱の事前確認（§12.2）を飛ばす。事前確認が見落とした場合の二つ目の防御
+	// （Windows の PreDeleteItem での中止。§12.2 の手順 4）を確かめるためだけに使う。
+	bypassTrashPrecheck bool
 }
 
 func (h *testHooks) enterDir(path string) {
@@ -88,3 +91,5 @@ func (h *testHooks) syncDir(dir string) error {
 	}
 	return nil
 }
+
+func (h *testHooks) trashPrecheck() bool { return h == nil || !h.bypassTrashPrecheck }
