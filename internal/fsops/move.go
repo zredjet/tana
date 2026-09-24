@@ -216,18 +216,29 @@ func (mv *mover) merge(parent *secDir, src, dst string, e dirEntry, pc *planned)
 		}
 	}
 	d.close() // フォルダ自体を削除する直前に閉じる（§13.1）
+	mv.ex.opt.hooks.remove(src)
 	var rerr error
+	restat := func() (dirEntry, error) { return statTop(src) }
 	if parent != nil {
 		rerr = parent.remove(e, false)
+		restat = func() (dirEntry, error) { return parent.stat(e.name) }
 	} else {
 		rerr = removeTop(src, e, false)
 	}
-	if rerr != nil && left == 0 {
-		// 残したものがないのに空でない（移動中に追加された）、または削除できなかった。移動元のフォルダは残る。
-		ss, _ := sysPath(src)
-		mv.entry(src, dst, OutcomeFailed, &OpError{Op: "move", Path: src, Kind: classify(rerr, classifyOpts{readOnly: readOnlySys(ss)}), Err: withUserPaths(rerr, src, "")})
+	if rerr == nil {
+		return OutcomeDone, nil, true
 	}
-	return OutcomeDone, nil, rerr == nil
+	ss, _ := sysPath(src)
+	oe, vanished := removeErr(src, rerr, e, restat, ss) // 削除と同じ方法で分類する（置き換えられていれば KindSourceChanged）
+	if vanished {
+		return OutcomeDone, nil, true
+	}
+	if left == 0 || oe.Kind == KindSourceChanged {
+		// 残したものがないのに空でない（移動中に追加された）、削除できなかった、または置き換えられていた。移動元のフォルダは残る。
+		oe.Op = "move"
+		mv.entry(src, dst, OutcomeFailed, oe)
+	}
+	return OutcomeDone, nil, false
 }
 
 // mergeEntry は、マージ移動の中のエントリ 1 件を処理する。実際の移動先のパスと結果、移動元から消えたか（gone）を返す。
