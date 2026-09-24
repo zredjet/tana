@@ -48,6 +48,7 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 | キャンセルで一時ファイルを消す（`copy.go` `writeTemp` のバッファごとの確認、`finalize`） | TestCopyCancelMidFile、TestCopyCancelInFolder、TestMoveCrossVolumeCancel | 共通・CROSSVOL |
 | 書き込みの失敗・容量不足で一時ファイルを消す（`copy.go` `writeTemp`、`removeTemp`） | TestCopyWriteFailure、TestCopyNoSpaceInjected、TestCopyNoSpaceCrossVolume | 共通・CROSSVOL |
 | 検証の失敗で一時ファイルを消す（`copy.go` `verify`） | TestCopySourceChangedDuringCopy、TestCopyVerifyHash | 共通 |
+| 一時ファイルが置き換えられていれば最終名にせず、置き換えたものを消さない（`copy.go` `tempFile.check`・`tempFile.remove`・`finalize`） | TestCopyTempReplacedBeforeFinalRename | 共通 |
 | 最終名にできなかったときに一時ファイルを消す（読み取り専用にした一時ファイルを含む。`copy.go` `removeTemp`、`copy_windows.go` `clearReadOnlySys`） | TestCopyConflictBeforeFinalRename、TestCopyOverwriteTargetReplaced、TestCopyOverwriteLocked、TestCopyAutoRenameTooLong、TestCopyReadOnlyTempRemoved | 共通・Windows |
 | コピー元を開けない場合は一時ファイルを作らない（`copy.go` `writeTemp`、`copy_*.go` `openSourceSys`） | TestCopyLockedSource | Windows |
 
@@ -110,9 +111,9 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 1. （解決済み）Windows の、別名になりうる名前と長いパスのコピー・移動。I6 の表の TestCopyWin32UnsafeNames などでテストした。
 2. （解決済み）ハンドルを閉じた後のパスでのフォルダの削除。Windows では確かめたハンドルで削除するように直した（§13.2）。I4 の表の TestDeleteDirReplacedByLinkBeforeRemove などでテストした。
    ファイル（`DeleteFileW`）は、まだパスで削除している（判定の後に別のファイルへ置き換えられると、それを消しうる）。
-3. **一時ファイルが最終名にする前に置き換えられた場合**（I1・I3）。
-   `finalize` は一時ファイルの名前をリネームするので、書き終えた後に一時ファイルが別のものに置き換えられると、それを最終名にしてしまう。
-   メタデータの設定と VerifyHash の読み直しは fileID を確かめるが、最終名へのリネームの直前には確かめていない。テストもない。
+3. （解決済み。ごく短い隙間は残る）一時ファイルが最終名にする前に置き換えられた場合。リネームの直前に一時ファイルの fileID・大きさを確かめ、
+   置き換えられていれば最終名にせず、置き換えたものも消さないように直した（§10.1 の手順 7・8）。I3 の表の TestCopyTempReplacedBeforeFinalRename でテストした。
+   確かめてからリネームするまでの間の、ごく短い隙間は残る（リネームは名前で行うため）。
 4. **照合の後にマージ先・上書き先を置き換えられた場合**（I1、書き込み先がリンクの先になる）。
    §7.3 の照合（`checkTarget`）はマージの開始時・上書きの直前に行うが、その後にマージ先をリンクへ置き換えられると、中身はリンクの先に書かれる。
    上書きでも、照合と置換リネームの間は `Lstat` による確認だけ（SPEC で許容）。照合より前の置き換えだけをテストしている。
