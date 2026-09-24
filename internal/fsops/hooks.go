@@ -35,6 +35,10 @@ type testHooks struct {
 	// beforeOpenDest は、コピー・マージ移動で、書き込み先のフォルダを作った（マージでは照合した）後、それを開いて確かめる直前に、
 	// そのパスで呼ばれる（書き込み先のフォルダをリンクへ置き換える注入用。総点検の穴 4）。
 	beforeOpenDest func(dst string)
+	// beforeDirMeta は、コピーで作ったフォルダのメタデータ（§15）を設定する直前に、そのパスで呼ばれる（フォルダの置き換えの注入用。総点検の穴 6）。
+	beforeDirMeta func(dst string)
+	// dirMetaFault は、コピー元のフォルダのメタデータを読む直前に呼ばれる。error を返すと、読めなかったものとして扱う（総点検の穴 6）。
+	dirMetaFault func(src string) error
 }
 
 func (h *testHooks) enterDir(path string) {
@@ -101,4 +105,17 @@ func (h *testHooks) openDest(dst string) {
 	if h != nil && h.beforeOpenDest != nil {
 		h.beforeOpenDest(dst)
 	}
+}
+
+func (h *testHooks) dirMeta(dst string) {
+	if h != nil && h.beforeDirMeta != nil {
+		h.beforeDirMeta(dst)
+	}
+}
+
+func (h *testHooks) dirMetaRead(src string) error {
+	if h != nil && h.dirMetaFault != nil {
+		return h.dirMetaFault(src)
+	}
+	return nil
 }

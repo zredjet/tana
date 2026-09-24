@@ -62,7 +62,8 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 | 移動元の削除の走査（`remove.go` `removeRecorded`） | TestRemoveRecordedDirReplacedByLink、TestMoveCrossVolumeLinks | 共通・CROSSVOL |
 | ハンドルを閉じた後のフォルダの削除（Windows: `secdir_windows.go` `removeDirVerified` の確かめたハンドルでの削除、Unix: `rmdir`・`unlinkat(AT_REMOVEDIR)`） | TestDeleteDirReplacedByLinkBeforeRemove、TestRemoveRecordedDirReplacedByLinkBeforeRemove、TestMoveMergeDirReplacedByLinkBeforeRemove | 共通 |
 | コピーでリンクに入らない（`copy.go` `copyEntry`・`copyDir`・`copySymlink`） | TestCopyTreeWithLinks、TestCopyDirReplacedByLink、TestCopyLinkSkip | 共通 |
-| コピーのメタデータの設定がリンクを辿らない（`meta_*.go` `setMetaSys` の O_NOFOLLOW・リパースポイントを開かない、fileID の確認） | TestCopyTreeWithLinks（リンク先の更新日時・権限が変わらない）、TestCopyQuarantine | 共通・macOS |
+| コピーのメタデータの設定がリンクを辿らない（`meta_*.go` `setMetaIn` の O_NOFOLLOW・リパースポイントを開かない、fileID の確認） | TestCopyTreeWithLinks（リンク先の更新日時・権限が変わらない）、TestCopyQuarantine | 共通・macOS |
+| メタデータを fsops が作ったもの以外に設定しない（`setMetaIn` の fileID の照合）、読めなければ警告にする（`copy.go` `copyDir`） | TestMetaTempReplaced、TestMetaCreatedDirReplaced、TestMetaSourceDirUnreadable | 共通 |
 | 同一ボリュームのマージ移動で、開いたハンドルで確かめてから入る（`move.go` `merge`） | TestMoveMergeDirReplacedByLink、TestMoveMergeLinks | 共通 |
 | 書き込み先のフォルダ（DestDir・作ったフォルダ・マージ先）を確かめて開き、中の操作をそのハンドルで行う（`secdir_*.go` `openDestRoot`・`openNewSecDir`・`renameBetween` など、`copy.go` `copyDir`、`move.go` `merge`） | TestCopyMergeDestReplacedAfterCheck、TestCopyCreatedDestReplacedAfterMkdir、TestMoveMergeDestReplacedAfterCheck | 共通 |
 | ごみ箱に入れる項目の大きさを数える走査（`trash_windows.go` `itemSize`）と、リンク自体だけを入れること | TestTrash（リンクを含むフォルダ、トップレベルのリンク・ジャンクション） | TRASH |
@@ -122,8 +123,8 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
    上書きしうる。また、その間にプロセスが強制終了すると、最終名に空のファイル・空のフォルダが残る（データは一時ファイル・移動元に残る）。
    この代わりの手段を使うのは実際には macOS の exFAT だけで、そこには代わりになる不可分な操作が 1 つもないことを V21 のプローブで確かめた（SPEC §8.4、§20 V21）。
    起きうるのは数回のシステムコールの間だけで、データを失いうるのはファイルの場合だけ（フォルダは空のものだけ）。
-6. **メタデータの設定の失敗の経路**。一時ファイル・作ったフォルダの fileID が一致しない場合の警告、Unix でコピー元のフォルダのメタデータを読めない場合の警告のテストがない
-   （データは無事なので不変条件は破らない）。
+6. （解決済み）メタデータの設定の失敗の経路。一時ファイル・作ったフォルダが置き換えられていればメタデータを設定しないこと、
+   コピー元のフォルダのメタデータを読めなければ警告にすることを、I4 の表の TestMetaTempReplaced などでテストした（不変条件は破らない）。
 7. **Windows のごみ箱の、事前確認を飛ばした最大サイズ超過**（I5）。確認ダイアログで止まることが V18 で分かっているため実行していない。
    また、フォルダの中身ごとに `PostDeleteItem` が届く場合に最初の失敗を覚える経路は、再現が難しくテストがない。
 8. **Linux の実装が CI で実行されていない**。ubuntu ジョブでは fsops のテストのうちごみ箱が使えないことのテストだけを実行している。

@@ -743,7 +743,9 @@ func (cp *copier) copyDir(src, dst string, e dirEntry, pc *planned, dd *secDir) 
 	var meta srcMeta
 	var metaErr error
 	if created {
-		if ss, err := sysPath(src); err != nil {
+		if err := cp.ex.opt.hooks.dirMetaRead(src); err != nil {
+			metaErr = err
+		} else if ss, err := sysPath(src); err != nil {
 			metaErr = err
 		} else if meta, err = dirMetaSys(ss); err != nil {
 			metaErr = withUserPathsAll(err, src)
@@ -780,6 +782,7 @@ func (cp *copier) copyDir(src, dst string, e dirEntry, pc *planned, dd *secDir) 
 	// 開いていたハンドルを閉じてから、同じフォルダ（開いたときの fileID）であることを確かめて設定する。
 	id := cd.id
 	closeDir()
+	cp.ex.opt.hooks.dirMeta(dst)
 	if created {
 		if metaErr == nil {
 			if err := setMetaIn(dd, name, id, meta, true); err != nil {
