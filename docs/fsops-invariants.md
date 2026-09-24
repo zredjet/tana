@@ -75,7 +75,9 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 | 計画時の事前確認（`trash.go` `trashPrecheck`、`trash_windows.go` `trashAvailable`・`recycleCapacity`・`hasWin32UnsafeComponent`） | TestNewPlanTrashPrecheck、TestTrashPrecheckWindows、TestTrashPrecheckCapacity | 共通・Windows・NUKE/SMALL |
 | 実行時にもう一度、今の大きさで確かめる（`trash.go` `trashItem`） | TestTrashExecuteRecheck | Windows・SMALL |
 | 計画時に使えない項目を、実行時に何もせず失敗にする（`execute.go` `run`、`trash.go` `trashItem`） | TestTrashWindowsUnavailable、TestTrashUnavailable | Windows・ubuntu・macOS（`CGO_ENABLED=0`） |
-| PreDeleteItem での中止（二つ目の防御。`trash_ifo_windows.go` の進捗通知） | TestTrashPreDeleteAbort | TRASH・NUKE |
+| PreDeleteItem での中止（二つ目の防御。`trash_ifo_windows.go` `progressSink.preDelete`） | TestTrashPreDeleteAbort、TestProgressSink | TRASH・NUKE・Windows |
+| 事前確認が見落とした最大サイズ超過の最後の防御（`FOF_WANTNUKEWARNING` の確認ダイアログ） | TestTrashOverCapacityBypass | TRASH・SMALL |
+| フォルダの中身ごとの結果の扱い（`progressSink.postDelete`。最初のパスと最初の失敗） | TestProgressSink | Windows |
 | HRESULT の成否の判定（`trash_ifo_windows.go` `hresultFailed`） | TestHresultFailed | Windows |
 | ごみ箱が使えないビルド（`trash_darwin_nocgo.go`、`trash_other.go`） | TestTrashUnavailable、TestNewPlanTrashPrecheck | ubuntu・macOS（`CGO_ENABLED=0`） |
 
@@ -125,8 +127,9 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
    起きうるのは数回のシステムコールの間だけで、データを失いうるのはファイルの場合だけ（フォルダは空のものだけ）。
 6. （解決済み）メタデータの設定の失敗の経路。一時ファイル・作ったフォルダが置き換えられていればメタデータを設定しないこと、
    コピー元のフォルダのメタデータを読めなければ警告にすることを、I4 の表の TestMetaTempReplaced などでテストした（不変条件は破らない）。
-7. **Windows のごみ箱の、事前確認を飛ばした最大サイズ超過**（I5）。確認ダイアログで止まることが V18 で分かっているため実行していない。
-   また、フォルダの中身ごとに `PostDeleteItem` が届く場合に最初の失敗を覚える経路は、再現が難しくテストがない。
+7. （解決済み）Windows のごみ箱の、事前確認を飛ばした最大サイズ超過。別プロセスで実行し、ファイル・フォルダとも確認ダイアログで止まり、
+   完全に残ることを TestTrashOverCapacityBypass でテストした（フォルダも中止ではなくダイアログで止まることが分かった。SPEC §12.2、§20 V19）。
+   フォルダの中身ごとに `PostDeleteItem` が届く場合の処理は、TestProgressSink で単体テストした。
 8. **Linux の実装が CI で実行されていない**。ubuntu ジョブでは fsops のテストのうちごみ箱が使えないことのテストだけを実行している。
    `renameat2` と代わりの手段（開いたフォルダからの相対を含む）、`attr_linux.go`、`volume_linux.go`、`meta_linux.go` の経路はテストされていない。
 9. **macOS の exFAT の NFC の名前**（V17、§8.5 の制限事項）。NFC の名前で作られたエントリは NFD の名前で列挙され、その名前では削除できない。
