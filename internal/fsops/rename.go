@@ -114,18 +114,20 @@ func renameWith(lr *lockRetrier, path, newName string) error {
 	}
 	// 大文字小文字・正規化の違いだけの変更か（名前の変更の後の確認が要るか）を先に調べる。変更の方法自体は renameExclusiveSysSame が決める。
 	same := sameFileRename(s, d)
-	if err := retry(dst, func() error { return renameExclusiveSysSame(s, d) }); err != nil {
+	if same && lr.hooks.caseRenameNoopSet() {
+		// テスト用: 成功を返しても名前が変わらないボリューム（V1）を再現する。
+	} else if err := retry(dst, func() error { return renameExclusiveSysSame(s, d) }); err != nil {
 		return fail(err, dst)
 	}
 	if !same {
 		return nil
 	}
 	// 成功を返しても名前が変わらないボリュームがある（Windows の exFAT・FAT32。V1）ので、
-	// 親フォルダの列挙で新しい名前がバイト単位で現れたことを確かめ、現れなければ一時名を経由して 2 回で変える（§11.3）。
+	// 親フォルダの列挙で新しい名前がバイト単位で現れたことを確かめ、現れなければ途中名を経由して 2 回で変える（§11.3）。
 	if ok, err := dirHasName(dir, newName); err != nil || ok {
 		return nil // 列挙に失敗した場合は、名前の変更自体は成功しているので成功とする
 	}
-	tmpName, err := tempName()
+	tmpName, err := renameMidName()
 	if err != nil {
 		return fail(err, dst)
 	}
@@ -139,7 +141,7 @@ func renameWith(lr *lockRetrier, path, newName string) error {
 	}
 	if err := retry(dst, func() error { return renameExclusiveSys(t, d) }); err != nil {
 		if rerr := retry(p, func() error { return renameExclusiveSys(t, s) }); rerr != nil {
-			return fail(err, tmp) // 元の名前に戻せなかった。一時名のパスを Dest で返す
+			return fail(err, tmp) // 元の名前に戻せなかった。利用者のファイル・フォルダは途中名で残るので、そのパスを Dest で返す
 		}
 		return fail(err, dst)
 	}
@@ -161,9 +163,20 @@ func dirHasName(dir, name string) (bool, error) {
 
 // tempName は一時名（.fsops-<ランダム16進>.tmp。§10.1、§11.3）を返す。
 func tempName() (string, error) {
+	return randomName(".fsops-", ".tmp")
+}
+
+// renameMidName は、Rename の 2 段階の変更（§11.3）の途中名 .fsops-rename-<ランダム16進> を返す。
+// 途中で止まって残った場合、それは利用者のファイル・フォルダなので、一時ファイルの名前（tempName）と形を変える。
+func renameMidName() (string, error) {
+	return randomName(".fsops-rename-", "")
+}
+
+// randomName は、prefix と 16 進 16 文字の乱数と suffix をつないだ名前を返す。
+func randomName(prefix, suffix string) (string, error) {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", err
 	}
-	return ".fsops-" + hex.EncodeToString(b[:]) + ".tmp", nil
+	return prefix + hex.EncodeToString(b[:]) + suffix, nil
 }

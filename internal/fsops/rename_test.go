@@ -1,10 +1,14 @@
 package fsops
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/zredjet/tana/internal/fsops/internal/testfs"
 )
@@ -203,5 +207,81 @@ func TestRenameLongPath(t *testing.T) {
 	}
 	if got := testfs.ListNames(t, long); !slices.Equal(got, []string{"b"}) {
 		t.Errorf("names = %+q", got)
+	}
+}
+
+// twoStepRename は、1 回目の変更が成功を返しても名前が変わらない（Windows の exFAT・FAT32。V1）状況をフックで再現して、
+// path の名前を newName に変える（§11.3 の 2 段階の変更を通る）。failTo のパスへの変更は、使用中で失敗させ続ける（やり直しの待ちは置き換える）。
+func twoStepRename(t *testing.T, path, newName string, failTo ...string) error {
+	t.Helper()
+	h := &testHooks{
+		caseRenameNoop: true,
+		lockFault:      func(op, p string) bool { return op == "rename" && slices.Contains(failTo, p) },
+		lockWait:       func(string, time.Duration) {},
+	}
+	return renameWith(newLockRetrier(context.Background(), h), path, newName)
+}
+
+// requireFoldsCase は、大文字小文字だけの変更が §11.3 の確認（同じファイルへの変更）を通る、大文字小文字を区別しないフォルダでなければ Skip する。
+func requireFoldsCase(t *testing.T, dir string) {
+	t.Helper()
+	if !testfs.FoldsCase(t, dir) {
+		t.Skip("the folder is case-sensitive; a case-only rename is an ordinary rename there (§11.3)")
+	}
+}
+
+// TestRenameTwoStep は、§11.3 の 2 段階の変更で、途中名（.fsops-rename-<16 進>）を経由して名前が変わり、途中名が残らないことを確かめる。
+func TestRenameTwoStep(t *testing.T) {
+	t.Parallel()
+	root := testfs.TempDir(t)
+	requireFoldsCase(t, root)
+	testfs.Build(t, root, testfs.Tree{"a.txt": testfs.File("a")})
+	if err := twoStepRename(t, filepath.Join(root, "a.txt"), "A.txt"); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	if got := testfs.ListNames(t, root); !slices.Equal(got, []string{"A.txt"}) {
+		t.Errorf("names = %q, want [A.txt]", got)
+	}
+}
+
+// TestRenameTwoStepSecondFails は、2 段階の変更の 2 回目が失敗したら、元の名前に戻して、新しい名前を Dest にして失敗を返すことを確かめる（§11.3）。
+func TestRenameTwoStepSecondFails(t *testing.T) {
+	t.Parallel()
+	root := testfs.TempDir(t)
+	requireFoldsCase(t, root)
+	testfs.Build(t, root, testfs.Tree{"a.txt": testfs.File("a")})
+	dst := filepath.Join(root, "A.txt")
+	err := twoStepRename(t, filepath.Join(root, "a.txt"), "A.txt", dst)
+	var oe *OpError
+	if !errors.As(err, &oe) || oe.Kind != KindLocked || oe.Dest != dst {
+		t.Fatalf("err = %v, want KindLocked with Dest %s", err, dst)
+	}
+	if got := testfs.ListNames(t, root); !slices.Equal(got, []string{"a.txt"}) {
+		t.Errorf("names = %q, want [a.txt] (restored)", got)
+	}
+}
+
+// TestRenameTwoStepRollbackFails は、2 段階の変更で元の名前にも戻せなかった場合に、利用者のファイルが途中名で残り、
+// そのパスを Dest で返すこと、途中名が一時ファイルの名前（.fsops-<16 進>.tmp）と形が違うことを確かめる（§11.3）。
+func TestRenameTwoStepRollbackFails(t *testing.T) {
+	t.Parallel()
+	root := testfs.TempDir(t)
+	requireFoldsCase(t, root)
+	testfs.Build(t, root, testfs.Tree{"a.txt": testfs.File("user data")})
+	src := filepath.Join(root, "a.txt")
+	err := twoStepRename(t, src, "A.txt", filepath.Join(root, "A.txt"), src)
+	var oe *OpError
+	if !errors.As(err, &oe) || oe.Kind != KindLocked {
+		t.Fatalf("err = %v, want KindLocked", err)
+	}
+	name := filepath.Base(oe.Dest)
+	if filepath.Dir(oe.Dest) != root || !strings.HasPrefix(name, ".fsops-rename-") || strings.HasSuffix(name, ".tmp") {
+		t.Errorf("Dest = %s, want %s/.fsops-rename-<hex> (not a temp file name)", oe.Dest, root)
+	}
+	if got := testfs.ReadFile(t, oe.Dest); got != "user data" {
+		t.Errorf("%s = %q, want the user's file", oe.Dest, got)
+	}
+	if got := testfs.ListNames(t, root); !slices.Equal(got, []string{name}) {
+		t.Errorf("names = %q, want only [%s]", got, name)
 	}
 }

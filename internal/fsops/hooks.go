@@ -58,6 +58,9 @@ type testHooks struct {
 	// beforeSyncFile は、一時ファイルの同期（§10.5）の直前に、そのパスで呼ばれる。error を返すと、同期せずにそのエラーで失敗させる
 	// （ファイルの同期の失敗の注入用。I2）。
 	beforeSyncFile func(tmp string) error
+	// caseRenameNoop は、Rename の大文字小文字・正規化だけの変更で、1 回目の変更をせずに成功したものとして扱う
+	// （成功を返しても名前が変わらない Windows の exFAT・FAT32（V1）を再現し、§11.3 の 2 段階の変更を通すため）。
+	caseRenameNoop bool
 }
 
 func (h *testHooks) enterDir(path string) {
@@ -175,3 +178,5 @@ func (h *testHooks) syncFile(tmp string) error {
 	}
 	return nil
 }
+
+func (h *testHooks) caseRenameNoopSet() bool { return h != nil && h.caseRenameNoop }

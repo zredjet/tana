@@ -20,7 +20,7 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 | 未設定の決定を Skip として扱う（`copy.go` `copyTop`・`copyEntry`、`move.go` `moveItem`・`mergeEntry`） | TestCopyUnsetDecisionSkips、TestCopyMerge、TestMoveConflicts、TestMoveMerge | 共通 |
 | 排他リネーム（`rename.go` `renameExclusiveSysSame`、`rename_windows.go`・`rename_darwin.go`・`rename_linux.go` `renameExclusiveSys`・`renameAtExclusiveSys`。`rename.go` の `renameExclusive`・`renameReplace` はテストからだけ使う） | TestRenameExclusive、TestRenameExclusiveHardLink（同じファイルへのハードリンクを上書きしない）、TestRenameExclusiveSameFile | 共通 |
 | 排他リネームの代わりの手段（`rename_unix.go` `reserveThenRename`・`reserveThenRenameAt`） | TestReserveThenRename、TestRenameExclusiveOtherVolumes、TestCopyOtherVolumes、TestMoveMergeOtherVolumes | 共通・EXFAT/FAT32 |
-| `Rename`（`rename.go` `Rename`・`renameWith`。大文字小文字だけの変更の 2 段階の変更を含む） | TestRename、TestRenameExclusive | 共通 |
+| `Rename`（`rename.go` `Rename`・`renameWith`。大文字小文字だけの変更の 2 段階の変更を含む） | TestRename、TestRenameExclusive、TestRenameTwoStepSecondFails・TestRenameTwoStepRollbackFails（2 回目の失敗と元に戻す段） | 共通 |
 | コピーの最終名への排他リネーム・フォルダの作成・計画後に現れた衝突（`copy.go` `finalize`・`createResult`・`copyDir`） | TestCopyConflictAfterPlan、TestCopyConflictBeforeFinalRename、TestCopyMergeNewEntryAfterPlan、TestCopyTempReplacedBeforeFinalRename、TestCopySkipIgnoresSourceChange、TestCopyOtherVolumes | 共通・CROSSVOL・EXFAT/FAT32 |
 | 上書き・マージの直前の照合（`copy.go` `checkTarget`・`checkOverwrite`・`overwriteOnce`。移動でも使う） | TestCopyOverwriteTargetReplaced、TestMoveOverwriteTargetReplaced、TestOverwriteTargetReplacedSameSize（同じ大きさ・更新日時の別のファイル。fileID の照合）、TestCopyMergeTargetReplacedByLink、TestMergeTargetReplacedByDir（別の実フォルダ）、TestCopyTargetGone、TestMoveOverwriteTargetGone | 共通 |
 | 読み取り専用・使用中の上書き先（`copy.go` `checkOverwrite`・`replaceResult`、`attr_*.go` `targetReadOnlySys`、`copy_windows.go` `inUseSys`） | TestCopyOverwriteReadOnly、TestCopyOverwriteLocked、TestMoveOverwriteReadOnly | 共通・Windows |
@@ -175,9 +175,10 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
     照合に使うハンドルを、名前の変更を許さずに開くように直した（TestCopyZoneIdentifierLinkSwap。属性だけのアクセス権のハンドルは共有モードの検査の対象にならないので、読み取りのアクセス権も要求する）。
 17. （解決済み。2026-09-25 の監査）ごみ箱が使えないことを確かめるテストの一部が `FSOPS_TEST_TRASH` を見ず、防御が壊れると本物のごみ箱を呼びえた。
     ごみ箱へ移す呼び出しを、呼ばれたら失敗するものに差し替えた（`noRealTrash`）。
-18. （残っている。SPEC の案を検討中）`Rename` の 2 段階の変更（Windows の exFAT・FAT32 の大文字小文字だけの変更）の途中でプロセスが強制終了するか、元に戻せなかった場合、
-    利用者のファイル・フォルダが一時ファイルと同じ形の名前（`.fsops-<16 進>.tmp`）で残る。一時ファイルと見分けられず、ゴミとして消されるおそれがある。
-    2 回目の変更の失敗と元に戻す段は、テストされていない。
+18. （解決済み。2026-09-25 の監査）`Rename` の 2 段階の変更（Windows の exFAT・FAT32 の大文字小文字だけの変更）の途中でプロセスが強制終了するか、元に戻せなかった場合、
+    利用者のファイル・フォルダが一時ファイルと同じ形の名前（`.fsops-<16 進>.tmp`）で残り、ゴミとして消されるおそれがあった。
+    途中名を `.fsops-rename-<16 進>` に変え（SPEC §11.3）、`doc.go` に扱いを書いた。2 回目の変更の失敗と元に戻す段を、
+    `caseRenameNoop` フックで 2 段階の変更を通して TestRenameTwoStep・TestRenameTwoStepSecondFails・TestRenameTwoStepRollbackFails でテストした（大文字小文字を区別しないフォルダ。Linux の ext4 では Skip）。
 19. （受け入れる。仕様の限界）§13.3 の照合は、大きさと更新日時が同じ編集を見分けられない。更新日時の単位が粗い FAT32（2 秒）などで、
     コピーの後の同じ単位の中で大きさを変えずに書き換えられると、その編集は移動元の削除で失われうる。
 20. （受け入れる。起きにくい）EINTR のやり直し（SPEC §4）で、作成系の呼び出し（`mkdirat`・`symlinkat`・`O_CREAT|O_EXCL` の open・排他リネーム）が
