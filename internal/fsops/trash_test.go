@@ -88,18 +88,21 @@ func TestTrash(t *testing.T) {
 		"src/toplink":                testfs.DirSymlink(outside),
 		"src/" + testfs.NameJapanese: testfs.File("ja"),
 	}
+	names := []string{"file.txt", "dir", "links", "toplink", testfs.NameJapanese}
 	if runtime.GOOS == "windows" {
 		tree["src/links/junction"] = testfs.Junction(outside)
+		tree["src/topjunction"] = testfs.Junction(outside) // トップレベルのジャンクションも、リンク自体だけが入る（I4）
+		names = append(names, "topjunction")
 	}
 	testfs.Build(t, root, tree)
-	names := []string{"file.txt", "dir", "links", "toplink", testfs.NameJapanese}
 	var srcs []string
 	for _, n := range names {
 		srcs = append(srcs, filepath.Join(root, "src", n))
 	}
 	plan := mustPlan(t, Request{Op: OpTrash, Sources: srcs})
 	var stages []Stage
-	res := execPlan(t, context.Background(), plan, ExecOptions{Progress: func(p Progress) { stages = append(stages, p.Stage) }})
+	var last Progress
+	res := execPlan(t, context.Background(), plan, ExecOptions{Progress: func(p Progress) { stages = append(stages, p.Stage); last = p }})
 	for i, it := range res.Items {
 		if it.Outcome != OutcomeDone || it.Err != nil {
 			t.Errorf("%s: %+v, want Done", it.Src, it)
@@ -113,5 +116,8 @@ func TestTrash(t *testing.T) {
 	checkMarkers(t, root)
 	if len(stages) == 0 || stages[0] != StageTrash {
 		t.Errorf("stages = %v, want StageTrash", stages)
+	}
+	if last.DoneFiles != plan.TotalFiles() || last.DoneBytes != plan.TotalBytes() || last.DoneBytes > last.TotalBytes {
+		t.Errorf("final progress = %+v, want %d files and %d bytes", last, plan.TotalFiles(), plan.TotalBytes())
 	}
 }

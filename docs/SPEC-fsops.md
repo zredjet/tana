@@ -671,6 +671,8 @@ const (
 - ごみ箱が使えないと判断したら、その項目には何もせず、`OutcomeFailed`（`KindTrashUnavailable`）にする（I5）。
 - `NewPlan` は、ごみ箱が使えるかの事前確認（§12.2 の `GetDriveType` など、ファイルシステムを変更しないもの）を行い、使えない項目の `Item.Err` に `KindTrashUnavailable` を入れる。
   UI は実行前に「この項目はごみ箱に入りません」と示して、完全削除に切り替えるかを利用者に確認できる。`Execute` でも同じ確認をもう一度行う。
+  `Execute` の確認は、計画時ではなく実行時の項目の大きさで行う（計画の後に大きくなった項目を見逃さないため）。
+- ごみ箱へ移す操作が成功を返しても、元の場所に項目が残っていれば `OutcomeFailed`（`KindUnknown`）にする。
 
 ### 12.2 Windows
 
@@ -702,6 +704,12 @@ const (
   4. 進捗通知の `PreDeleteItem` で、フラグに `TSF_DELETE_RECYCLE_IF_POSSIBLE`（`0x80`）がなければ（ごみ箱に入らず完全削除になる場合）、`E_ABORT` を返して中止させ、その項目を `KindTrashUnavailable` にする（I5。V18 で、中止した項目が残ることを確認済み）。
   5. `PerformOperations` の後、`GetAnyOperationsAborted` と `PostDeleteItem` の結果で成否を決める。`PostDeleteItem` で渡されるごみ箱内の項目からパスが取れれば `TrashedPath` に入れる。
   - COM の vtable の呼び出しと進捗通知の実装は、cgo を使わず `syscall.SyscallN` と `syscall.NewCallback`（または x/sys/windows の同等のもの）で行う。
+    `syscall.NewCallback` で作るものは解放できず数に上限があるので、進捗通知の vtable はパッケージの初期化時に 1 回だけ作り、以後は変更しない。
+    進捗通知の状態は、操作ごとの通知のオブジェクトが持つ（パッケージレベルの可変状態を持たない）。
+  - COM は、スレッドを固定した専用の goroutine で初期化し、終わったらスレッドごと破棄する（Unlock しない）。
+    既に別の方式で初期化されている（`RPC_E_CHANGED_MODE`）場合もそのまま続ける（V18 で、どの方式でも動くことを確認済み）。
+  - `HRESULT` の成否は `SUCCEEDED`（最上位ビット）で判定する。ごみ箱に入れるのに成功しても、`PostDeleteItem` は `S_OK` ではなく
+    `COPYENGINE_S_DONT_PROCESS_CHILDREN`（`0x00270008`）を渡す（2026-09-24 の CI で確認）。
   - ごみ箱の最大サイズを超える項目は `PreDeleteItem` のフラグでは見分けられない（V18）。事前確認（上記）と `FOF_WANTNUKEWARNING` の併用で対処する（フェーズ3で承認）。
 - 分類できない `HRESULT` は `KindUnknown` にして値を `Err` に残す。
 - 既存ライブラリ（`hymkor/trash-go`、`rafshawn/go2trash` など）は実装の参考にしてよい。依存に加える場合は許可リストの変更になるので確認を取る。
@@ -711,6 +719,10 @@ const (
 - cgo と Objective-C で `NSFileManager` の `trashItemAtURL:resultingItemURL:error:` を呼ぶ（`#cgo LDFLAGS: -framework Foundation`）。autorelease pool で囲む。
 - 成功したら、ごみ箱内のパスを `ItemResult.TrashedPath` に入れる。
 - ネットワークボリュームなどで失敗した場合、エラーの内容から判断できれば `KindTrashUnavailable`、できなければ `KindUnknown`。
+  `NSCocoaErrorDomain` の `NSFeatureUnsupportedError`（3328）は `KindTrashUnavailable`。ほかは `NSFileNoSuchFileError` → NotFound、
+  `NSFileWriteNoPermissionError` → Permission、`NSFileWriteOutOfSpaceError` → NoSpace、`NSFileWriteVolumeReadOnlyError` → ReadOnly、
+  それ以外は下位の POSIX のエラー番号（`NSUnderlyingErrorKey`）を §17 で分類する。
+- パスは、ファイルシステムの表現のまま（`fileURLWithFileSystemRepresentation`）渡し、名前を変換しない（I6）。
 - `darwin && !cgo` のビルドでは常に `KindTrashUnavailable` を返す。
 
 ### 12.4 その他の OS

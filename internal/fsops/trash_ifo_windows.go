@@ -98,8 +98,8 @@ type progressSink struct {
 	vtbl        *[progressSinkMethods]uintptr
 	notRecycled bool   // PreDeleteItem で、ごみ箱に入らない（完全削除になる）と通知されたので中止した（§12.2 の手順 4）
 	posted      bool   // PostDeleteItem が呼ばれた
-	postHR      uint32 // PostDeleteItem の結果
-	trashed     string // ごみ箱の中の項目のパス（取得できた場合）
+	failedHR    uint32 // PostDeleteItem が失敗を通知した最初の結果（なければ 0）
+	trashed     string // ごみ箱の中の項目のパス（最初の PostDeleteItem で取得できた場合）
 }
 
 func newProgressSinkVtbl() *[progressSinkMethods]uintptr {
@@ -128,8 +128,15 @@ func newProgressSinkVtbl() *[progressSinkMethods]uintptr {
 		return sOK
 	})
 	v[progressSinkPostDeleteItem] = syscall.NewCallback(func(this *progressSink, flags uintptr, item *comObj, hr uintptr, newly *comObj) uintptr {
-		this.posted, this.postHR = true, uint32(hr)
-		this.trashed = newly.fileSysPath()
+		// フォルダの中身が 1 つずつ処理される場合は、中身ごとに呼ばれる。最初の通知（項目自体）のパスと、
+		// 最初の失敗を覚える（後の成功で失敗を上書きしない）。
+		if !this.posted {
+			this.trashed = newly.fileSysPath()
+		}
+		this.posted = true
+		if hresultFailed(uint32(hr)) && this.failedHR == 0 {
+			this.failedHR = uint32(hr)
+		}
 		return sOK
 	})
 	return &v
@@ -220,8 +227,8 @@ func trashLocked(src string) (string, error) {
 		return fail(classify(err, classifyOpts{}), err)
 	case aborted != 0 || !sink.posted:
 		return fail(KindUnknown, hresultErr(eAbort))
-	case hresultFailed(sink.postHR):
-		err := hresultErr(sink.postHR)
+	case sink.failedHR != 0:
+		err := hresultErr(sink.failedHR)
 		return fail(classify(err, classifyOpts{}), err)
 	}
 	return sink.trashed, nil

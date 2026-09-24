@@ -58,6 +58,7 @@ func (ex *executor) trashItem(it Item) ItemResult {
 		return res
 	}
 	res.Outcome, res.TrashedPath = OutcomeDone, trashed
-	ex.progress.done(it.Src, e.info)
+	// ごみ箱の項目は、計画で 1 件・0 バイトと数える（§6.3）ので、大きさは加えない。
+	ex.progress.done(it.Src, EntryInfo{Type: e.info.Type})
 	return res
 }
