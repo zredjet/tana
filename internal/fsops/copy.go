@@ -420,10 +420,13 @@ func (cp *copier) finalize(src string, tmp tempFile, dst string, decision Decisi
 	if oe != nil {
 		return final, out, oe
 	}
-	// リネームの直前の確認とリネームの間に置き換えられた場合（Unix ではリネームをハンドルに結び付けられないので、ごく短い隙間が残る）を、
-	// 報告できるようにする。
-	if now, err := statTop(final); err != nil || now.id != tmp.id {
-		return final, OutcomeFailed, &OpError{Op: "copy", Path: src, Dest: final, Kind: KindSourceChanged, Err: err}
+	// リネームの直前の確認とリネームの間に置き換えられた場合（リネームをハンドルに結び付けられないので、ごく短い隙間が残る）を、
+	// 報告できるようにする。Windows の exFAT・FAT32 の fileID（ファイルインデックス）は、同じフォルダの中でも名前の長さが変わる
+	// リネームで変わる（2026-09-24 の CI で確認）ので、そのボリュームでは確かめられない。
+	if tmp.id.method != idMethodByHandle {
+		if now, err := statTop(final); err != nil || now.id != tmp.id {
+			return final, OutcomeFailed, &OpError{Op: "copy", Path: src, Dest: final, Kind: KindSourceChanged, Err: err}
+		}
 	}
 	return final, OutcomeDone, nil
 }
