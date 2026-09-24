@@ -79,6 +79,37 @@ jobs:
           go test -count=1 -v ./internal/fsops/internal/probe/
           go test -count=1 -v -run 'TestLstatEntryWOF|OtherVolumes|ShortName|Junction|ReadOnly|TrashPrecheck|NoSpace|MoveMethod|TestDelete|TestRemoveRecorded|TestCopy|TestMove|TestTrash|Win32UnsafeNames|LongPath|AppleDouble' ./internal/fsops/
 
+  # V24: FAT32 のファイルの大きさの上限（4 GiB − 1 バイト）まで実際に書くプローブ（SPEC §19、§20）。
+  # 数 GB を書くので時間がかかり、windows ジョブと並行させるために分ける。
+  windows-fat32-large:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      # 空きが 4 GiB を超える FAT32 のボリュームとして、8 GB の容量可変の VHD を作る。
+      - name: Create large FAT32 VHD
+        shell: pwsh
+        run: |
+          Get-PSDrive -PSProvider FileSystem | Format-Table Name,Used,Free,Root
+          $vhd = Join-Path $env:RUNNER_TEMP "fsopsfat32large.vhd"
+          $script = Join-Path $env:RUNNER_TEMP "diskpart-fat32large.txt"
+          @(
+            "create vdisk file=`"$vhd`" maximum=8192 type=expandable",
+            "select vdisk file=`"$vhd`"",
+            "attach vdisk",
+            "create partition primary",
+            "format fs=fat32 quick label=FAT32LARGE",
+            "assign letter=Y"
+          ) | Set-Content -Encoding ascii $script
+          diskpart /s $script
+          if ($LASTEXITCODE -ne 0) { throw "diskpart failed ($LASTEXITCODE)" }
+          Get-Volume -DriveLetter Y | Format-Table DriveLetter,FileSystem,FileSystemLabel,Size,SizeRemaining
+          "FSOPS_PROBE_FAT32_LARGE_DIR=Y:\" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+      - run: go test -count=1 -v -timeout 25m -run TestV24Large ./internal/fsops/internal/probe/
+
   macos:
     # 非公開リポジトリでは、macOS のジョブは pull_request と workflow_dispatch のときだけ実行する（SPEC §19）。
     if: ${{ !github.event.repository.private || github.event_name != 'push' }}

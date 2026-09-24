@@ -1076,6 +1076,7 @@ type OpError struct {
 | `FSOPS_PROBE_FAT32_DIR` | FAT32 のボリューム上のフォルダ（Windows: VHD、macOS: hdiutil のイメージ、Linux: loop マウントした vfat） | 同上 |
 | `FSOPS_PROBE_TRASH_NUKE_DIR` | Windows: ごみ箱を「すぐに削除する」設定にしたボリューム上のフォルダ | 同上 |
 | `FSOPS_PROBE_TRASH_SMALL_DIR` | Windows: ごみ箱の最大サイズを 1 MB にしたボリューム上のフォルダ | 同上 |
+| `FSOPS_PROBE_FAT32_LARGE_DIR` | Windows: 空きが 4 GiB を超える FAT32 のボリューム上のフォルダ（V24。CI の windows-fat32-large ジョブだけが設定する） | 同上 |
 
 CI ではどちらも設定する（§19）。
 
@@ -1174,6 +1175,10 @@ hdiutil detach /Volumes/fsopstest
   2. `FSOPS_CROSSVOL_DIR`、`FSOPS_TEST_TRASH=1`、§18.2 の `FSOPS_PROBE_*` を `GITHUB_ENV` に設定する
   3. `go vet ./...`
   4. `go test -p 1 ./...`（`-p 1` は、別ボリュームを一杯にするテスト（§18.4「容量」）を、ほかのパッケージのテストと並行させないため）
+- **windows-fat32-large ジョブ（`windows-latest`）**
+  V24 のうち、FAT32 のファイルの大きさの上限まで実際に書くプローブ（数 GB を書くので時間がかかる）だけを、windows ジョブと並行して実行する。
+  1. diskpart で 8 GB の容量可変の VHD を作成・アタッチして FAT32 でフォーマットし、`FSOPS_PROBE_FAT32_LARGE_DIR` に設定する。
+  2. `go test -count=1 -v -run TestV24Large ./internal/fsops/internal/probe/`
 - **macos ジョブ（`macos-latest`）**
   1. `hdiutil` で 64 MB の APFS イメージを作成してマウントする（§18.3 と同じ）。さらに exFAT と FAT32 のイメージを作ってマウントする
   2. `FSOPS_CROSSVOL_DIR=/Volumes/fsopstest`、`FSOPS_TEST_TRASH=1`、`FSOPS_PROBE_EXFAT_DIR`、`FSOPS_PROBE_FAT32_DIR` を設定する
@@ -1327,6 +1332,9 @@ hdiutil detach /Volumes/fsopstest
     macOS の exFAT はどれも `ENOSPC`。Windows では FAT32・exFAT とも、上限を超える場合も含めてどれも `ERROR_DISK_FULL`（112）で、大きさは 0 のまま。
     Windows は空き容量を先に確かめているとみられ、64 MB のボリュームでは上限を超えたときのエラー番号がわからない（未確定）。
     → Unix の `EFBIG` は容量不足と区別できる。Windows は、空きが 4 GiB を超える FAT32 のボリュームで確かめてから決める。
+  - Windows の追加の確認（`TestV24Large`。§19 の windows-fat32-large ジョブ、`FSOPS_PROBE_FAT32_LARGE_DIR`）: 空きが 4 GiB を超える FAT32 で、
+    上限を超える位置への 1 バイトの書き込み・大きさの変更と、コピーと同じく 1 MiB ずつ上限ちょうどまで順に書いた後の 1 バイトの書き込みのエラー番号を記録する。
+  - **結果（Windows、空きが 4 GiB を超える FAT32）:** （CI の結果を待つ）
 
 ---
 

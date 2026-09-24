@@ -59,6 +59,7 @@ const (
 	FAT32Env      = "FSOPS_PROBE_FAT32_DIR"       // FAT32 のボリューム（Windows: VHD、macOS: hdiutil のイメージ、Linux: loop マウントした vfat）
 	TrashNukeEnv  = "FSOPS_PROBE_TRASH_NUKE_DIR"  // Windows: ごみ箱を「すぐに削除する」設定にした NTFS のボリューム
 	TrashSmallEnv = "FSOPS_PROBE_TRASH_SMALL_DIR" // Windows: ごみ箱の最大サイズを 1 MB にした NTFS のボリューム
+	FAT32LargeEnv = "FSOPS_PROBE_FAT32_LARGE_DIR" // Windows: 空きが 4 GiB を超える FAT32 のボリューム（V24。CI の別ジョブ）
 )
 
 // CrossVolDir は、FSOPS_CROSSVOL_DIR の中にこのテスト専用のフォルダを作って返す。テストの終了時に削除する。
