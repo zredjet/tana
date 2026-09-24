@@ -389,3 +389,40 @@ func TestDeleteVanishedEntries(t *testing.T) {
 		t.Error("the tree was not deleted")
 	}
 }
+
+// TestDeleteTopLevelMovedAway は、完全削除で、確かめた後にトップレベルの項目が別の場所へ移されたら（フックで注入）、
+// 何も削除していないので Done にせず、Failed（KindNotFound）にすることを確かめる（§7.3。報告を実際の状態と合わせる）。
+func TestDeleteTopLevelMovedAway(t *testing.T) {
+	t.Parallel()
+	root := testfs.TempDir(t)
+	testfs.Build(t, root, testfs.Tree{"dir/sub/b": testfs.File("b"), "f.txt": testfs.File("f")})
+	dir, file := filepath.Join(root, "dir"), filepath.Join(root, "f.txt")
+	moveAway := func(p string) {
+		if err := os.Rename(testfs.ExtendedPath(p), testfs.ExtendedPath(p+"-moved")); err != nil {
+			t.Errorf("inject: %v", err)
+		}
+	}
+	h := &testHooks{
+		beforeEnterDir: func(p string) {
+			if p == dir {
+				moveAway(p)
+			}
+		},
+		beforeRemove: func(p string) {
+			if p == file {
+				moveAway(p)
+			}
+		},
+	}
+	plan := mustPlan(t, Request{Op: OpDelete, Sources: []string{dir, file}})
+	res := execPlan(t, context.Background(), plan, ExecOptions{hooks: h})
+	for _, it := range res.Items {
+		if it.Outcome != OutcomeFailed || it.Err == nil || it.Err.Kind != KindNotFound {
+			t.Errorf("%s: %+v, want Failed with KindNotFound (nothing was deleted)", it.Src, it)
+		}
+	}
+	if res.Status != StatusCompletedWithErrors {
+		t.Errorf("status = %v, want CompletedWithErrors", res.Status)
+	}
+	wantFiles(t, root, map[string]string{"dir-moved/sub/b": "b", "f.txt-moved": "f"})
+}
