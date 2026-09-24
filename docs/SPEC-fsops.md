@@ -519,6 +519,13 @@ const (
   4. 手順 3 の `rename` が失敗したら、手順 1 で作ったものを（fileID が一致する場合だけ）消す。
   - 残る危険: 手順 2 と 3 の間に、別のプロセスが確保した名前を消して同じ名前で作り直した場合に限り、それを上書きしうる（I1）。
     排他的な操作がないボリュームで許容する唯一の例外として、ここに明記する。手順と動作は V12 の追加確認で確かめた。
+    - 危険の大きさ: 起きうるのは、手順 2 と 3 の間の数回のシステムコールの間だけ。フォルダは、空でないフォルダへの `rename` が失敗するので、
+      失われうるのは作り直された空のフォルダだけ。データを失いうるのはファイルの場合だけ。
+    - 手順 1 と 3 の間にプロセスが強制終了すると、最終名に空のファイル・空のフォルダ（確保したもの）が残る。
+      データは一時ファイル（コピー）または移動元（移動・`Rename`）に残っているので、失われない。
+    - 閉じられない理由（V21）: この代わりの手段を使うのは実際には macOS の exFAT だけで、そこには排他リネームの代わりになる不可分な操作
+      （ハードリンク、`RENAME_SWAP`、`clonefile`）が 1 つもない。Windows・Linux の exFAT・FAT32・vfat では排他リネームそのものが使える。
+      そのため、この危険は受け入れる（総点検の穴 5）。
 
 ### 8.5 名前を変換しない
 
@@ -1227,6 +1234,13 @@ hdiutil detach /Volumes/fsopstest
   §17 では Unix に `KindLinkUnsupported` の対応がなく、`EPERM` などは `KindPermission` になる。対応を加えるかを、結果を見て決める。
   - **結果（2026-09-24、windows-latest・macos-latest・ubuntu-latest、Go 1.27.1）:** Windows の exFAT・FAT32 では `ERROR_INVALID_FUNCTION`（1）、Linux の vfat では `EPERM` で失敗した。
     macOS の exFAT・FAT32（`hdiutil` のイメージ）では作成できた。→ リンクの作成時に限り、どちらも `KindLinkUnsupported` にする（§17）。
+
+- **V21** 排他リネーム（§8.4）の代わりになる不可分な操作が、ボリュームの種類ごとに使えるか（総点検の穴 5。§8.4 の代わりの手段の残る危険を閉じられるか）。
+  - **結果（2026-09-24、windows-latest・macos-latest・ubuntu-latest、Go 1.27.1）:** macOS の exFAT では、`renamex_np` の `RENAME_EXCL`・`RENAME_SWAP`、
+    ハードリンク（`link`）、`clonefile` のどれも `ENOTSUP`。macOS の FAT32 では `RENAME_EXCL`・`RENAME_SWAP` が使え、ハードリンクと `clonefile` は使えない。
+    Windows の exFAT・FAT32 では `MoveFileExW(0)` が使え（既存の名前には `ERROR_ALREADY_EXISTS`）、ハードリンクは `ERROR_INVALID_FUNCTION`。
+    Linux の vfat では `RENAME_NOREPLACE`・`RENAME_EXCHANGE` が使え、ハードリンクは `EPERM`。どの環境でも、既存のファイルは上書きされなかった。
+    → §8.4 の代わりの手段が使われるのは macOS の exFAT だけで、そこには代わりになる不可分な操作がない。§8.4 の残る危険は受け入れる。
 
 ---
 
