@@ -371,8 +371,9 @@ type tempFile struct {
 
 // matches は、now が書き終えた一時ファイルのままか（fileID・通常のファイル・大きさ・更新日時が一致するか）を返す。
 // fileID だけで判断しないのは、削除と作り直しで同じ番号が再利用されるファイルシステムがあるため（Linux の ext4。§7.3、V16）。
+// 更新日時をまだ記録していない（メタデータを設定する前の）一時ファイルでは、更新日時は比べない。
 func (t tempFile) matches(now dirEntry) bool {
-	return now.id == t.id && now.info.Type == TypeFile && now.info.Size == t.size && now.info.ModTime.Equal(t.mtime)
+	return now.id == t.id && now.info.Type == TypeFile && now.info.Size == t.size && (t.mtime.IsZero() || now.info.ModTime.Equal(t.mtime))
 }
 
 // check は、一時ファイルの名前にあるのが書き終えた一時ファイルのままか（matches）を確かめる。
@@ -575,11 +576,17 @@ func (cp *copier) writeTemp(src, dst string, e dirEntry, dd *secDir) (tempFile, 
 		return tempFile{}, srcMeta{}, nil, fail(err)
 	}
 	closed, keep := false, false
+	var recorded *tempFile // fileID を記録した後の一時ファイル
 	defer func() {
 		if !closed {
 			out.Close()
 		}
-		if !keep {
+		switch {
+		case keep:
+		case recorded != nil:
+			// fileID を記録した後は、一時ファイルのままの場合だけ消す（§10.1 の手順 8。置き換えたものは消さない）。
+			recorded.remove(cp.ex.locks)
+		default:
 			cp.ex.locks.removeTemp(dd, tmpName, tmp)
 		}
 	}()
@@ -630,6 +637,7 @@ func (cp *copier) writeTemp(src, dst string, e dirEntry, dd *secDir) (tempFile, 
 	if err != nil {
 		return tempFile{}, srcMeta{}, nil, fail(withUserPaths(err, tmp, ""))
 	}
+	recorded = &tempFile{dir: dd, name: tmpName, path: tmp, id: tmpID, size: fi.Size()}
 	closed = true
 	if err := out.Close(); err != nil {
 		return tempFile{}, srcMeta{}, nil, fail(withUserPaths(err, tmp, ""))
