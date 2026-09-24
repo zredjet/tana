@@ -470,7 +470,7 @@ const (
 | ごみ箱へ移す操作の後、元の項目が元の場所になく、ごみ箱の中の項目も確かめられない（§12.1） | TrashUnconfirmed | ごみ箱へ移す呼び出しのエラー（なければ `KindUnknown`） |
 
 - Status: キャンセルされたら `StatusCanceled`。
-  それ以外で、Failed・Partial・CopiedSourceKept・TrashUnconfirmed、または Err 付きの Skipped が 1 件でもあれば `StatusCompletedWithErrors`。それ以外は `StatusCompleted`。
+  それ以外で、Failed・Partial・CopiedSourceKept・TrashUnconfirmed、または Err 付きの Skipped（`KindLinkSkipped` を除く）が 1 件でもあれば `StatusCompletedWithErrors`。それ以外は `StatusCompleted`。
 
 ---
 
@@ -942,11 +942,14 @@ const (
 
 | 種類 | コピー（`LinkKeep`） | コピー（`LinkSkip`） | 移動（同一ボリューム） | ごみ箱・完全削除 |
 |---|---|---|---|---|
-| `TypeSymlink` | リンク先の文字列をそのまま使ってリンクを作る。権限不足なら `KindLinkUnsupported` で失敗 | Skipped（`KindLinkUnsupported`） | リンク自体を移動 | リンク自体だけ |
+| `TypeSymlink` | リンク先の文字列をそのまま使ってリンクを作る。権限不足なら `KindLinkUnsupported` で失敗 | Skipped（`KindLinkSkipped`） | リンク自体を移動 | リンク自体だけ |
 | `TypeJunction` | 複製しない。Skipped（`KindLinkUnsupported`） | 同左 | リンク自体を移動 | リンク自体だけ |
 | `TypeSpecial` | 複製しない。Skipped（`KindUnsupportedType`） | 同左 | そのまま移動 | エントリ自体だけ |
 
 - ボリュームをまたぐ移動は「コピー → 移動元の削除」なので、コピーの列に従う。リンクや特殊なファイルが Skipped になった項目は、移動元を削除しない（§11.2）。
+- `LinkSkip` で複製しなかったリンクは、利用者が選んだ方針によるものなので、`KindLinkSkipped` で報告し、エラーとは扱わない。
+  コピーでは、衝突の決定による Skip と同じく、フォルダの結果を Partial にせず、`Status` もエラーに数えない（`Details` には入れる）。
+  移動では、移動元のリンクが移動されずに残るので、これまでどおりフォルダの結果を Partial にし、移動元に手を付けない（§11.2 の手順 2）。
 - 相対パスのシンボリックリンクは、リンク先の文字列を書き換えない。
   Windows ではリンク先を `os.Readlink` で読むため、絶対パスのリンク先は `\??\C:\x` の形が `C:\x` の形になる（`CreateSymbolicLink` が同じリンク先として作り直す）。
 - シンボリックリンクは一時名を使わず、最終名（自動リネームでは候補名）に直接作る。リンクの作成は不可分で、名前が存在すれば失敗するため、I1・I3 を満たす。
@@ -1044,6 +1047,7 @@ const (
 	KindMountPoint       // 別のボリュームがマウントされたフォルダ。削除のために中に入らない（§13.1）
 	KindVerifyFailed     // コピーした内容が元と一致しない（§10.4）
 	KindSyncFailed       // 同期（fsync）に失敗した。書いた内容が永続化されたか保証できない（§10.5）
+	KindLinkSkipped      // LinkSkip の方針でリンクを複製しなかった（エラーではない。§14.2）
 )
 
 type OpError struct {
