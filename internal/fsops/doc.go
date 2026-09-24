@@ -1,5 +1,81 @@
 // Package fsops はファイラーのファイル操作（コピー・移動・名前の変更・ごみ箱・完全削除）を担う。
+// 仕様は docs/SPEC-fsops.md、不変条件とそれを守るテストの対応は docs/fsops-invariants.md を参照。
 //
-// 操作は計画（NewPlan。ファイルシステムを変更しない）と実行（Plan.Execute）の 2 段階に分かれる。
-// 仕様は docs/SPEC-fsops.md を参照。
+// # 使い方の流れ
+//
+// 操作は、計画（NewPlan）と実行（Plan.Execute）の 2 段階に分かれる。
+//
+//	plan, err := fsops.NewPlan(ctx, fsops.Request{Op: fsops.OpCopy, Sources: srcs, DestDir: dest})
+//	// err はリクエスト全体の問題（相対パス、Sources の重複・入れ子など）とキャンセルだけ。
+//	for _, it := range plan.Items() { /* it.Err があれば、その項目は実行されない（理由を表示する） */ }
+//	for _, c := range plan.Conflicts() { /* 利用者に決定を聞き、plan.Decide(c.ID, d) で設定する */ }
+//	go func() {
+//		res, err := plan.Execute(ctx, fsops.ExecOptions{Progress: onProgress})
+//		// res.Items は plan.Items() と同じ順・同じ件数。
+//	}()
+//
+// 要点:
+//
+//   - NewPlan はファイルシステムを変更しない。計画の内容（項目・衝突・合計・警告）を見せてから実行できる。
+//   - パスはすべて絶対パスで渡す（相対パスは KindInvalidRequest）。ボリュームのルートは Sources に指定できない。
+//     返されるパス（結果・エラー・進捗）は、Windows でも \\?\ の付かない形。
+//   - Execute は同期的に動くので、UI のスレッドとは別の goroutine で呼ぶ。1 つの Plan は 1 回だけ実行できる。
+//     Execute の開始時に決定が固定され、以後の Decide は error を返す。
+//   - Progress は Execute を実行している goroutine から、100 ミリ秒に 1 回までに間引いて呼ばれる
+//     （項目の区切りと終了時には必ず呼ばれる）。すぐに戻ること。UI への反映は UI 側でスレッドを切り替える。
+//   - キャンセルは ctx で行う。処理中の項目は安全に中断され（書きかけのファイルは残らない）、残りの項目は
+//     OutcomeSkipped（KindCanceled）になり、Result.Status は StatusCanceled になる。
+//
+// # 衝突
+//
+// 計画時に見つかった衝突（コピー先・移動先に同名のものがある）は Plan.Conflicts で得る。
+// 決定のゼロ値（DecisionUnset）はスキップと同じ扱いなので、何も決めなければ何も上書きされない。
+// 使える決定は衝突の種類で決まる（ファイル同士だけが上書き、フォルダ同士だけがマージ、自分自身のフォルダへの
+// コピーは自動リネームとスキップだけ。SPEC §9.1）。使えない決定は Decide が error を返す。
+// フォルダ同士の衝突の中で見つかった衝突は Conflict.Parent に親の衝突の ID を持ち、親をマージにした場合だけ使われる。
+// 計画の後に現れた衝突は、上書きせずに OutcomeSkipped（KindExist）で報告される。
+//
+// # 結果
+//
+// ItemResult.Outcome と Err の組み合わせは SPEC §7.4 の表に従う。主なもの:
+//
+//   - OutcomeDone: 完了。Details に衝突の決定によるスキップ（Err が nil）が入ることがある。
+//   - OutcomeSkipped: Err が nil なら衝突の決定によるスキップ。そうでなければ Err.Kind が理由。
+//   - OutcomePartial: フォルダの一部だけ処理できた。Details に処理できなかったエントリが名前順に入る。
+//   - OutcomeCopiedSourceKept: ボリュームをまたぐ移動で、移動先は完成したが移動元の一部を残した
+//     （コピー後に変更されたファイルなど。Details が残したパス）。データは失われていない。
+//   - Warnings: データは無事だが、更新日時などのメタデータを保持できなかった（KindMetadata）。
+//
+// fsops は利用者向けのメッセージを作らない。エラーは *OpError で、Kind（KindOf で取り出せる）から
+// UI がメッセージを作る。OpError.Error() はログ用の英語の文字列。
+//
+// # ごみ箱と完全削除
+//
+// OpTrash で、ごみ箱が使えない項目（ネットワーク上・リムーバブル・ごみ箱の最大サイズを超える項目・
+// ごみ箱が無効な設定・Linux・cgo なしの macOS のビルドなど）は、計画時の Item.Err が KindTrashUnavailable になり、
+// 実行しても何もしない。fsops は完全削除に黙って切り替えない。UI は「ごみ箱に入りません」と示し、
+// 利用者が完全削除を選んだら、その項目で OpDelete の計画を作り直して実行する。
+// OpDelete は取り消せないので、UI 側で明示的な確認を経た場合だけ使う。
+//
+// Windows では、ごみ箱に入らないと Windows が判断した場合に備えて完全削除の確認ダイアログを出す設定にしている
+// （事前確認が見落とした場合の安全装置。SPEC §12.2）。そのダイアログが出ると Execute は止まり、ctx では中断できない。
+// macOS のごみ箱は cgo を使う。CGO_ENABLED=0 でビルドすると、ごみ箱は常に使えない。
+//
+// # 移動
+//
+// OpMove は、同じボリューム内ならリネーム（MethodRename）、ボリュームをまたぐならコピーしてから移動元を消す
+// （MethodCopyThenRemove）。後者は、移動先への書き込み・同期・検証がすべて済んだ項目だけ、コピーしたと記録した
+// エントリだけを移動元から消す。途中で失敗・キャンセルした項目の移動元には手を付けない。
+//
+// # 名前の変更
+//
+// Rename(path, newName) は上書きを一切しない。大文字小文字・Unicode の正規化だけが違う名前への変更もできる。
+// newName はパスの区切りを含まない名前で、OS で使えない名前は KindInvalidName。
+//
+// # 保証すること
+//
+// どの操作も、正常終了・失敗・キャンセルのどの場合も、承認されていない上書きをしない、書きかけのファイルを
+// 最終名で残さない、リンクの先に入り込んで削除・移動しない、黙って完全削除しない、ファイル名を変換しない
+// （SPEC §2 の I1〜I7）。途中で止まった場合に起こりうるのは、「移動元と移動先の両方に同じものがある」ことと、
+// 「.fsops-<16 進>.tmp という一時ファイルが残る」ことだけ（後者はプロセスが強制終了した場合だけ）。
 package fsops

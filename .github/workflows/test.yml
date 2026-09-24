@@ -149,3 +149,5 @@ jobs:
         run: go test -count=1 -v ./internal/fsops/internal/probe/
       # ごみ箱が使えないこと（KindTrashUnavailable）を確かめる（§18.4 の I5、§19）。
       - run: go test -count=1 -v -run 'TestTrashUnavailable|TestNewPlanTrashPrecheck' ./internal/fsops/
+      # 動作確認用 CLI（fsopsctl）のテスト。ごみ箱が使えない環境で完全削除に切り替えないことも確かめる。
+      - run: go test -count=1 -v ./cmd/...
