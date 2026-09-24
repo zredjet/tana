@@ -163,6 +163,9 @@ func (mv *mover) rename(parent *secDir, src, dst string, e dirEntry, pc *planned
 	var out Outcome
 	var oe *OpError
 	switch {
+	case pc != nil && pc.c.Decision == DecisionOverwrite && pc.dstID == e.id && !e.id.synthetic():
+		// 上書き先が移動元と同じファイル（ハードリンク）。rename は何もせずに成功するので、Done と報告しないよう失敗にする（§7.3）。
+		final, out, oe = dst, OutcomeFailed, &OpError{Op: "move", Path: src, Dest: dst, Kind: KindSameFile}
 	case pc != nil && pc.c.Decision == DecisionOverwrite:
 		final = dst
 		out, oe = locks.result(dst, func() (Outcome, *OpError) { return overwriteOnce(src, dst, pc, dd, do) })

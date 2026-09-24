@@ -26,9 +26,6 @@ func statIDSys(p string, follow bool) (idStat, error) {
 	return idStatFromStat(&st), nil
 }
 
-// syntheticIno は、macOS の exFAT・FAT32 で空の通常のファイルに付く仮の ino（2^63 以上。操作のたびに変わる。V25）の代わりに使う一定の値。
-const syntheticIno = 1 << 63
-
 func idStatFromStat(st *unix.Stat_t) idStat {
 	var id fileID
 	id.method = idMethodDevIno

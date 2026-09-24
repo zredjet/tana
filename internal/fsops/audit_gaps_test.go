@@ -367,3 +367,22 @@ func TestLockRetryCancelTempCleanup(t *testing.T) {
 		t.Errorf("dest has %v, want nothing (I3)", names)
 	}
 }
+
+// TestMoveOverwriteHardLinkToSource は、移動の上書きで、上書き先が移動元と同じファイルへのハードリンクなら、リネームせずに
+// Failed（KindSameFile）にし、両方の名前が残ることを確かめる（§7.3。Unix の rename は何もせずに成功を返し、Done と報告していた）。
+func TestMoveOverwriteHardLinkToSource(t *testing.T) {
+	t.Parallel()
+	root := testfs.TempDir(t)
+	testfs.Build(t, root, testfs.Tree{"src/f.txt": testfs.File("data"), "dest": testfs.Dir()})
+	src, dst := filepath.Join(root, "src", "f.txt"), filepath.Join(root, "dest", "f.txt")
+	if err := os.Link(testfs.ExtendedPath(src), testfs.ExtendedPath(dst)); err != nil {
+		t.Skipf("hard links are not available here: %v", err)
+	}
+	plan := mustPlan(t, Request{Op: OpMove, Sources: []string{src}, DestDir: filepath.Join(root, "dest")})
+	decide(t, plan, dst, DecisionOverwrite)
+	res := execPlan(t, context.Background(), plan, ExecOptions{})
+	if it := res.Items[0]; it.Outcome != OutcomeFailed || it.Err == nil || it.Err.Kind != KindSameFile {
+		t.Errorf("result = %+v, want Failed with KindSameFile", it)
+	}
+	wantFiles(t, root, map[string]string{"src/f.txt": "data", "dest/f.txt": "data"})
+}
