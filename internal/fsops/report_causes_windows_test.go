@@ -48,17 +48,27 @@ func (c *cancelAfterCtx) Err() error {
 	return nil
 }
 
-// TestNewPlanCanceledDuringTrashPrecheck は、最後の項目のごみ箱の事前確認（中身の大きさを数える走査）の途中でキャンセルされたら、
-// NewPlan が KindCanceled のエラーを返すことを確かめる（§6。キャンセルが Item.Err に入ったまま計画が返り、Execute が
-// StatusCanceled になっていた）。
+// TestNewPlanCanceledDuringTrashPrecheck は、ごみ箱の事前確認（中身の大きさを数える走査）の途中でキャンセルされたら、
+// NewPlan が KindCanceled のエラーを返し、キャンセルを Item.Err に入れた計画を返さないことを確かめる（§6。
+// 最後の項目でキャンセルされると、計画が返り、Execute が StatusCanceled になっていた）。
+// キャンセルされる時点（Err を何回目に呼んだときか）を 0 から順にずらし、どの時点でも成り立つことを確かめる。
 func TestNewPlanCanceledDuringTrashPrecheck(t *testing.T) {
 	t.Parallel()
 	root := testfs.TempDir(t)
-	testfs.Build(t, root, testfs.Tree{"dir/a": testfs.File("a"), "dir/b": testfs.File("b")})
-	ctx := &cancelAfterCtx{Context: context.Background()}
-	ctx.n.Store(1) // ループの冒頭の確認は通し、事前確認の走査の中でキャンセルされる
-	plan, err := NewPlan(ctx, Request{Op: OpTrash, Sources: []string{filepath.Join(root, "dir")}})
-	if KindOf(err) != KindCanceled || plan != nil {
-		t.Errorf("NewPlan = %v, %v; want nil and KindCanceled", plan, err)
+	testfs.Build(t, root, testfs.Tree{"dir/a": testfs.File("a"), "dir/b": testfs.File("b"), "dir/c": testfs.File("c")})
+	for n := range 12 {
+		ctx := &cancelAfterCtx{Context: context.Background()}
+		ctx.n.Store(int64(n))
+		plan, err := NewPlan(ctx, Request{Op: OpTrash, Sources: []string{filepath.Join(root, "dir")}})
+		switch {
+		case err != nil && (KindOf(err) != KindCanceled || plan != nil):
+			t.Errorf("cancel after %d: NewPlan = %v, %v; want nil and KindCanceled", n, plan, err)
+		case err == nil:
+			for _, it := range plan.Items() {
+				if KindOf(it.Err) == KindCanceled {
+					t.Errorf("cancel after %d: the plan was returned with a canceled item %s", n, it.Src)
+				}
+			}
+		}
 	}
 }
