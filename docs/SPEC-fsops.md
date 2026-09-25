@@ -1006,6 +1006,14 @@ const (
 
 保持しないもの（§21）: ACL、所有者、作成日時、その他の代替データストリーム、その他の拡張属性、リソースフォーク。
 
+保持しないもののうち、利用者が付けた情報でファイルごとに有無が分かるものがコピー元のファイル・フォルダにあれば、`Warnings` に `KindMetadata`
+（`OnDest` は偽。`Err` に保持しなかった名前）を加える（コピーとボリュームをまたぐ移動。ボリュームをまたぐ移動では移動元が消えるので、黙って失わないため）。
+同一ボリュームの移動はリネームで、すべて残るので調べない。調べられなければ（列挙の失敗）警告しない。
+- macOS: 拡張属性 `com.apple.metadata:_kMDItemUserTags`（タグ）、`com.apple.metadata:kMDItemFinderComment`（コメント）、`com.apple.ResourceFork`（リソースフォーク）。
+- Linux: `user.` で始まる拡張属性。
+- Windows: `Zone.Identifier` 以外の名前付きの代替データストリーム（`GetFileInformationByHandleEx` の `FileStreamInfo`）。
+- 作成日時・ACL・所有者はどのファイルにもあるので警告しない（§21 の「保持しない」のとおり）。
+
 メタデータの設定に失敗しても、データが無事なら項目は `OutcomeDone` とし、`Warnings` に `KindMetadata` を加える。
 
 ---
