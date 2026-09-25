@@ -143,11 +143,16 @@ func unkeptStreams(h windows.Handle) []string {
 
 // streamNames は unkeptStreams の本体。列挙できなかった理由も返す（テストで確かめるため）。
 func streamNames(h windows.Handle) ([]string, error) {
-	buf := make([]byte, 4096)
+	// FILE_STREAM_INFO は LARGE_INTEGER を含むので、8 バイト境界にそろえる（そろえないと ERROR_NOACCESS）。
+	alloc := func(n int) []byte {
+		backing := make([]uint64, n/8)
+		return unsafe.Slice((*byte)(unsafe.Pointer(&backing[0])), n)
+	}
+	buf := alloc(4096)
 	for {
 		err := windows.GetFileInformationByHandleEx(h, windows.FileStreamInfo, &buf[0], uint32(len(buf)))
 		if errors.Is(err, windows.ERROR_MORE_DATA) && len(buf) < 1<<20 {
-			buf = make([]byte, len(buf)*4)
+			buf = alloc(len(buf) * 4)
 			continue
 		}
 		if err != nil {
