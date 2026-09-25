@@ -282,10 +282,19 @@ func removeVerified(s string, e dirEntry, recorded bool) error {
 	if clearRO {
 		access |= windows.FILE_WRITE_ATTRIBUTES
 	}
-	h, err := windows.CreateFile(s16, access,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING,
-		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+	var h windows.Handle
+	err, pending := callDeletePending(func() error {
+		var err error
+		h, err = windows.CreateFile(s16, access,
+			windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING,
+			windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+		return err
+	})
 	if err != nil {
+		if pending {
+			// ほかのプロセスが開いたまま削除の印を付けた（削除待ち）。そのプロセスが閉じれば消えるので使用中とする（§17、§17.1）。
+			return deletePendingErr("remove", s, &os.PathError{Op: "CreateFile", Path: s, Err: err})
+		}
 		return &os.PathError{Op: "remove", Path: s, Err: err}
 	}
 	defer windows.CloseHandle(h) // 削除の印を付けたハンドルを閉じると削除される
@@ -326,6 +335,11 @@ func removeVerified(s string, e dirEntry, recorded bool) error {
 	}
 	if err := markDelete(h); err != nil {
 		restore()
+		if e.dirAttr && errors.Is(err, windows.ERROR_DIR_NOT_EMPTY) && onlyDeletePending(s) {
+			// 残っているのは削除待ちだけ（exFAT・FAT32 では fsops が付けた印も、ほかのハンドルが開いていると残る）。
+			// ほかのプロセスが閉じれば空になるので、使用中とする（§13.2、§17.1）。
+			return deletePendingErr("remove", s, &os.PathError{Op: "remove", Path: s, Err: err})
+		}
 		return &os.PathError{Op: "remove", Path: s, Err: err}
 	}
 	return nil

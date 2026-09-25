@@ -41,24 +41,22 @@ func holdPending(t *testing.T, p string, markDelete bool) (release func()) {
 	return release
 }
 
-// TestDeletePendingByOther は、ほかのプロセスが開いたまま削除の印を付けた（削除待ちの）ファイルの完全削除を、
-// 「権限がありません」ではなく使用中（KindLocked）として扱い、§17.1 のとおりやり直すことを確かめる（§17、§17.1、V26）。
-// 待つ間にそのプロセスが閉じれば Done、閉じなければ KindLocked。
+// TestDeletePendingByOther は、ほかのプロセスが開いたまま削除の印を付けた（削除待ちの）ファイルを、「権限がありません」ではなく
+// 使用中（KindLocked）として扱い、§17.1 のとおりやり直すことを確かめる（§17、§17.1、V26）。
 func TestDeletePendingByOther(t *testing.T) {
 	t.Parallel()
-	t.Run("released while waiting", func(t *testing.T) {
+	// フォルダの中の削除待ちのファイル: 待つ間にそのプロセスが閉じれば、やり直しで消えていて、フォルダも削除できる（Done）。
+	t.Run("inside a folder, released while waiting", func(t *testing.T) {
 		t.Parallel()
 		root := testfs.TempDir(t)
-		testfs.Build(t, root, testfs.Tree{"f.txt": testfs.File("f"), "tree/pending.txt": testfs.File("p"), "tree/other.txt": testfs.File("o")})
-		release1 := holdPending(t, filepath.Join(root, "f.txt"), true)
-		release2 := holdPending(t, filepath.Join(root, "tree", "pending.txt"), true)
+		testfs.Build(t, root, testfs.Tree{"tree/pending.txt": testfs.File("p"), "tree/other.txt": testfs.File("o")})
+		plan := mustPlan(t, Request{Op: OpDelete, Sources: []string{filepath.Join(root, "tree")}})
+		release := holdPending(t, filepath.Join(root, "tree", "pending.txt"), true)
 		li := newLockInjector(nil)
-		li.onWait = func(string, int) { release1(); release2() }
-		res := execPlan(t, context.Background(), mustPlan(t, Request{Op: OpDelete, Sources: []string{filepath.Join(root, "f.txt"), filepath.Join(root, "tree")}}), ExecOptions{hooks: li.hooks()})
-		for _, it := range res.Items {
-			if it.Outcome != OutcomeDone {
-				t.Errorf("%s: %+v, want Done (the other process closed while waiting)", it.Src, it)
-			}
+		li.onWait = func(string, int) { release() }
+		res := execPlan(t, context.Background(), plan, ExecOptions{hooks: li.hooks()})
+		if it := res.Items[0]; it.Outcome != OutcomeDone {
+			t.Errorf("result = %+v, want Done (the other process closed while waiting)", it)
 		}
 		if len(li.waits) == 0 {
 			t.Error("no retry happened")
@@ -67,15 +65,27 @@ func TestDeletePendingByOther(t *testing.T) {
 			t.Errorf("left: %q", names)
 		}
 	})
-	t.Run("still held", func(t *testing.T) {
+	// トップレベルの削除待ちのファイル: 閉じられなければ、上限の後に KindLocked（「権限がありません」ではない）。
+	t.Run("top level, still held", func(t *testing.T) {
+		t.Parallel()
+		root := testfs.TempDir(t)
+		testfs.Build(t, root, testfs.Tree{"f.txt": testfs.File("f")})
+		plan := mustPlan(t, Request{Op: OpDelete, Sources: []string{filepath.Join(root, "f.txt")}})
+		holdPending(t, filepath.Join(root, "f.txt"), true)
+		it := execPlan(t, context.Background(), plan, ExecOptions{hooks: newLockInjector(nil).hooks()}).Items[0]
+		if it.Outcome != OutcomeFailed || !hasKind(it, KindLocked) {
+			t.Errorf("result = %+v, want Failed with KindLocked (not a permission error)", it)
+		}
+	})
+	// 計画の時点で削除待ちなら、Item.Err を KindLocked にする。
+	t.Run("pending when planning", func(t *testing.T) {
 		t.Parallel()
 		root := testfs.TempDir(t)
 		testfs.Build(t, root, testfs.Tree{"f.txt": testfs.File("f")})
 		holdPending(t, filepath.Join(root, "f.txt"), true)
-		res := execPlan(t, context.Background(), mustPlan(t, Request{Op: OpDelete, Sources: []string{filepath.Join(root, "f.txt")}}), ExecOptions{hooks: newLockInjector(nil).hooks()})
-		it := res.Items[0]
-		if it.Outcome != OutcomeFailed || !hasKind(it, KindLocked) {
-			t.Errorf("result = %+v, want Failed with KindLocked (not a permission error)", it)
+		plan := mustPlan(t, Request{Op: OpDelete, Sources: []string{filepath.Join(root, "f.txt")}})
+		if err := plan.Items()[0].Err; KindOf(err) != KindLocked {
+			t.Errorf("Item.Err = %v, want KindLocked", err)
 		}
 	})
 }

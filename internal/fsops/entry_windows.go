@@ -27,7 +27,15 @@ type fileAttributeTagInfo struct {
 // Go のモードビットは Go のバージョンによってリパースポイントの扱いが変わってきたため使わず、
 // ファイル属性とリパースタグで判定する（SPEC §14.1）。
 func lstatEntrySys(p string) (EntryInfo, error) {
-	fi, err := os.Lstat(p)
+	var fi os.FileInfo
+	err, pending := callDeletePending(func() error {
+		var err error
+		fi, err = os.Lstat(p)
+		return err
+	})
+	if pending {
+		return EntryInfo{}, deletePendingErr("lstat", p, err) // 削除待ち（§17）
+	}
 	if err != nil {
 		return EntryInfo{}, err
 	}
