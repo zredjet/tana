@@ -11,6 +11,7 @@ import (
 func (ex *executor) copyThenRemove(i int, it Item) ItemResult {
 	ex.progress.start(StageCopy, it.Src)
 	res, rec := ex.copyTop(i, it, true)
+	res.Method = MethodCopyThenRemove // §11.1 でリネームから切り替えた場合も、実際に使った方式を返す（§7.4）
 	if res.Outcome != OutcomeDone || rec == nil {
 		return res // 移動元には一切手を付けない（§11.2 の手順 2）。移動先に途中までコピーされたものはそのまま報告する
 	}

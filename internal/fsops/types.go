@@ -306,6 +306,7 @@ func (s Status) String() string {
 // ItemResult はトップレベルの項目ごとの結果。
 type ItemResult struct {
 	Src, Dst    string // Dst は自動リネーム後の実際のパス
+	Method      Method // 実際に使った方式（§11.1 でボリュームをまたぐ移動に切り替えた項目は MethodCopyThenRemove）。SPEC §7.4 の Outcome の意味を決める
 	Outcome     Outcome
 	Err         *OpError      // SPEC §7.4 の表に従う。衝突の決定による Skip では nil
 	Warnings    []*OpError    // メタデータを保持できなかった等（データ自体は無事）

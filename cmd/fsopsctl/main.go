@@ -388,6 +388,9 @@ func printResult(w io.Writer, res *fsops.Result) {
 			line += "  （衝突の決定によるスキップ）"
 		}
 		fmt.Fprintln(w, line)
+		if s := partialText(it.Method, it.Outcome); s != "" {
+			fmt.Fprintf(w, "      %s\n", s)
+		}
 		if it.TrashedPath != "" {
 			fmt.Fprintf(w, "      ごみ箱の中: %s\n", it.TrashedPath)
 		}

@@ -229,3 +229,22 @@ func sizeText(n int64) string {
 	}
 	return fmt.Sprintf("%.1f %s", f, suffix)
 }
+
+// partialText は、Partial・CopiedSourceKept が表す状態を、実際に使った方式に合わせて説明する（SPEC §7.4）。それ以外は空。
+func partialText(m fsops.Method, o fsops.Outcome) string {
+	switch {
+	case o == fsops.OutcomeCopiedSourceKept:
+		return "移動先は完成しています。移動元の一部（下の一覧）が残っています"
+	case o != fsops.OutcomePartial:
+		return ""
+	case m == fsops.MethodCopy:
+		return "コピー先に途中までの結果があります。コピー元は変わっていません"
+	case m == fsops.MethodRename:
+		return "一部は移動先へ移り、下の一覧のものは移動元に残っています"
+	case m == fsops.MethodCopyThenRemove:
+		return "移動元はすべて残っています。移動先に途中までコピーしたものがあります"
+	case m == fsops.MethodRemove:
+		return "一部は削除され、下の一覧のものは残っています"
+	}
+	return ""
+}

@@ -386,3 +386,32 @@ func TestMoveOverwriteHardLinkToSource(t *testing.T) {
 	}
 	wantFiles(t, root, map[string]string{"src/f.txt": "data", "dest/f.txt": "data"})
 }
+
+// TestResultMethod は、ItemResult.Method に、実際に使った方式が入ることを確かめる（§7.4）。
+func TestResultMethod(t *testing.T) {
+	t.Parallel()
+	root := testfs.TempDir(t)
+	testfs.Build(t, root, testfs.Tree{"a.txt": testfs.File("a"), "b.txt": testfs.File("b"), "c.txt": testfs.File("c"), "dest": testfs.Dir(), "gone.txt": testfs.File("g")})
+	dest := filepath.Join(root, "dest")
+	for _, c := range []struct {
+		req  Request
+		want Method
+	}{
+		{Request{Op: OpCopy, Sources: []string{filepath.Join(root, "a.txt")}, DestDir: dest}, MethodCopy},
+		{Request{Op: OpMove, Sources: []string{filepath.Join(root, "b.txt")}, DestDir: dest}, MethodRename},
+		{Request{Op: OpDelete, Sources: []string{filepath.Join(root, "c.txt")}}, MethodRemove},
+	} {
+		res := execPlan(t, context.Background(), mustPlan(t, c.req), ExecOptions{})
+		if it := res.Items[0]; it.Method != c.want {
+			t.Errorf("%v: Method = %v, want %v", c.req.Op, it.Method, c.want)
+		}
+	}
+	// 着手しなかった項目（計画時の失敗）にも、計画の方式を入れる。
+	plan := mustPlan(t, Request{Op: OpCopy, Sources: []string{filepath.Join(root, "gone.txt")}, DestDir: dest})
+	if err := os.Remove(testfs.ExtendedPath(filepath.Join(root, "gone.txt"))); err != nil {
+		t.Fatal(err)
+	}
+	if it := execPlan(t, context.Background(), plan, ExecOptions{}).Items[0]; it.Method != MethodCopy || it.Outcome != OutcomeFailed {
+		t.Errorf("vanished source: %+v, want Failed with MethodCopy", it)
+	}
+}

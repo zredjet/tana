@@ -373,9 +373,13 @@ func TestMoveRenameFallback(t *testing.T) {
 		return &os.LinkError{Op: "rename", Old: src, New: dst, Err: crossDeviceErr()}
 	}}
 	res := execPlan(t, context.Background(), plan, ExecOptions{hooks: h})
-	for _, it := range res.Items {
+	for i, it := range res.Items {
 		if it.Outcome != OutcomeDone {
 			t.Errorf("%s: %+v, want Done", it.Src, it)
+		}
+		// 計画は同一ボリュームの移動だが、実際に使った方式を返す（§7.4 の Partial の意味が変わるため）。
+		if plan.Items()[i].Method != MethodRename || it.Method != MethodCopyThenRemove {
+			t.Errorf("%s: planned %v, reported %v; want planned MethodRename and reported MethodCopyThenRemove", it.Src, plan.Items()[i].Method, it.Method)
 		}
 	}
 	if names := testfs.ListNames(t, filepath.Join(root, "src")); len(names) != 0 {

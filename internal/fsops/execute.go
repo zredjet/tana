@@ -79,6 +79,9 @@ func (ex *executor) run() *Result {
 		default:
 			r = ex.do(i, it)
 		}
+		if r.Method == 0 {
+			r.Method = it.Method // §11.1 で切り替えた項目（copyThenRemove）以外は計画の方式
+		}
 		if r.Err != nil && r.Err.Kind == KindNoSpace && r.Outcome != OutcomeSkipped {
 			noSpace = true // 以後の書き込みを伴う項目は Skipped（§7.2）
 		}
