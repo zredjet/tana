@@ -53,6 +53,7 @@ type Plan struct {
 	totalFiles  int
 	totalBytes  int64
 	warnings    []*OpError
+	space       *spaceInfo // §6.4 の警告を決定に応じて計算し直すための記録（OpCopy / OpMove）
 
 	mu      sync.Mutex // conflicts の Decision と started を守る
 	started bool       // Execute が開始された
@@ -89,12 +90,15 @@ func (p *Plan) TotalFiles() int { return p.totalFiles }
 func (p *Plan) TotalBytes() int64 { return p.totalBytes }
 
 // Warnings は実行を妨げない問題（空き容量不足の見込み、フォルダ内の走査エラーなど）のコピーを返す。
+// 空き容量と大きさの上限の警告は、呼んだ時点の衝突の決定で計算し直す（§6.4）。Decide の後に呼び直せば、決定を反映する。
 func (p *Plan) Warnings() []*OpError {
 	ws := make([]*OpError, len(p.warnings))
 	for i, w := range p.warnings {
 		ws[i] = w.clone()
 	}
-	return ws
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append(ws, p.spaceWarnings()...)
 }
 
 // Item は計画のトップレベルの項目。

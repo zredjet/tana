@@ -62,8 +62,9 @@ func (pl *planner) run(req Request) error {
 	pl.plan.req = r
 	if r.Op == OpCopy || r.Op == OpMove {
 		pl.sizeLimit = fileSizeLimitPath(r.DestDir) // §6.4 の、ファイルの大きさの上限の警告に使う
+		pl.plan.space = &spaceInfo{dest: r.DestDir, owned: map[ConflictID]int64{}}
 	}
-	var writeBytes int64 // §6.4 の空き容量と比べるバイト数
+	writes := false // 書き込みを伴う項目がある（§6.4 の空き容量を測る）
 	for i, src := range r.Sources {
 		if err := pl.errCanceled(); err != nil {
 			return err
@@ -83,11 +84,11 @@ func (pl *planner) run(req Request) error {
 		pl.plan.totalFiles += files
 		pl.plan.totalBytes += bytes
 		if it.Method == MethodCopy || it.Method == MethodCopyThenRemove {
-			writeBytes += bytes
+			writes = true
 		}
 	}
-	if writeBytes > 0 {
-		pl.checkFreeSpace(r.DestDir, writeBytes)
+	if writes {
+		pl.measureFreeSpace(r.DestDir)
 	}
 	return nil
 }
@@ -249,7 +250,8 @@ func (pl *planner) count(i int, it Item) (files int, bytes int64, err error) {
 	if it.Method == MethodTrash {
 		return 1, 0, nil
 	}
-	w := &walker{pl: pl, item: i, countBytes: it.Method != MethodRename, skipMounts: it.Method == MethodRemove}
+	w := &walker{pl: pl, item: i, countBytes: it.Method != MethodRename, skipMounts: it.Method == MethodRemove,
+		space: it.Method == MethodCopy || it.Method == MethodCopyThenRemove}
 	var dirConflict bool
 	var cid ConflictID
 	if it.Dst != "" {
@@ -260,6 +262,7 @@ func (pl *planner) count(i int, it Item) (files int, bytes int64, err error) {
 		}
 		dirConflict, cid = w.conflict(it.Src, it.Dst, it.Info, 0, self)
 	}
+	w.owner = cid // この項目を書くかを決める衝突（なければ 0。§6.4）
 	switch {
 	case dirConflict:
 		err = w.walk(it.Src, it.Dst, cid)
@@ -278,7 +281,9 @@ type walker struct {
 	pl         *planner
 	item       int
 	countBytes bool
-	skipMounts bool // 完全削除: マウントポイントの中を数えず、警告する（§13.1）
+	skipMounts bool       // 完全削除: マウントポイントの中を数えず、警告する（§13.1）
+	space      bool       // §6.4 の書き込むバイト数を記録する（コピー、ボリュームをまたぐ移動）
+	owner      ConflictID // 今走査している中身を書くかを決める衝突（いちばん内側の、衝突のあるフォルダ。なければ 0）
 	files      int
 	bytes      int64
 }
@@ -291,8 +296,13 @@ func (w *walker) add(path string, info EntryInfo) {
 	w.files++
 	if w.countBytes && info.Type == TypeFile {
 		w.bytes += info.Size
+	}
+	if w.space && info.Type == TypeFile {
+		// 書くかは衝突の決定で決まるので、書くかを決める衝突ごとに記録し、警告は Warnings が決定に応じて出す（§6.4）。
+		s := w.pl.plan.space
+		s.add(w.owner, info.Size)
 		if limit := w.pl.sizeLimit; limit > 0 && info.Size > limit {
-			w.pl.plan.warnings = append(w.pl.plan.warnings, planError(path, KindFileTooLarge, nil))
+			s.tooLarge = append(s.tooLarge, ownedPath{path: path, owner: w.owner})
 		}
 	}
 }
@@ -345,36 +355,44 @@ func (w *walker) walk(src, dst string, parent ConflictID) error {
 			return err
 		}
 		childSrc := filepath.Join(src, e.name)
-		w.add(childSrc, e.info)
 		childDst := ""
 		var cid ConflictID
+		owner := w.owner
 		if dst != "" {
 			d := filepath.Join(dst, e.name)
-			if dirConflict, id := w.conflict(childSrc, d, e.info, parent, false); dirConflict {
+			dirConflict, id := w.conflict(childSrc, d, e.info, parent, false)
+			if id != 0 {
+				owner = id // このエントリ（とフォルダなら中身）を書くかは、この衝突の決定で決まる
+			}
+			if dirConflict {
 				childDst, cid = d, id
 			}
 		}
-		if e.info.Type == TypeDir && w.skipMounts && onOtherVolume(e.id, self) {
+		prev := w.owner
+		w.owner = owner
+		w.add(childSrc, e.info)
+		var err error
+		switch {
+		case e.info.Type == TypeDir && w.skipMounts && onOtherVolume(e.id, self):
 			w.pl.plan.warnings = append(w.pl.plan.warnings, planError(childSrc, KindMountPoint, nil))
-			continue
+		case e.info.Type == TypeDir:
+			err = w.walk(childSrc, childDst, cid)
 		}
-		if e.info.Type == TypeDir {
-			if err := w.walk(childSrc, childDst, cid); err != nil {
-				return err
-			}
+		w.owner = prev
+		if err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-// checkFreeSpace は、書き込むバイト数とコピー先ボリュームの空き容量を比べ、足りなければ Warnings に KindNoSpace を加える（§6.4）。
-func (pl *planner) checkFreeSpace(dest string, need int64) {
+// measureFreeSpace は、コピー先ボリュームの空き容量を測って記録する（§6.4。書き込むバイト数との比較は Warnings が決定に応じて行う）。
+// 測れなければ、その理由を Warnings に加える。
+func (pl *planner) measureFreeSpace(dest string) {
 	free, err := freeSpace(dest)
 	if err != nil {
 		pl.plan.warnings = append(pl.plan.warnings, planError(dest, classify(err, classifyOpts{}), withUserPaths(err, dest, "")))
 		return
 	}
-	if uint64(need) > free {
-		pl.plan.warnings = append(pl.plan.warnings, planError(dest, KindNoSpace, nil))
-	}
+	pl.plan.space.measured, pl.plan.space.free = true, free
 }
