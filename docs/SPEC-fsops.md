@@ -311,6 +311,7 @@ const (
 
 type ItemResult struct {
 	Src, Dst    string          // Dst は自動リネーム後の実際のパス
+	Method      Method          // 実際に使った方式（§11.1 でボリュームをまたぐ移動に切り替えた項目は MethodCopyThenRemove）。§7.4 の Outcome の意味を決める
 	Outcome     Outcome
 	Err         *OpError        // §7.4 の表に従う。衝突の決定による Skip では nil
 	Warnings    []*OpError      // メタデータを保持できなかった等（データ自体は無事）
@@ -468,6 +469,15 @@ const (
 | `Details` に Err 付きのエントリがある | Partial | 最初のエラー |
 | 移動元の削除に一部失敗した、一部を保護した、または削除中にキャンセルされた（§13.3） | CopiedSourceKept | 最初のエラー |
 | ごみ箱へ移す操作の後、元の項目が元の場所になく、ごみ箱の中の項目も確かめられない（§12.1） | TrashUnconfirmed | ごみ箱へ移す呼び出しのエラー（なければ `KindUnknown`） |
+
+- Partial・CopiedSourceKept が表す状態は、`ItemResult.Method`（実際に使った方式）で決まる。UI は方式に合わせて利用者に伝える。
+
+| Method | Partial | CopiedSourceKept |
+|---|---|---|
+| `MethodCopy` | コピー先に途中までの結果がある。コピー元は変わらない | — |
+| `MethodRename`（同一ボリュームの移動） | 一部は移動先へ移り、`Details` のものは移動元に残っている | — |
+| `MethodCopyThenRemove`（ボリュームをまたぐ移動） | 移動元はすべて残っている（手を付けていない）。移動先に途中までコピーしたものがある | 移動先は完成し、移動元の一部（`Details`）が残っている |
+| `MethodRemove` | 一部は削除され、`Details` のものは残っている | — |
 
 - Status: キャンセルされたら `StatusCanceled`。
   それ以外で、Failed・Partial・CopiedSourceKept・TrashUnconfirmed、または Err 付きの Skipped（`KindLinkSkipped` を除く）が 1 件でもあれば `StatusCompletedWithErrors`。それ以外は `StatusCompleted`。
