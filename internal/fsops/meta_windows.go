@@ -137,6 +137,12 @@ func unkeptMetadataPath(p string) []string {
 // unkeptStreams は、ハンドル h のファイル・フォルダの名前付きの代替データストリームのうち、Zone.Identifier 以外の名前を返す。
 // 列挙できなければ nil（警告しない）。
 func unkeptStreams(h windows.Handle) []string {
+	names, _ := streamNames(h)
+	return names
+}
+
+// streamNames は unkeptStreams の本体。列挙できなかった理由も返す（テストで確かめるため）。
+func streamNames(h windows.Handle) ([]string, error) {
 	buf := make([]byte, 4096)
 	for {
 		err := windows.GetFileInformationByHandleEx(h, windows.FileStreamInfo, &buf[0], uint32(len(buf)))
@@ -145,7 +151,7 @@ func unkeptStreams(h windows.Handle) []string {
 			continue
 		}
 		if err != nil {
-			return nil // ストリームがない（ERROR_HANDLE_EOF）、または列挙できない
+			return nil, err // ストリームがない（ERROR_HANDLE_EOF）、または列挙できない
 		}
 		break
 	}
@@ -170,5 +176,5 @@ func unkeptStreams(h windows.Handle) []string {
 		}
 		off += next
 	}
-	return names
+	return names, nil
 }
