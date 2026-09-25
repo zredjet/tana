@@ -3,6 +3,7 @@
 package fsops
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"time"
@@ -64,4 +65,45 @@ func setMetaIn(d *secDir, name string, want fileID, m srcMeta, isDir bool, _ *te
 		errs = append(errs, &os.PathError{Op: "fchmod", Path: s, Err: err})
 	}
 	return errors.Join(errs...)
+}
+
+// xattrNames は、list（listxattr の呼び出し）で拡張属性の名前を列挙する。列挙できなければ nil。
+func xattrNames(list func(dest []byte) (int, error)) []string {
+	for range 4 { // 列挙の間に増えた場合は読み直す
+		n, err := list(nil)
+		if err != nil || n <= 0 {
+			return nil
+		}
+		buf := make([]byte, n)
+		n, err = list(buf)
+		if errors.Is(err, unix.ERANGE) {
+			continue
+		}
+		if err != nil {
+			return nil
+		}
+		var names []string
+		for _, b := range bytes.Split(buf[:n], []byte{0}) {
+			if len(b) > 0 {
+				names = append(names, string(b))
+			}
+		}
+		return names
+	}
+	return nil
+}
+
+// unkeptMetadataFd は、開いたコピー元 f にある、fsops が保持しないメタデータの名前を返す（§15）。
+func unkeptMetadataFd(f *os.File) []string {
+	fd := int(f.Fd())
+	return filterUnkept(xattrNames(func(b []byte) (int, error) {
+		return ignoringEINTR2(func() (int, error) { return unix.Flistxattr(fd, b) })
+	}))
+}
+
+// unkeptMetadataPath は、パス p（リンクを辿らない）にある、fsops が保持しないメタデータの名前を返す（§15。フォルダに使う）。
+func unkeptMetadataPath(p string) []string {
+	return filterUnkept(xattrNames(func(b []byte) (int, error) {
+		return ignoringEINTR2(func() (int, error) { return unix.Llistxattr(p, b) })
+	}))
 }

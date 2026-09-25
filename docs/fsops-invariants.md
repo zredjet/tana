@@ -207,3 +207,8 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
     - 完全削除で、確かめた後にトップレベルの項目が移されると、何も消していないのに Done になっていた。`KindNotFound` の失敗にした（§7.3。TestDeleteTopLevelMovedAway）。
     - 最終名にする直前に一時ファイルが置き換えられた場合、最終名に置き換えたものが置かれたのに Failed と報告していた。Partial にした（§10.1。TestTempReplacedDuringFinalRename）。
     - ボリュームをまたぐ移動で、コピーの後に移動元へ追加されたファイル（移動先にない）を報告していなかった。1 件ずつ報告するようにした（§13.3。TestRemoveRecordedReportsAdded）。
+25. （解決済み。2026-09-25 の報告の設計の見直し）SPEC の規定どおりでも利用者を誤解させる報告を直した（P1〜P7）。
+    コピー先側のエラーに `OnDest` を付け、コピー先側の置き換えを `KindDestChanged` にした（P1）。`ItemResult.Method` に実際に使った方式を入れ、
+    方式ごとの Partial の意味を §7.4 に書いた（P2）。保持しないメタデータ（タグ・`user.*`・代替データストリーム）を警告する（P3）。
+    `LinkSkip` のスキップをエラーにしない（P4）。ごみ箱の事前確認で確かめられなかった場合を `KindTrashUnavailable` にしない（P5）。
+    macOS の exFAT の NFC の名前を `KindNameForm` にした（P6）。検証・同期の失敗を `KindVerifyFailed`・`KindSyncFailed` にした（P7）。

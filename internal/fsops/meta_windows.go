@@ -1,8 +1,10 @@
 package fsops
 
 import (
+	"encoding/binary"
 	"errors"
 	"os"
+	"strings"
 	"time"
 	"unsafe"
 
@@ -111,4 +113,62 @@ func setMetaIn(d *secDir, name string, want fileID, m srcMeta, isDir bool, hooks
 		errs = append(errs, &os.PathError{Op: "SetFileInformationByHandle", Path: s, Err: err})
 	}
 	return errors.Join(errs...)
+}
+
+// unkeptMetadataFd は、開いたコピー元 f にある、Zone.Identifier 以外の名前付きの代替データストリーム（fsops が保持しない）の名前を返す（§15）。
+func unkeptMetadataFd(f *os.File) []string { return unkeptStreams(windows.Handle(f.Fd())) }
+
+// unkeptMetadataPath は、パス p（\\?\ 形式。リパースポイントを辿らない）の unkeptMetadataFd（フォルダに使う）。
+func unkeptMetadataPath(p string) []string {
+	p16, err := windows.UTF16PtrFromString(p)
+	if err != nil {
+		return nil
+	}
+	h, err := windows.CreateFile(p16, windows.FILE_READ_ATTRIBUTES,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING,
+		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+	if err != nil {
+		return nil
+	}
+	defer windows.CloseHandle(h)
+	return unkeptStreams(h)
+}
+
+// unkeptStreams は、ハンドル h のファイル・フォルダの名前付きの代替データストリームのうち、Zone.Identifier 以外の名前を返す。
+// 列挙できなければ nil（警告しない）。
+func unkeptStreams(h windows.Handle) []string {
+	buf := make([]byte, 4096)
+	for {
+		err := windows.GetFileInformationByHandleEx(h, windows.FileStreamInfo, &buf[0], uint32(len(buf)))
+		if errors.Is(err, windows.ERROR_MORE_DATA) && len(buf) < 1<<20 {
+			buf = make([]byte, len(buf)*4)
+			continue
+		}
+		if err != nil {
+			return nil // ストリームがない（ERROR_HANDLE_EOF）、または列挙できない
+		}
+		break
+	}
+	// FILE_STREAM_INFO: NextEntryOffset（4）、StreamNameLength（4、バイト数）、StreamSize（8）、StreamAllocationSize（8）、StreamName。
+	var names []string
+	for off := 0; off+24 <= len(buf); {
+		next := int(binary.LittleEndian.Uint32(buf[off:]))
+		n := int(binary.LittleEndian.Uint32(buf[off+4:]))
+		if off+24+n > len(buf) {
+			break
+		}
+		u := make([]uint16, n/2)
+		for i := range u {
+			u[i] = binary.LittleEndian.Uint16(buf[off+24+2*i:])
+		}
+		name := strings.TrimSuffix(strings.TrimPrefix(windows.UTF16ToString(u), ":"), ":$DATA")
+		if name != "" && !strings.EqualFold(name, strings.TrimPrefix(zoneStream, ":")) {
+			names = append(names, name)
+		}
+		if next == 0 {
+			break
+		}
+		off += next
+	}
+	return names
 }

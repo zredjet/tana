@@ -1,6 +1,9 @@
 package fsops
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // srcMeta は、コピー元から記録するもの（§10.1 の手順 1、§10.4、§15）。
 type srcMeta struct {
@@ -12,3 +15,8 @@ type srcMeta struct {
 	// ファイルだけに使い、フォルダとリンクには付けない（§15）。
 	extra []byte
 }
+
+// unkeptMetadata は、コピー元にあったが fsops が保持しないメタデータの名前（§15）。KindMetadata の警告の Err に入れる（ログ用）。
+type unkeptMetadata []string
+
+func (u unkeptMetadata) Error() string { return "fsops: metadata not kept: " + strings.Join(u, ", ") }

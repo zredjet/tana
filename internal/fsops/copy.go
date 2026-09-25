@@ -576,6 +576,10 @@ func (cp *copier) writeTemp(src, dst string, e dirEntry, dd *secDir) (tempFile, 
 	if m.extra, err = readExtra(in, s); err != nil {
 		warnings = append(warnings, &OpError{Op: "metadata", Path: src, Dest: dst, Kind: KindMetadata, Err: withUserPaths(err, src, "")})
 	}
+	// 保持しないメタデータ（タグなど）があれば、黙って失わないよう警告する（§15）。
+	if names := unkeptMetadataFd(in); len(names) > 0 {
+		warnings = append(warnings, &OpError{Op: "metadata", Path: src, Dest: dst, Kind: KindMetadata, Err: unkeptMetadata(names)})
+	}
 
 	tmpName, out, err := createTemp(dd)
 	tmp := dd.join(tmpName)
@@ -848,6 +852,13 @@ func (cp *copier) copyDir(src, dst string, e dirEntry, pc *planned, dd *secDir) 
 		}
 	}
 	defer closeDir()
+
+	// 保持しないメタデータ（タグなど）がコピー元のフォルダにあれば、黙って失わないよう警告する（§15）。マージでも同じ。
+	if ss, err := sysPath(src); err == nil {
+		if names := unkeptMetadataPath(ss); len(names) > 0 {
+			cp.warn(src, dst, unkeptMetadata(names))
+		}
+	}
 
 	// コピー元のフォルダのメタデータを、中身を処理する前に読む（§15）。
 	var meta srcMeta

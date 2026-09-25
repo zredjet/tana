@@ -3,6 +3,7 @@ package fsops
 import (
 	"errors"
 	"os"
+	"slices"
 
 	"golang.org/x/sys/unix"
 )
@@ -40,4 +41,12 @@ func readExtra(f *os.File, s string) ([]byte, error) {
 // setExtraFd は、開いたファイル fd に com.apple.quarantine を設定する（§15）。
 func setExtraFd(fd int, data []byte) error {
 	return ignoringEINTR(func() error { return unix.Fsetxattr(fd, quarantineAttr, data, 0) })
+}
+
+// unkeptXattrs は、macOS で利用者が付ける、fsops が保持しない拡張属性（§15）。
+var unkeptXattrs = []string{"com.apple.metadata:_kMDItemUserTags", "com.apple.metadata:kMDItemFinderComment", "com.apple.ResourceFork"}
+
+// filterUnkept は、拡張属性の名前のうち、利用者が付けた、fsops が保持しないもの（タグ・コメント・リソースフォーク）を返す（§15）。
+func filterUnkept(names []string) []string {
+	return slices.DeleteFunc(names, func(n string) bool { return !slices.Contains(unkeptXattrs, n) })
 }
