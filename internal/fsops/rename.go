@@ -89,6 +89,9 @@ func renameWith(lr *lockRetrier, path, newName string) error {
 	if err := validateName(newName); err != nil {
 		return &OpError{Op: "rename", Path: p, Kind: KindInvalidName} // 使えない名前からは Dest のパスを作らない
 	}
+	if newName == filepath.Base(p) {
+		return nil // 今と同じ名前（バイト単位で同じ）。何もしない（§11.3）
+	}
 	dir := filepath.Dir(p)
 	dst := filepath.Join(dir, newName)
 	s, err := sysPath(p)

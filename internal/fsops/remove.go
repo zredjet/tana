@@ -58,7 +58,7 @@ func removeErr(path string, err error, e dirEntry, restat func() (dirEntry, erro
 		// 削除は「見つからない」を返したのに、同じエントリがある。列挙の名前の表現（NFD）では扱えない（macOS の exFAT。§8.5、V17）。
 		return &OpError{Op: "remove", Path: path, Kind: KindNameForm, Err: withUserPaths(err, path, "")}, false
 	}
-	return &OpError{Op: "remove", Path: path, Kind: classify(err, classifyOpts{readOnly: readOnlySys(sys)}), Err: withUserPaths(err, path, "")}, false
+	return &OpError{Op: "remove", Path: path, Kind: classify(err, classifyOpts{readOnly: readOnlyOrParent(sys)}), Err: withUserPaths(err, path, "")}, false
 }
 
 // removeIn は、確かめて開いたフォルダ d の中のエントリ e を削除する。削除できたら真。
@@ -423,4 +423,14 @@ func (r *remover) removeRecordedContents(d *secDir, recs []recordEntry, skipped 
 		}
 	}
 	return all, kept
+}
+
+// readOnlyOrParent は、sys のエントリ自体か、それを含むフォルダが読み取り専用（macOS のロックなど）かを返す関数を返す（§17）。
+// ロックされたフォルダの中のエントリの削除も失敗する（EPERM）ので、原因をフォルダのロックとして報告するため。判定できない OS では nil。
+func readOnlyOrParent(sys string) func() bool {
+	self, parent := readOnlySys(sys), readOnlySys(filepath.Dir(sys))
+	if self == nil || parent == nil {
+		return self
+	}
+	return func() bool { return self() || parent() }
 }

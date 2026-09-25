@@ -69,6 +69,9 @@ func (pl *planner) run(req Request) error {
 			return err
 		}
 		it := pl.item(i, src)
+		if it.Err != nil && it.Err.Kind == KindCanceled {
+			return it.Err // 項目の確認（ごみ箱の事前確認など）の途中でキャンセルされた（計画を返さない。§6）
+		}
 		pl.plan.items = append(pl.plan.items, it)
 		if it.Err != nil {
 			continue
