@@ -285,3 +285,19 @@ func TestRenameTwoStepRollbackFails(t *testing.T) {
 		t.Errorf("names = %q, want only [%s]", got, name)
 	}
 }
+
+// TestRenameSameName は、今と同じ名前（バイト単位で同じ）への Rename が、何もせずに成功することを確かめる（§11.3。
+// Windows では「同じ名前のものが既にあります」と報告していた）。
+func TestRenameSameName(t *testing.T) {
+	t.Parallel()
+	root := testfs.TempDir(t)
+	testfs.Build(t, root, testfs.Tree{"a.txt": testfs.File("a"), "d": testfs.Dir()})
+	for _, name := range []string{"a.txt", "d"} {
+		if err := Rename(filepath.Join(root, name), name); err != nil {
+			t.Errorf("Rename(%s, %s) = %v, want nil", name, name, err)
+		}
+	}
+	if got := testfs.ListNames(t, root); !slices.Equal(got, []string{"a.txt", "d"}) {
+		t.Errorf("names = %q", got)
+	}
+}
