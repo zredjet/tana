@@ -1435,7 +1435,10 @@ hdiutil detach /Volumes/fsopstest
   どのエラーと NT ステータス（`RtlGetLastNtStatus`）を返すか（NTFS・exFAT・FAT32。印は exFAT・FAT32 で使う従来の `FileDispositionInfo` で付ける）。
   削除待ちは、ほかのプロセス（ウイルス対策ソフトなど）が閉じれば消えるのに、今は「権限がありません」や、フォルダの「空ではありません」と報告している
   （2026-09-25 の報告の見直し）。`STATUS_DELETE_PENDING`（0xC0000056）で見分けられれば、`KindLocked` にして §17.1 のやり直しの対象にする案を出す。
-  - **結果:** （CI の結果を待つ）
+  - **結果（2026-09-25、windows-latest（build 26100）、Go 1.27.1）:** NTFS・exFAT・FAT32 とも同じ。削除待ちのファイルへの `GetFileAttributes`・
+    `CreateFile`（`FILE_READ_ATTRIBUTES`・`DELETE`）・`DeleteFileW` は、どれも `ERROR_ACCESS_DENIED` で、NT ステータスは `STATUS_DELETE_PENDING`（0xC0000056）。
+    親フォルダの `RemoveDirectoryW` は `ERROR_DIR_NOT_EMPTY`（NT ステータス 0xC0000101）で、列挙には名前が残る。ほかのハンドルを閉じると名前が消え、
+    親フォルダも削除できた。→ 失敗の直後の NT ステータスで削除待ちを見分けられる。
 - **V25** 空のファイルの fileID（§8.3）が、メタデータの設定・同じフォルダの中での名前の変更・書き込みで変わるか（ボリュームの種類ごと。中身のあるファイルと比べる）。
   macOS の exFAT・FAT32 へ空のファイルをコピーすると、メタデータを設定した後の照合（§10.1）が合わずに失敗し、一時ファイルが残ることが、
   2026-09-25 の報告の見直しで見つかった（V16 は中身のあるファイルだけを確かめていた）。
