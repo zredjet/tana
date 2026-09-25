@@ -212,3 +212,7 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
     方式ごとの Partial の意味を §7.4 に書いた（P2）。保持しないメタデータ（タグ・`user.*`・代替データストリーム）を警告する（P3）。
     `LinkSkip` のスキップをエラーにしない（P4）。ごみ箱の事前確認で確かめられなかった場合を `KindTrashUnavailable` にしない（P5）。
     macOS の exFAT の NFC の名前を `KindNameForm` にした（P6）。検証・同期の失敗を `KindVerifyFailed`・`KindSyncFailed` にした（P7）。
+26. （解決済み。2026-09-25、V26）Windows の削除待ち（ほかのプロセスが開いたまま削除の印を付けたもの）を「権限がありません」、
+    削除待ちの名前だけが残るフォルダを「空ではありません」と報告し、やり直しもしていなかった。失敗の直後の NT ステータス
+    （`STATUS_DELETE_PENDING`）で見分けて `KindLocked` にし、§17.1 のとおりやり直すようにした（TestDeletePendingByOther、
+    TestDeleteFolderWithPendingChildren。Windows・EXFAT/FAT32）。
