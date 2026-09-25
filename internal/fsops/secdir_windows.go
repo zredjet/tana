@@ -220,10 +220,18 @@ func statEntrySys(s string) (dirEntry, error) {
 	if err != nil {
 		return dirEntry{}, err
 	}
-	h, err := windows.CreateFile(s16, windows.FILE_READ_ATTRIBUTES,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING,
-		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+	var h windows.Handle
+	err, pending := callDeletePending(func() error {
+		var err error
+		h, err = windows.CreateFile(s16, windows.FILE_READ_ATTRIBUTES,
+			windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING,
+			windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+		return err
+	})
 	if err != nil {
+		if pending {
+			return dirEntry{}, deletePendingErr("lstat", s, &os.PathError{Op: "CreateFile", Path: s, Err: err}) // 削除待ち（§17）
+		}
 		return dirEntry{}, &os.PathError{Op: "CreateFile", Path: s, Err: err}
 	}
 	defer windows.CloseHandle(h)
