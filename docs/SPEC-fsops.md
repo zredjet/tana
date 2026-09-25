@@ -365,6 +365,7 @@ const (
 ## 6. 計画（NewPlan）
 
 計画の作成中は、ファイルシステムを一切変更しない。`ctx` のキャンセルに応じて中断できる。
+中断したら `KindCanceled` のエラーを返し、計画は返さない（項目の確認、たとえばごみ箱の事前確認の途中でキャンセルされた場合も同じ）。
 
 ### 6.1 リクエストの検査
 
@@ -740,6 +741,7 @@ const (
 - Unix（macOS・Linux）では `/` と NUL 文字を `KindInvalidName` にする。
 - 名前の長さの上限を超える場合、ボリュームで使えない名前の場合など、OS が返したエラーは §17 の対応で `KindInvalidName` にする。
 - 排他リネームで行う。上書きは一切しない。大文字小文字だけ・正規化だけの違いは §8.4 に従って許可する。
+- `newName` が今の名前とバイト単位で同じなら、何もせずに成功を返す（Windows の排他リネームは「既にある」と失敗するので、先に判定する）。
 - Windows の exFAT・FAT32 では、大文字小文字だけの変更で `MoveFileExW` が成功を返しても名前が変わらない（V1）。
   そのため、大文字小文字だけ・正規化だけの変更の後は、親フォルダの列挙で新しい名前がバイト単位で現れたことを確かめる。
   現れなければ、同じフォルダ内の途中名（`.fsops-rename-<ランダム16進>`）へ排他リネームし、続けて途中名から新しい名前へ排他リネームする。
@@ -1108,7 +1110,7 @@ type OpError struct {
 | Exist | `ERROR_FILE_EXISTS`、`ERROR_ALREADY_EXISTS` | `EEXIST` |
 | Permission | `ERROR_ACCESS_DENIED`（読み取り専用でない場合） | `EACCES`、`EPERM` |
 | Locked | `ERROR_SHARING_VIOLATION`、`ERROR_LOCK_VIOLATION` | `EBUSY` |
-| ReadOnly | `ERROR_ACCESS_DENIED` かつ読み取り専用属性、`ERROR_WRITE_PROTECT` | `EROFS`、`EPERM` かつ `UF_IMMUTABLE` |
+| ReadOnly | `ERROR_ACCESS_DENIED` かつファイルの読み取り専用属性（フォルダの読み取り専用属性は保護を意味しないので見ない。§13.2）、`ERROR_WRITE_PROTECT` | `EROFS`、`EPERM` かつ `UF_IMMUTABLE`（削除では、エントリ自体かそれを含むフォルダ） |
 | NoSpace | `ERROR_DISK_FULL`、`ERROR_HANDLE_DISK_FULL` | `ENOSPC`、`EDQUOT` |
 | FileTooLarge | `ERROR_FILE_TOO_LARGE`（Windows は FAT32 の上限でも `ERROR_DISK_FULL` を返すので、§10.6 で書く前に判断する） | `EFBIG` |
 | NotEmpty | `ERROR_DIR_NOT_EMPTY` | `ENOTEMPTY` |
