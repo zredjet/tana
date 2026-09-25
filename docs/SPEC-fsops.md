@@ -924,6 +924,8 @@ const (
 - 種類に合わない方法での削除は、何も消さずに失敗する（V3）。判定の後にエントリが置き換えられた場合に誤った分類にしないため、
   削除が `ERROR_ACCESS_DENIED`・`ERROR_DIRECTORY`（Unix では `EISDIR`・`ENOTDIR`・`EPERM`）で失敗したら `Lstat` し直し、種類が変わっていれば `KindSourceChanged` とする。
 - 1 件失敗しても残りは続け、トップレベルの結果を `OutcomePartial` にする。
+- Windows で、フォルダの削除が `ERROR_DIR_NOT_EMPTY` で失敗し、残っている名前がすべて削除待ち（§17。exFAT・FAT32 では、fsops 自身が付けた
+  削除の印も、ほかのハンドルが開いていると削除待ちで残る。V23）なら、`KindNotEmpty` ではなく `KindLocked` にし、§17.1 のとおりやり直す。
 - Windows の読み取り専用ファイルは削除に失敗する（`DeleteFileW` もハンドルでの削除も `ERROR_ACCESS_DENIED` を返し、ファイルと属性は残る。V15、V23 で確認済み）。属性を勝手に外さず `KindReadOnly` として報告する。
 - Windows のフォルダの読み取り専用属性は保護を意味しないため、フォルダに限り属性を外してから削除する（読み取り専用属性の付いたフォルダは、空でも `RemoveDirectoryW` が `ERROR_ACCESS_DENIED` で失敗する。V15）。
   属性は、上記の確かめたハンドルで外し、削除に失敗したら元に戻す。
@@ -1134,12 +1136,15 @@ type OpError struct {
   - `ERROR_ACCESS_DENIED`・`EPERM` で、対象が読み取り専用でない場合 → Permission
 - `ctx.Err()`（`context.Canceled`、`context.DeadlineExceeded`）は `KindCanceled`。
 - `ERROR_ACCESS_DENIED` は原因が複数あるため、対象の属性を調べて ReadOnly か Permission かを決める。
+- Windows で、削除（確かめて開くハンドル）と、エントリを調べる操作（`Lstat`）が `ERROR_ACCESS_DENIED` で失敗し、直後の NT ステータス
+  （`RtlGetLastNtStatus`。失敗した呼び出しと同じ OS スレッドで読む）が `STATUS_DELETE_PENDING` なら、`KindLocked` にする（V26）。
+  ほかのプロセスが開いたまま削除の印を付けたもので、そのプロセスが閉じれば消えるため（「権限がありません」ではない）。§17.1 のとおりやり直す。
 
 ### 17.1 使用中の一時的な失敗のやり直し（Windows）
 
 ウイルス対策ソフト・検索インデクサ・同期クライアントは、書き終えたばかりのファイルなどを短い間開く。その間の失敗を `KindLocked` にしないため、やり直す。
 
-- 次の操作が `KindLocked`（`ERROR_SHARING_VIOLATION`・`ERROR_LOCK_VIOLATION`、§9.3 の使用中の判定を含む）で失敗したら、やり直す。
+- 次の操作が `KindLocked`（`ERROR_SHARING_VIOLATION`・`ERROR_LOCK_VIOLATION`、§9.3 の使用中の判定、§17 の削除待ちを含む）で失敗したら、やり直す。
   コピー元を開く（§10.1 手順 1・§10.4 の読み直し）、最終名へのリネーム（排他・置換・自動リネームの各候補）、同一ボリュームの移動のリネーム、
   §13.2 の開いて確かめて削除する一連（完全削除・記録した項目の削除・マージ移動の後の移動元のフォルダの削除）、fsops の一時ファイルの削除、`Rename`。
 - やり直すのは「確かめてから操作するまで」の一連で、確認（一時ファイルの `check`、上書き先の照合、開いたハンドルの fileID とリパースの確認）も毎回やり直す。
@@ -1147,7 +1152,7 @@ type OpError struct {
   上限に達したら、今と同じく `KindLocked` にする。`Rename` は 1 回の呼び出しを 1 回の `Execute` と同じに扱う。
 - 待っている間にキャンセルされたら、すぐに `KindCanceled` として §16 に従う。
   ただし fsops の一時ファイルの削除は、キャンセルされていても上限まで待ってやり直す（I3。キャンセル後も一時ファイルを残さないため）。
-- やり直さないもの: 読み書きの途中の `ERROR_LOCK_VIOLATION`（アプリが意図して持つバイト範囲ロック）、`ERROR_ACCESS_DENIED`（読み取り専用・権限・削除待ち）、
+- やり直さないもの: 読み書きの途中の `ERROR_LOCK_VIOLATION`（アプリが意図して持つバイト範囲ロック）、`ERROR_ACCESS_DENIED`（読み取り専用・権限。削除待ちは §17 のとおり `KindLocked` にしてやり直す）、
   ごみ箱（シェル内部）、フォルダを開く操作、Unix の `EBUSY`。
 - テストでは、`hooks` の `lockFault` でやり直しの対象の操作に使用中の失敗を注入し、`lockWait` で待ちを置き換える（実際には待たない）。
   注入した失敗は、どの OS でもやり直しの対象として扱う（やり直しの処理を 3 つの OS で確かめるため）。
