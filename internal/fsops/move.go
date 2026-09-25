@@ -270,6 +270,9 @@ func (mv *mover) merge(parent *secDir, src, dst string, e dirEntry, pc *planned,
 
 // mergeEntry は、マージ移動の中のエントリ 1 件を処理する。実際の移動先のパスと結果、移動元から消えたか（gone）を返す。
 func (mv *mover) mergeEntry(d *secDir, src, dst string, e dirEntry, pc *planned, dd *secDir) (final string, out Outcome, oe *OpError, gone bool) {
+	if e.statErr != nil { // 列挙はできたが調べられなかったエントリ。このエントリだけを失敗にし、移動元に残す
+		return dst, OutcomeFailed, &OpError{Op: "move", Path: src, Dest: dst, Kind: classify(e.statErr, classifyOpts{}), Err: e.statErr}, false
+	}
 	if pc != nil && (pc.c.Decision == DecisionUnset || pc.c.Decision == DecisionSkip) {
 		return dst, OutcomeSkipped, nil, false // 衝突の決定による Skip。移動元に残る
 	}

@@ -215,6 +215,9 @@ func (ex *executor) copyTop(i int, it Item, move bool) (ItemResult, *recordEntry
 // dd は dst を置くフォルダ（§13.1 の方法で確かめて開いたもの）で、dst の名前は dd の中の名前として扱う。
 // 実際のコピー先のパスと、エントリ自体の結果を返す。フォルダの中のエントリの結果は Details に記録する。
 func (cp *copier) copyEntry(src, dst string, e dirEntry, pc *planned, dd *secDir) (string, Outcome, *OpError) {
+	if e.statErr != nil { // 列挙はできたが調べられなかったエントリ。このエントリだけを失敗にする
+		return dst, OutcomeFailed, &OpError{Op: "copy", Path: src, Dest: dst, Kind: classify(e.statErr, classifyOpts{}), Err: e.statErr}
+	}
 	if pc != nil && (pc.c.Decision == DecisionUnset || pc.c.Decision == DecisionSkip) {
 		return dst, OutcomeSkipped, nil // 衝突の決定による Skip（I1）。コピー元が変わっていても何もしないので確かめない
 	}

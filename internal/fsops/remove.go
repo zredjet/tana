@@ -52,7 +52,7 @@ func removeErr(path string, err error, e dirEntry, restat func() (dirEntry, erro
 		return nil, true
 	}
 	if isMismatchRemoveErr(err) && serr == nil && now.dirAttr != e.dirAttr {
-		return &OpError{Op: "remove", Path: path, Kind: KindSourceChanged, Err: err}, false
+		return &OpError{Op: "remove", Path: path, Kind: KindSourceChanged, Err: withUserPaths(err, path, "")}, false
 	}
 	if serr == nil && now.id == e.id && classify(err, classifyOpts{}) == KindNotFound {
 		// 削除は「見つからない」を返したのに、同じエントリがある。列挙の名前の表現（NFD）では扱えない（macOS の exFAT。§8.5、V17）。
@@ -154,6 +154,12 @@ func (r *remover) deleteContents(d *secDir) bool {
 	for _, e := range entries {
 		if r.checkCanceled() {
 			return false
+		}
+		if e.statErr != nil { // 列挙はできたが調べられなかったエントリ。消さずに、このエントリだけを失敗にする
+			path := filepath.Join(d.path, e.name)
+			r.fail(path, &OpError{Op: "remove", Path: path, Kind: classify(e.statErr, classifyOpts{}), Err: e.statErr})
+			all = false
+			continue
 		}
 		if e.info.Type == TypeDir && onOtherVolume(e.id, d.id) {
 			// マウントポイント。中は別のボリュームのもので、削除を指示されたフォルダの一部ではないので入らない（§13.1）。

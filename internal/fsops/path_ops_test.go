@@ -205,3 +205,13 @@ func TestMoveCrossVolumeLongPath(t *testing.T) {
 		t.Error("the source is left")
 	}
 }
+
+// TestWithUserPathsOpError は、OS ごとの関数が \\?\ 形式のパスで作った *OpError のパスも、呼び出し側に返す形にすることを確かめる（§8.2）。
+func TestWithUserPathsOpError(t *testing.T) {
+	t.Parallel()
+	inner := &OpError{Op: "open", Path: `\\?\C:\dir\f.txt`, Kind: KindSourceChanged}
+	err := withUserPaths(inner, `C:\dir\f.txt`, "")
+	if inner.Path != `C:\dir\f.txt` || err != error(inner) {
+		t.Errorf("Path = %q, want the user path", inner.Path)
+	}
+}

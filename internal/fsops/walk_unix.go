@@ -25,7 +25,11 @@ func readDirSys(s string) ([]dirEntry, error) {
 }
 
 // listFD は、開いたフォルダ fd の中身を名前のバイト順で列挙する。fd は閉じない。s はエラーに使うパス。
-func listFD(fd int, s string) ([]dirEntry, error) {
+func listFD(fd int, s string) ([]dirEntry, error) { return listFDWith(fd, s, statAt) }
+
+// listFDWith は listFD の、各エントリを調べる関数 stat を指定できる形（テストで調べられないエントリを作るため）。
+// 調べられなかったエントリは、statErr を付けて返す。
+func listFDWith(fd int, s string, stat func(fd int, name string) (dirEntry, error)) ([]dirEntry, error) {
 	// os.File に渡すと Close で閉じられるので複製する。複製は読み進める位置（オフセット）を fd と共有するので、
 	// 続けて先頭に戻してから列挙する（同じフォルダを何度列挙しても全件を返すため）。
 	dup, err := ignoringEINTR2(func() (int, error) { return unix.Dup(fd) })
@@ -45,12 +49,13 @@ func listFD(fd int, s string) ([]dirEntry, error) {
 	names = dropAppleDouble(fd, names)
 	entries := make([]dirEntry, 0, len(names))
 	for _, name := range names {
-		e, err := statAt(fd, name)
+		e, err := stat(fd, name)
 		if errors.Is(err, unix.ENOENT) {
 			continue // 列挙の後に消えた
 		}
 		if err != nil {
-			return nil, &os.PathError{Op: "fstatat", Path: s + "/" + name, Err: err}
+			entries = append(entries, dirEntry{name: name, statErr: &os.PathError{Op: "fstatat", Path: s + "/" + name, Err: err}})
+			continue
 		}
 		entries = append(entries, e)
 	}

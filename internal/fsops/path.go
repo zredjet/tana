@@ -30,6 +30,13 @@ func withUserPaths(err error, src, dst string) error {
 	}
 	if pe, ok := errors.AsType[*fs.PathError](err); ok {
 		pe.Path = src
+		return err
+	}
+	if oe, ok := errors.AsType[*OpError](err); ok { // OS ごとの関数が \\?\ 形式のパスで作った *OpError
+		oe.Path = src
+		if dst != "" {
+			oe.Dest = dst
+		}
 	}
 	return err
 }

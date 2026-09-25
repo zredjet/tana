@@ -355,6 +355,10 @@ func (w *walker) walk(src, dst string, parent ConflictID) error {
 			return err
 		}
 		childSrc := filepath.Join(src, e.name)
+		if e.statErr != nil { // 調べられなかったエントリ。警告して数えない
+			w.warn(childSrc, e.statErr)
+			continue
+		}
 		childDst := ""
 		var cid ConflictID
 		owner := w.owner
