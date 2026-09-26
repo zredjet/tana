@@ -86,9 +86,10 @@ type App struct {
 	frames     int // 描いた回数（Drawn）
 	quit       bool
 
-	needs      Needs   // 表示形式が求めるもの（SetNeeds）
-	preview    Preview // 操作中のペインのカーソル行のプレビュー（読んでいる途中なら Kind が PreviewNone）
-	previewGen int     // プレビューの世代。カーソルが動いたら古い読み込みの結果を捨てる
+	needs        Needs   // 表示形式が求めるもの（SetNeeds）
+	preview      Preview // 操作中のペインのカーソル行のプレビュー（読んでいる途中なら Kind が PreviewNone）
+	previewGen   int     // プレビューの世代。カーソルが動いたら古い読み込みの結果を捨てる
+	previewStale bool    // 一覧を読み直したので、同じ項目でもプレビューを読み直す
 }
 
 // New は、App を作り、各ペインの最初の読み込みを返す。
@@ -497,7 +498,7 @@ func (a *App) loaded(m loaded) []Cmd {
 	keep := ld.kind == loadReload && m.dir == p.dir && p.loaded
 	p.set(m.dir, m.items, a.showHidden, keep, ld.focus)
 	if m.pane == a.active {
-		a.preview = Preview{} // 読み直した一覧で、プレビューも読み直す
+		a.previewStale = true // 読み直した一覧で、プレビューも読み直す
 	}
 	return a.linkTarget(m.pane)
 }

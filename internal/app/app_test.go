@@ -66,6 +66,15 @@ func (h *harness) do(k ActionKind) { h.act(Action{Kind: k}) }
 
 func (h *harness) act(act Action) { h.run(h.a.Do(act)) }
 
+// step は、貯めた Cmd を動かす。その結果で返った Cmd は、また貯める。
+func (h *harness) step() {
+	held := h.held
+	h.held = nil
+	for _, c := range held {
+		h.run(h.a.Update(c.Run()))
+	}
+}
+
 // release は、貯めた Cmd を動かす。
 func (h *harness) release() {
 	held := h.held
@@ -720,7 +729,7 @@ func TestPreviewNotNeeded(t *testing.T) {
 			t.Error("a preview was scheduled without SetNeeds")
 		}
 	}
-	if _, _, ok := h.pane(0).Parent(); ok || h.a.Preview().Kind != PreviewNone {
+	if _, _, _, ok := h.pane(0).Parent(); ok || h.a.Preview().Kind != PreviewNone {
 		t.Error("read the parent or the preview without SetNeeds")
 	}
 }
@@ -809,6 +818,12 @@ func TestPreviewReload(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.do(ActReload)
+	if pv := h.a.Preview(); !slices.Equal(pv.Lines, []string{"x"}) {
+		t.Errorf("while re-reading: %q, want the old preview kept (no flicker)", pv.Lines)
+	}
+	if _, _, _, ok := h.pane(0).Parent(); ok {
+		t.Error("the parent listing was not asked for")
+	}
 	h.fire()
 	if pv := h.a.Preview(); !slices.Equal(pv.Lines, []string{"changed"}) {
 		t.Errorf("after reload: %q, want changed", pv.Lines)
@@ -821,21 +836,21 @@ func TestParentListing(t *testing.T) {
 	root := tree(t)
 	h := newHarness(t, nil, filepath.Join(root, "sub"), root)
 	h.run(h.a.SetNeeds(Needs{Parent: true}))
-	items, current, ok := h.pane(0).Parent()
+	items, current, err, ok := h.pane(0).Parent()
 	var names []string
 	for _, it := range items {
 		names = append(names, it.Name)
 	}
-	if !ok || current != "sub" || !slices.Equal(names, []string{"sub", ".hidden", "a.txt", "b.txt"}) {
-		t.Errorf("Parent = %q, %q, %v", names, current, ok)
+	if !ok || err != nil || current != "sub" || !slices.Equal(names, []string{"sub", ".hidden", "a.txt", "b.txt"}) {
+		t.Errorf("Parent = %q, %q, %v, %v", names, current, err, ok)
 	}
 	h.do(ActNextPane) // もう一方のペイン（root）の親
-	if _, current, ok := h.pane(1).Parent(); !ok || current != filepath.Base(root) {
+	if _, current, _, ok := h.pane(1).Parent(); !ok || current != filepath.Base(root) {
 		t.Errorf("pane 1 Parent: %q %v", current, ok)
 	}
 	h.do(ActNextPane)
 	h.do(ActParent) // ペイン 0 は root へ。親の一覧を読み直す
-	if _, current, ok := h.pane(0).Parent(); !ok || current != filepath.Base(root) {
+	if _, current, _, ok := h.pane(0).Parent(); !ok || current != filepath.Base(root) {
 		t.Errorf("after Parent: %q %v", current, ok)
 	}
 }
@@ -863,5 +878,37 @@ func TestEnterDir(t *testing.T) {
 	h.do(ActEnterDir) // .. で親へ
 	if h.pane(0).Dir() != root {
 		t.Errorf("EnterDir on ..: Dir %q", h.pane(0).Dir())
+	}
+}
+
+// TestParentListingKeptAndError は、再読み込みの間も親フォルダの一覧を出したままにすることと、読めなかった理由を返すことを確かめる。
+func TestParentListingKeptAndError(t *testing.T) {
+	t.Parallel()
+	root := tree(t)
+	var failParent bool
+	h := newHarness(t, func(c *Config) {
+		readDir := c.ReadDir
+		c.ReadDir = func(dir string) ([]fsops.Entry, error) {
+			if failParent && dir == root {
+				return nil, &fsops.OpError{Op: "readdir", Path: dir, Kind: fsops.KindPermission}
+			}
+			return readDir(dir)
+		}
+	}, filepath.Join(root, "sub"))
+	h.run(h.a.SetNeeds(Needs{Parent: true}))
+	h.hold = true
+	h.do(ActReload)
+	h.step() // 一覧の再読み込み。親の一覧の読み直しは貯まる
+	if len(h.held) == 0 {
+		t.Fatal("the parent listing is not re-read after the reload")
+	}
+	if items, _, _, ok := h.pane(0).Parent(); !ok || len(items) == 0 {
+		t.Errorf("the parent listing disappeared while re-reading: %d items, %v", len(items), ok)
+	}
+	failParent = true
+	h.release()
+	h.do(ActReload)
+	if _, _, err, ok := h.pane(0).Parent(); !ok || fsops.KindOf(err) != fsops.KindPermission {
+		t.Errorf("Parent err = %v, %v, want KindPermission", err, ok)
 	}
 }

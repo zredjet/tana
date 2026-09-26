@@ -49,6 +49,7 @@ type parentList struct {
 	forDir  string // この一覧を読んだときのペインのフォルダ
 	listGen int    // そのときのペインの一覧の世代（再読み込みで読み直す）
 	items   []listing.Item
+	err     error // 読めなかった理由
 	done    bool
 }
 
@@ -57,15 +58,16 @@ type parentRead struct {
 	pane, listGen int
 	forDir        string
 	items         []listing.Item
+	err           error
 }
 
 // Parent は、親フォルダの一覧（.. を除く）と、その中の今のフォルダの名前を返す。読んでいない・ルートなら ok が偽。
-// 読めなかったときは、items が空で ok が真。
-func (p *Pane) Parent() (items []listing.Item, current string, ok bool) {
+// 読めなかったときは、その理由を err に返す（U3）。
+func (p *Pane) Parent() (items []listing.Item, current string, err error, ok bool) {
 	if p.parent == nil || !p.parent.done || p.parent.forDir != p.dir {
-		return nil, "", false
+		return nil, "", nil, false
 	}
-	return p.parent.items, filepath.Base(p.dir), true
+	return p.parent.items, filepath.Base(p.dir), p.parent.err, true
 }
 
 func (a *App) scheduleParent() []Cmd {
@@ -77,22 +79,28 @@ func (a *App) scheduleParent() []Cmd {
 	if p.parent != nil && p.parent.forDir == p.dir && p.parent.listGen == p.listGen {
 		return nil
 	}
-	p.parent = &parentList{forDir: p.dir, listGen: p.listGen}
+	next := &parentList{forDir: p.dir, listGen: p.listGen}
+	if p.parent != nil && p.parent.forDir == p.dir {
+		// 同じフォルダの再読み込み。読み直す間は、前の一覧を出したままにする（ちらつかないように）。
+		next.items, next.err, next.done = p.parent.items, p.parent.err, p.parent.done
+	}
+	p.parent = next
 	dir, gen, readDir, dotHidden := p.dir, p.listGen, a.cfg.ReadDir, a.cfg.DotFilesHidden
 	return []Cmd{{Run: func() any {
 		parent := filepath.Dir(dir)
+		entries, err := readDir(parent)
 		var items []listing.Item
-		if entries, err := readDir(parent); err == nil {
+		if err == nil {
 			items = withoutParent(listing.Build(parent, entries, dotHidden))
 		}
-		return parentRead{pane: i, listGen: gen, forDir: dir, items: items}
+		return parentRead{pane: i, listGen: gen, forDir: dir, items: items, err: err}
 	}}}
 }
 
 func (a *App) parentRead(m parentRead) {
 	p := a.panes[m.pane]
 	if p.parent != nil && p.parent.forDir == m.forDir && p.parent.listGen == m.listGen {
-		p.parent.items, p.parent.done = m.items, true
+		p.parent.items, p.parent.err, p.parent.done = m.items, m.err, true
 	}
 }
 
@@ -167,17 +175,20 @@ func (a *App) schedulePreview() []Cmd {
 		return nil
 	}
 	path, it, ok := a.previewTarget()
-	if !ok || a.preview.Path == path {
+	if !ok || a.preview.Path == path && !a.previewStale {
 		return nil
 	}
 	a.previewGen++
-	a.preview = Preview{Path: path}
+	if a.preview.Path != path {
+		a.preview = Preview{Path: path}
+	} // 同じ項目を読み直す（再読み込みの後）ときは、読み終わるまで前のプレビューを出したままにする
+	a.previewStale = false
 	switch {
 	case it.Err != nil:
-		a.preview.Kind, a.preview.Err = PreviewError, it.Err
+		a.preview = Preview{Path: path, Kind: PreviewError, Err: it.Err}
 		return nil
 	case it.Info.Type == fsops.TypeSpecial:
-		a.preview.Kind = PreviewSpecial
+		a.preview = Preview{Path: path, Kind: PreviewSpecial}
 		return nil
 	}
 	gen := a.previewGen

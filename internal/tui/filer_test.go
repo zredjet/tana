@@ -514,6 +514,7 @@ func columnsFS(t *testing.T) (map[string][]fsops.Entry, map[string][]byte) {
 		filepath.Join(colDir, "写真"): {typed("2025年度", fsops.TypeDir, at(1, 1, 0, 0, 0)), typed("2026年度", fsops.TypeDir, at(1, 1, 0, 0, 0)),
 			file("議事録.docx", 1000, at(1, 1, 0, 0, 0)), file("予算.xlsx", 2000, at(1, 1, 0, 0, 0))},
 		filepath.Join(colDir, "空のフォルダ"): {},
+		filepath.Join(home, "AppData"):  {typed("Local", fsops.TypeDir, at(1, 1, 0, 0, 0))},
 	}
 	files := map[string][]byte{
 		filepath.Join(colDir, "メモ.txt"):   []byte(memo),
@@ -650,4 +651,24 @@ func TestRedrawKey(t *testing.T) {
 	if out := flush(); out != "" {
 		t.Errorf("the flush after the redraw wrote %q", out)
 	}
+}
+
+// TestColumnsHiddenCurrent は、隠しフォルダの中にいるとき、隠しファイルを表示しなくても、親フォルダの列にそのフォルダを反転して出すことを確かめる。
+func TestColumnsHiddenCurrent(t *testing.T) {
+	t.Parallel()
+	sc := newColumnsScene(t)
+	sc.keys(key(keys.KeyLeft)) // colHome へ
+	sc.keys(char('.'))         // 隠しファイルを出して AppData に入る
+	sc.moveTo("AppData")
+	sc.keys(key(keys.KeyRight), char('.'))
+	s := sc.draw(80, 24)
+	for y := range 24 {
+		if strings.HasPrefix(s.Row(y)[len("│ "):], "AppData") {
+			if st := s.Cell(2, y).Style; st.Attr&screen.AttrReverse == 0 {
+				t.Errorf("AppData in the parent column is not highlighted: %+v", st)
+			}
+			return
+		}
+	}
+	t.Errorf("the hidden current folder is not in the parent column:\n%s", render(s))
 }

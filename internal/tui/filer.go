@@ -573,47 +573,57 @@ func (f *Filer) drawColumns(s *screen.Screen, r screen.Region) {
 	}
 }
 
-// visible は、隠しファイルを表示しないときに隠しファイルを除いた項目を返す（filer §6）。
-func (f *Filer) visible(items []listing.Item) []listing.Item {
-	if f.app.ShowHidden() {
-		return items
-	}
-	out := make([]listing.Item, 0, len(items))
-	for _, it := range items {
-		if !it.Hidden {
-			out = append(out, it)
-		}
-	}
-	return out
+// shown は、隠しファイルの規則（filer §6）で、項目 it を表示するかを返す。keep の名前の項目は、隠しファイルでも表示する。
+func (f *Filer) shown(it listing.Item, keep string) bool {
+	return f.app.ShowHidden() || !it.Hidden || keep != "" && it.Name == keep
 }
 
 // drawParentColumn は、親フォルダの一覧を描き、今のフォルダの行を反転する。今のフォルダが見えるように送る。
+// 今のフォルダは、隠しフォルダでも表示する（どこにいるかを示すため）。描くたびに一覧を写さない（大きなフォルダでも描画を重くしない）。
 func (f *Filer) drawParentColumn(s *screen.Screen, r screen.Region, p *app.Pane) {
-	items, current, ok := p.Parent()
+	items, current, err, ok := p.Parent()
 	if !ok {
 		return
 	}
-	items = f.visible(items)
-	at := -1
-	for k, it := range items {
-		if it.Name == current {
-			at = k
-			break
+	if err != nil {
+		for row, l := range textfmt.Wrap(msg.Error(err), r.W-1) {
+			s.Put(screen.Region{X: r.X + 1, Y: r.Y, W: r.W - 1, H: r.H}, 0, row, l, screen.Style{FG: styleError.FG, Attr: screen.AttrDim})
 		}
+		return
+	}
+	at, n := -1, 0 // 今のフォルダの位置と、表示する項目の数
+	for _, it := range items {
+		if !f.shown(it, current) {
+			continue
+		}
+		if at < 0 && it.Name == current {
+			at = n
+		}
+		n++
 	}
 	top := 0
 	if at >= r.H {
-		top = min(at-r.H/2, len(items)-r.H)
+		top = min(at-r.H/2, n-r.H)
 	}
-	for row := 0; row < r.H && top+row < len(items); row++ {
-		it := items[top+row]
+	k, row := 0, 0
+	for _, it := range items {
+		if row >= r.H {
+			break
+		}
+		if !f.shown(it, current) {
+			continue
+		}
+		if k++; k-1 < top {
+			continue
+		}
 		st := itemStyle(it, false)
-		if top+row == at {
+		if k-1 == at {
 			st.Attr |= screen.AttrReverse
 		}
 		line := screen.Region{X: r.X, Y: r.Y + row, W: r.W, H: 1}
 		s.Fill(line, st)
 		putName(s, screen.Region{X: r.X + 1, Y: line.Y, W: r.W - 1, H: 1}, textfmt.TruncName(it.Name, r.W-1), st)
+		row++
 	}
 }
 
@@ -631,13 +641,17 @@ func (f *Filer) drawPreview(s *screen.Screen, r screen.Region, pv app.Preview) {
 	dim := screen.Style{Attr: screen.AttrDim}
 	switch pv.Kind {
 	case app.PreviewDir:
-		items := f.visible(pv.Items)
-		if len(items) == 0 {
-			put(msg.PreviewEmpty, dim)
+		for _, it := range pv.Items { // 見える行の分だけ描く（一覧を写さない）
+			if row >= in.H {
+				break
+			}
+			if f.shown(it, "") {
+				putName(s, screen.Region{X: in.X, Y: in.Y + row, W: in.W, H: 1}, textfmt.TruncName(it.Name, in.W), itemStyle(it, false))
+				row++
+			}
 		}
-		for row := 0; row < in.H && row < len(items); row++ {
-			it := items[row]
-			putName(s, screen.Region{X: in.X, Y: in.Y + row, W: in.W, H: 1}, textfmt.TruncName(it.Name, in.W), itemStyle(it, false))
+		if row == 0 {
+			put(msg.PreviewEmpty, dim)
 		}
 	case app.PreviewText:
 		for k := 0; k < in.H && k < len(pv.Lines); k++ {
