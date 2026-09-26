@@ -117,34 +117,59 @@ type View struct {
 // View は、幅 width の欄に表示する範囲を決める。カーソルが常に見えるように横に動かす（カーソルのための 1 桁を残す）。
 // 幅は textwidth の表示する形の幅で数える。右端にかかる幅 2 以上の書記素クラスタは含めない。
 // width が 1 より小さければ、カーソルの位置の空の範囲を返す。
+// 文字列を 1 回だけ書記素クラスタに分けるので、かかる時間は文字列の長さに比例する（大きな貼り付けでも UI を止めない。filer U5）。
 func (e *Editor) View(width int) View {
 	if width < 1 {
 		return View{Start: e.cursor, End: e.cursor}
 	}
-	// 編集で範囲の始めが書記素クラスタの途中になっていれば、その書記素クラスタの始めに戻す。
-	e.offset = min(e.offset, e.cursor)
-	if e.offset > 0 && e.snap(e.offset) != e.offset {
-		e.offset = e.prev(e.offset)
+	// 書記素クラスタの始めの位置と幅。最後の要素は末尾（幅 0）。
+	type seg struct{ start, width int }
+	var segs []seg
+	cur, off := 0, 0
+	offset := min(e.offset, e.cursor)
+	for i := 0; ; {
+		if i == e.cursor {
+			cur = len(segs)
+		}
+		if i <= offset {
+			off = len(segs) // 編集で範囲の始めが書記素クラスタの途中になっていれば、その書記素クラスタの始めにする
+		}
+		if i == len(e.text) {
+			segs = append(segs, seg{i, 0})
+			break
+		}
+		c, _ := textwidth.Next(e.text[i:])
+		segs = append(segs, seg{i, c.Width})
+		i += len(c.Text)
 	}
-	for textwidth.Width(e.text[e.offset:e.cursor]) > width-1 {
-		e.offset = e.next(e.offset)
+	sum := func(from, to int) int {
+		w := 0
+		for _, g := range segs[from:to] {
+			w += g.width
+		}
+		return w
+	}
+	col := sum(off, cur)
+	for col > width-1 {
+		col -= segs[off].width
+		off++
 	}
 	// 左に余裕があれば戻して欄を埋める（消して短くなった場合）。
-	for e.offset > 0 {
-		p := e.prev(e.offset)
-		if textwidth.Width(e.text[p:]) > width-1 {
-			break
-		}
-		e.offset = p
+	// 範囲の始めから末尾までが欄に収まる間だけ戻す。カーソルが末尾にあるときは、カーソルの 1 桁も要る。
+	rest := sum(off, len(segs))
+	if cur == len(segs)-1 {
+		rest++
 	}
-	end, w := e.offset, 0
-	for end < len(e.text) {
-		c, _ := textwidth.Next(e.text[end:])
-		if w+c.Width > width {
-			break
-		}
-		w += c.Width
-		end += len(c.Text)
+	for off > 0 && rest+segs[off-1].width <= width {
+		off--
+		rest += segs[off].width
+		col += segs[off].width
 	}
-	return View{Start: e.offset, End: max(end, e.cursor), CursorCol: textwidth.Width(e.text[e.offset:e.cursor])}
+	end, w := off, 0
+	for end < len(segs)-1 && w+segs[end].width <= width {
+		w += segs[end].width
+		end++
+	}
+	e.offset = segs[off].start
+	return View{Start: segs[off].start, End: segs[end].start, CursorCol: col}
 }

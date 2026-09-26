@@ -1,6 +1,7 @@
 package screen
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/zredjet/tana/internal/textwidth"
@@ -39,10 +40,22 @@ const (
 	AttrReverse
 )
 
-// Style はセルの見た目。
+// Style はセルの見た目。範囲外の色（ColorBrightWhite より大きい値）は既定の色に、未知の属性は無いものにして格子に置く。
 type Style struct {
 	FG, BG Color
 	Attr   Attr
+}
+
+// valid は、範囲外の色を既定の色にし、未知の属性を捨てた見た目を返す（格子と、端末に出すものを合わせる。T6）。
+func (st Style) valid() Style {
+	if st.FG > ColorBrightWhite {
+		st.FG = ColorDefault
+	}
+	if st.BG > ColorBrightWhite {
+		st.BG = ColorDefault
+	}
+	st.Attr &= AttrBold | AttrDim | AttrUnderline | AttrReverse
+	return st
 }
 
 // Region は画面の矩形（0 から数える）。画面の外にはみ出してもよい（画面の中だけに描く）。
@@ -192,11 +205,18 @@ func (s *Screen) Put(r Region, x, y int, text string, st Style) int {
 	if !ok {
 		return 0
 	}
+	st = st.valid()
 	col := r.X + x
 	used, first := 0, true
+	var buf [4]textwidth.Cluster
 	for c := range textwidth.All(text) {
-		// 表示する形を、通常の文字の書記素クラスタに分けて置く（国旗の ?? は ? が 2 つ）。
-		for d := range textwidth.All(c.Display) {
+		// 通常の書記素クラスタは、表示する形が元の文字列と同じ（textwidth）なので、そのまま置く。
+		// それ以外は、表示する形を通常の文字の書記素クラスタに分けて置く（国旗の ?? は ? が 2 つ）。
+		parts := append(buf[:0], c)
+		if c.Class != textwidth.Normal {
+			parts = slices.AppendSeq(buf[:0], textwidth.All(c.Display))
+		}
+		for _, d := range parts {
 			w := d.Width
 			switch {
 			case col+w <= left:
@@ -223,6 +243,7 @@ func (s *Screen) Put(r Region, x, y int, text string, st Style) int {
 
 // Fill は、領域 r を空白で塗る（T5）。領域の左端は欄の始めになる。
 func (s *Screen) Fill(r Region, st Style) {
+	st = st.valid()
 	for y := max(r.Y, 0); y < min(r.Y+r.H, s.rows); y++ {
 		left, right, ok := s.clip(r, y)
 		if !ok {

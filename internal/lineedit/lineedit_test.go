@@ -1,6 +1,7 @@
 package lineedit
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -168,8 +169,30 @@ func TestView(t *testing.T) {
 		e.DeleteBackward()
 	}
 	check("after deleting", e, 5, 0, 3, 3)
+	// 全体が欄に収まるなら、カーソルが末尾になくても、先頭から表示する（カーソルの 1 桁は、後ろの文字の上にある）。
+	e = New("abcde", 5)
+	check("end of a text as wide as the field", e, 5, 1, 5, 4)
+	e.Left()
+	check("the whole text fits", e, 5, 0, 5, 4)
 	// 表示する形の幅で数える（制御文字は ? で 1 桁）。
 	e = New("a\x1bb", 3)
 	check("display forms", e, 10, 0, 3, 3)
 	check("zero width", e, 0, 3, 3, 0)
+}
+
+// TestViewLongText は、長い文字列（大きな貼り付け）でも、表示の範囲を文字列の長さに比例する時間で決めることを確かめる（filer U5）。
+// 長さの 2 乗の時間がかかると、この長さでは数分かかる。
+func TestViewLongText(t *testing.T) {
+	t.Parallel()
+	long := strings.Repeat("a", 1<<17)
+	e := New(long, len(long))
+	for _, w := range []int{10, 80} {
+		if v := e.View(w); v.Start != len(long)-(w-1) || v.End != len(long) || v.CursorCol != w-1 {
+			t.Errorf("View(%d) at the end = %+v", w, v)
+		}
+	}
+	e.Home()
+	if v := e.View(80); v.Start != 0 || v.End != 80 || v.CursorCol != 0 {
+		t.Errorf("View(80) at the start = %+v", v)
+	}
 }

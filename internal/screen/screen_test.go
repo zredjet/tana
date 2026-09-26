@@ -11,9 +11,6 @@ import (
 	"github.com/zredjet/tana/internal/textwidth"
 )
 
-// emuDefaultWidth は、エミュレータの既定の幅（textwidth の表示幅）。
-func emuDefaultWidth(c string) int { return textwidth.Width(c) }
-
 var full = Region{X: 0, Y: 0, W: 1000, H: 1000}
 
 // emuStyle は、Style を、エミュレータが SGR から読んだ属性の形にする。
@@ -290,6 +287,28 @@ func TestFlushStylesAndNoColor(t *testing.T) {
 	}
 }
 
+// TestInvalidStyle は、範囲外の色と未知の属性を、格子に入れる前に捨てることを確かめる（T6。端末に出すものと格子を合わせる）。
+func TestInvalidStyle(t *testing.T) {
+	t.Parallel()
+	s := New(4, 2)
+	e := emu.New(4, 2)
+	bad := Style{FG: Color(20), BG: Color(255), Attr: 0xf0 | AttrBold}
+	s.Put(full, 0, 0, "ab", bad)
+	s.Fill(Region{X: 0, Y: 1, W: 4, H: 1}, bad)
+	for _, p := range [][2]int{{0, 0}, {1, 0}, {0, 1}, {3, 1}} {
+		if got := s.Cell(p[0], p[1]).Style; got != (Style{Attr: AttrBold}) {
+			t.Errorf("(%d,%d) style = %+v", p[0], p[1], got)
+		}
+	}
+	out := flushTo(t, s, e)
+	if strings.Contains(out, "101") || strings.Contains(out, "354") {
+		t.Errorf("out-of-range colors written: %q", out)
+	}
+	if d := diff(s, e, nil); len(d) > 0 {
+		t.Errorf("%q", d)
+	}
+}
+
 func TestFlushCursor(t *testing.T) {
 	t.Parallel()
 	s := New(4, 2)
@@ -395,5 +414,5 @@ func mismatchedWidth(c string) int {
 	case "\U0001faf9":
 		return 1
 	}
-	return emuDefaultWidth(c)
+	return textwidth.Width(c)
 }
