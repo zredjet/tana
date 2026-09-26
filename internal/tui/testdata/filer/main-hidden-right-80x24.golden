@@ -21,7 +21,7 @@
 └─ 16 項目  マーク 3 ──────────────────┘╚═ 5 項目 ═════════════════════════════╝|
  ..   親のフォルダ                                                              |
                                                                                 |
- Enter 開く  h 親へ  l 入る  Tab 切替  Space マーク  v 表示  ? ヘルプ  q 終了   |
+ h 親へ  Tab 切替  Space マーク  y 覚える  p 貼る  v 表示  ? ヘルプ  q 終了     |
 -- styles --
 ........................................aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 .bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.acccccccccccccccccccccccccccccccccccccca
@@ -46,7 +46,7 @@
 ........................................aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 ................................................................................
 ................................................................................
-.hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh...
+.hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh.....
 a = fg=default bg=default bold
 b = fg=blue bg=default bold
 c = fg=blue bg=default bold,reverse

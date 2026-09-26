@@ -1,0 +1,57 @@
+┌─ /Users/hiro/Documents ──────────────┐╔═ /Users/hiro ════════════════════════╗|
+│ ..                  <DIR>            │║ ..                  <DIR>            ║|
+│*写真                <DIR> 09-12 09:15│║ Desktop             <DIR> 09-20 10:00║|
+│ 空のフォルダ        <DIR> 09-01 00:00│║ Documents           <DIR> 09-24 11:19║|
+│ 議事録              <DIR> 09-20 18:02│║ Downloads           <DIR> 09-25 09:00║|
+│ data.bin                8 09-02 00:00│║ Music               <DIR> 08-01 00:00║|
+│*メモ.txt              196 09-26 10:00│║                                      ║|
+│ 古いメモ.txt           37 02-03 04:05│║                                      ║|
+│                                      │║                                      ║|
+│                                      │║                                      ║|
+│                                      │║                                      ║|
+│                                      │║                                      ║|
+│                                      │║                                      ║|
+│                                      │║                                      ║|
+│                                      │║                                      ║|
+│                                      │║                                      ║|
+│                                      │║                                      ║|
+│                                      │║                                      ║|
+│                                      │║                                      ║|
+│                                      │║                                      ║|
+└─ 6 項目  マーク 2  隠し 1 ───────────┘╚═ 4 項目  隠し 2 ═════════════════════╝|
+ ..   親のフォルダ                                                              |
+                                                                                |
+ h 親へ  Tab 切替  Space マーク  y 覚える  p 貼る  v 表示  ? ヘルプ  q 終了     |
+-- styles --
+........................................aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.acccccccccccccccccccccccccccccccccccccca
+.dddddddddddddddddddddddddddddddddddddd.abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbba
+.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbba
+.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbba
+........................................abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbba
+.dddddddddddddddddddddddddddddddddddddd.a......................................a
+.eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.a......................................a
+........................................a......................................a
+........................................a......................................a
+........................................a......................................a
+........................................a......................................a
+........................................a......................................a
+........................................a......................................a
+........................................a......................................a
+........................................a......................................a
+........................................a......................................a
+........................................a......................................a
+........................................a......................................a
+........................................a......................................a
+........................................aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+................................................................................
+................................................................................
+.ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff.....
+a = fg=default bg=default bold
+b = fg=blue bg=default bold
+c = fg=blue bg=default bold,reverse
+d = fg=yellow bg=default bold
+e = fg=default bg=default underline
+f = fg=default bg=default dim
+-- cursor --
+0 0 false

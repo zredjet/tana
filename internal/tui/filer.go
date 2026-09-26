@@ -15,6 +15,9 @@ import (
 	"github.com/zredjet/tana/internal/textwidth"
 )
 
+// signalWait は、シグナルで終わるとき、実行中のファイル操作が中止されるのを待つ時間。
+const signalWait = 3 * time.Second
+
 // 端末の大きさの下限（filer §3）。これより小さいときは「端末が小さすぎます」とだけ出す。
 const (
 	minCols = 80
@@ -47,6 +50,7 @@ func (f *Filer) needs() app.Needs {
 
 // RunFiler は、App a の画面をイベントループ l で動かす。cmds は app.New が返した最初の処理。
 func RunFiler(l *Loop, a *app.App, cmds []app.Cmd) error {
+	a.SetWake(l.Wake) // 実行中の進捗は、最新の値を置いて Wake で知らせる（filer §10）
 	f := &Filer{app: a}
 	f.run(l, cmds)
 	return l.Run(f)
@@ -70,7 +74,11 @@ func (f *Filer) Handle(l *Loop, ev Event) bool {
 		f.run(l, f.key(ev.Key))
 	case KindMessage:
 		f.run(l, f.app.Update(ev.Msg))
+	case KindWake:
+		f.app.Refresh()
 	case KindSignal:
+		// ファイル操作の実行中なら中止し、短い時間だけ Execute が戻るのを待つ（filer §10。Windows は約 5 秒で強制終了される）。
+		f.app.Abort(signalWait)
 		return false
 	}
 	return !f.app.Quit()
@@ -80,6 +88,12 @@ func (f *Filer) Handle(l *Loop, ev Event) bool {
 func (f *Filer) key(ev keys.Event) []app.Cmd {
 	if ev.Kind == keys.KeyEvent && ev.Key == keys.KeyRune && ev.Mod == keys.ModCtrl && ev.Rune == 'l' {
 		f.redraw = true // どの画面でも、端末に何かが残ったときの描き直し
+		return nil
+	}
+	if s := f.app.Screen(); s != app.ScreenBrowse {
+		if act, ok := opAction(s, ev); ok {
+			return f.app.Do(act)
+		}
 		return nil
 	}
 	if f.app.Dialog() == app.DialogNone && ev.Kind == keys.KeyEvent && ev.Key == keys.KeyRune && ev.Mod == 0 && ev.Rune == 'v' {
@@ -149,7 +163,15 @@ func (f *Filer) action(ev keys.Event) (app.Action, bool) {
 			return act(app.ActHelp)
 		case 'q':
 			return act(app.ActQuit)
-		case 'c', 'm', 'd', 'D', 'r', 'n', 'L':
+		case 'y':
+			return act(app.ActYank)
+		case 'p':
+			return act(app.ActPasteCopy)
+		case 'P':
+			return act(app.ActPasteMove)
+		case 'L':
+			return act(app.ActLastResult)
+		case 'd', 'D', 'r', 'n':
 			return act(app.ActNotYet)
 		}
 		return app.Action{}, false
@@ -284,12 +306,21 @@ func (f *Filer) Draw(s *screen.Screen) {
 	}
 	line := func(y int) screen.Region { return screen.Region{X: 0, Y: y, W: cols, H: 1} }
 	f.drawStatus(s, line(rows-3))
+	if n := a.Yanked(); n > 0 { // 覚えている項目の数（y。filer §7）は、状態行の右に出す
+		text := " " + msg.YankedIndicator(n) + " "
+		w := textwidth.Width(text)
+		s.Put(screen.Region{X: cols - w - 1, Y: rows - 3, W: w, H: 1}, 0, 0, text, screen.Style{Attr: screen.AttrReverse})
+	}
 	if text, isErr := a.Message(); text != "" {
 		st := screen.Style{}
 		if isErr {
 			st = styleError
 		}
 		s.Put(line(rows-2), 1, 0, text, st)
+	}
+	if a.Planning() {
+		s.Fill(line(rows-2), screen.Style{})
+		s.Put(line(rows-2), 1, 0, msg.Planning, styleWarn)
 	}
 	s.Put(line(rows-1), 1, 0, msg.KeyGuide, screen.Style{Attr: screen.AttrDim})
 	switch a.Dialog() {
@@ -300,6 +331,7 @@ func (f *Filer) Draw(s *screen.Screen) {
 	case app.DialogHelp:
 		f.drawHelp(s)
 	}
+	f.drawOp(s)
 	a.Drawn() // 確認のダイアログは、描いた後に届いたキーで確定する（filer U2）
 }
 

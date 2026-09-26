@@ -1,0 +1,58 @@
+┌─ /Users/hiro/Documents ──────────────┐╔═ /Users/hiro ════════════════════════╗|
+│ ..                  <DIR>            │║ ..                  <DIR>            ║|
+│*写真                <DIR> 09-12 09:15│║ Desktop             <DIR> 09-20 10:00║|
+│ 空のフォルダ        <DIR> 09-01 00:00│║ Documents           <DIR> 09-24 11:19║|
+│*議事録              <DIR> 09-20 18:02│║ Downloads           <DIR> 09-25 09:00║|
+│ data╔═ コピー ═════════════════════════════════════════════════════════╗00:00║|
+│*メモ║                                                                  ║     ║|
+│ 古い║ 4 項目を /Users/hiro へコピーします                              ║     ║|
+│     ║ 合計 58 ファイル、1.3G                                           ║     ║|
+│     ║                                                                  ║     ║|
+│     ║ ! 1 項目は実行しません                                           ║     ║|
+│     ║     old.txt  見つかりません                                      ║     ║|
+│     ║ ! 衝突 7 件（トップレベル 3 件）                                 ║     ║|
+│     ║ ! 空き容量が足りない見込みです                                   ║     ║|
+│     ║                                                                  ║     ║|
+│     ║ Enter 衝突の確認へ   Esc やめる                                  ║     ║|
+│     ╚══════════════════════════════════════════════════════════════════╝     ║|
+│                                      │║                                      ║|
+│                                      │║                                      ║|
+│                                      │║                                      ║|
+└─ 6 項目  マーク 3  隠し 1 ───────────┘╚═ 4 項目  隠し 2 ═════════════════════╝|
+ ..   親のフォルダ                                                覚えた項目 3  |
+                                                                                |
+ h 親へ  Tab 切替  Space マーク  y 覚える  p 貼る  v 表示  ? ヘルプ  q 終了     |
+-- styles --
+........................................aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.acccccccccccccccccccccccccccccccccccccca
+.dddddddddddddddddddddddddddddddddddddd.abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbba
+.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbba
+.dddddddddddddddddddddddddddddddddddddd.abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbba
+......aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbba
+.ddddda..................................................................a.....a
+.eeeeea..................................................................a.....a
+......a..................................................................a.....a
+......a..................................................................a.....a
+......a.dddddddddddddddddddddd...........................................a.....a
+......a..................................................................a.....a
+......a.dddddddddddddddddddddddddddddddd.................................a.....a
+......a.dddddddddddddddddddddddddddddd...................................a.....a
+......a..................................................................a.....a
+......a.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa..................................a.....a
+......aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.....a
+........................................a......................................a
+........................................a......................................a
+........................................a......................................a
+........................................aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+.................................................................ffffffffffffff.
+................................................................................
+.gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg.....
+a = fg=default bg=default bold
+b = fg=blue bg=default bold
+c = fg=blue bg=default bold,reverse
+d = fg=yellow bg=default bold
+e = fg=default bg=default underline
+f = fg=default bg=default reverse
+g = fg=default bg=default dim
+-- cursor --
+0 0 false
