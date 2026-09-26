@@ -37,9 +37,9 @@ var directionRules = []directionRule{
 	{"internal/platform", []string{"golang.org/x/sys"}},
 	// msg・textfmt・listing・app は、term・keys・screen・tui を import しない（filer §4）。
 	{"internal/msg", []string{"internal/fsops", "golang.org/x/sys"}},
-	{"internal/textfmt", []string{"internal/textwidth"}},
+	{"internal/textfmt", []string{"internal/textwidth", "golang.org/x/text"}},
 	{"internal/listing", []string{"internal/fsops", "golang.org/x/sys", "golang.org/x/text"}},
-	{"internal/app", []string{"internal/fsops", "internal/listing", "internal/msg", "internal/platform", "internal/lineedit", "internal/textwidth",
+	{"internal/app", []string{"internal/fsops", "internal/listing", "internal/msg", "internal/platform", "internal/lineedit", "internal/textwidth", "internal/textfmt",
 		"golang.org/x/sys", "golang.org/x/text"}},
 	// tui は土台のパッケージを組み合わせ、app の状態を描く（filer §4）。term を通して x/sys を使う。
 	{"internal/tui", []string{"internal/term", "internal/keys", "internal/screen", "internal/lineedit", "internal/textwidth",
