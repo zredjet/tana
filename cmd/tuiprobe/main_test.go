@@ -20,11 +20,13 @@ import (
 )
 
 // fakeConsole は、書かれたものを覚え、カーソル位置の問い合わせに respond の結果を入力として返す。
+// onWrite があれば、書かれるたびに（書いた goroutine で）呼ぶ。画面に応じた入力を、時間に頼らずに届けるのに使う。
 type fakeConsole struct {
 	buf     bytes.Buffer
 	written bytes.Buffer
 	in      chan term.Input
 	respond func(written string) (reply string, ok bool)
+	onWrite func(written string)
 	paste   []bool
 }
 
@@ -35,6 +37,9 @@ func newFake(respond func(string) (string, bool)) *fakeConsole {
 func (f *fakeConsole) Write(p []byte) (int, error) {
 	f.buf.Write(p)
 	f.written.Write(p)
+	if f.onWrite != nil {
+		f.onWrite(string(p))
+	}
 	return len(p), nil
 }
 
@@ -206,33 +211,50 @@ func TestInputBytes(t *testing.T) {
 var testTiming = keyTiming{quiet: 30 * time.Millisecond, textQuiet: 60 * time.Millisecond, noInput: 100 * time.Millisecond, textNoInput: 150 * time.Millisecond, drain: 10 * time.Millisecond}
 
 // TestRunKeys は、記録・やり直し・届かない場合・中断の流れを確かめる。
+// 入力は、手順の画面と結果の画面が書かれたときに（runKeys の goroutine で）入れる。
+// スリープで間を空けると、遅いランナーで手順の区切りがずれる（macOS の CI の -race で起きた）。
 func TestRunKeys(t *testing.T) {
 	t.Parallel()
 	f := newFake(nil)
-	go func() {
+	type input struct {
+		b     string
+		after time.Duration // 前の入力からの時間（Input.Time に書く）
+	}
+	script := []struct {
+		screen string // 書かれるはずの画面に含まれる文字列
+		inputs []input
+	}{
 		// 1 つ目（esc）: 1 回目は間違えてやり直し、2 回目で次へ。
-		time.Sleep(20 * time.Millisecond)
-		f.send([]byte("x"))
-		time.Sleep(80 * time.Millisecond)
-		f.send([]byte("r"))
-		time.Sleep(40 * time.Millisecond)
-		f.send([]byte("\x1b"))
-		time.Sleep(80 * time.Millisecond)
-		f.send([]byte("\r"))
+		{"keys  1/", []input{{"x", 0}}},
+		{"届いたもの", []input{{"r", 0}}},
+		{"（2 回目）", []input{{"\x1b", 0}}},
+		{"届いたもの", []input{{"\r", 0}}},
 		// 2 つ目（esc-x）: 2 回に分かれて届く。
-		time.Sleep(40 * time.Millisecond)
-		f.send([]byte("\x1b"))
-		time.Sleep(10 * time.Millisecond)
-		f.send([]byte("x"))
-		time.Sleep(80 * time.Millisecond)
-		f.send([]byte("\r"))
+		{"keys  2/", []input{{"\x1b", 0}, {"x", 10 * time.Millisecond}}},
+		{"届いたもの", []input{{"\r", 0}}},
 		// 3 つ目（shift-a）: 何も届かないまま次へ。
-		time.Sleep(200 * time.Millisecond)
-		f.send([]byte("\r"))
+		{"keys  3/", nil},
+		{"何も届きませんでした", []input{{"\r", 0}}},
 		// 4 つ目: 中断。
-		time.Sleep(200 * time.Millisecond)
-		f.send([]byte("q"))
-	}()
+		{"keys  4/", nil},
+		{"何も届きませんでした", []input{{"q", 0}}},
+	}
+	f.onWrite = func(w string) {
+		if len(script) == 0 {
+			t.Errorf("unexpected screen %q", w)
+			return
+		}
+		sc := script[0]
+		script = script[1:]
+		if !strings.Contains(w, sc.screen) {
+			t.Errorf("screen %q does not contain %q", w, sc.screen)
+		}
+		at := time.Now()
+		for _, in := range sc.inputs {
+			at = at.Add(in.after)
+			f.in <- term.Input{Time: at, Bytes: []byte(in.b)}
+		}
+	}
 	res, err := runKeys(f, f.box(), sectionHeader{}, keySteps, testTiming)
 	if err != nil {
 		t.Fatal(err)
@@ -381,12 +403,15 @@ func TestRecordStepIgnoresNonKeyRecords(t *testing.T) {
 		t.Errorf("size record only: %+v", rec)
 	}
 
+	// キーが届くまで待つ時間は長くする（遅いランナーでスリープが延びても、キーの前に待ちが終わらないように）。
+	waitLong := testTiming
+	waitLong.noInput = time.Hour
 	ch <- size
 	go func() {
 		time.Sleep(20 * time.Millisecond)
 		ch <- term.Input{Time: time.Now(), Records: []term.Record{{Kind: term.KeyRecord, KeyDown: true, RepeatCount: 1, VirtualKey: 0x1b, Char: 0x1b}}}
 	}()
-	rec, err = recordStep(box, keySteps[0], testTiming)
+	rec, err = recordStep(box, keySteps[0], waitLong)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -405,12 +430,16 @@ func TestRecordStepTextStartsOnText(t *testing.T) {
 	key := func(down bool, vk, c uint16) term.Record {
 		return term.Record{Kind: term.KeyRecord, KeyDown: down, RepeatCount: 1, VirtualKey: vk, Char: c}
 	}
+	// 文字が届くまで待つ時間は長くする（遅いランナーでスリープが延びても、文字の前に待ちが終わらないように）。
+	// スリープは textQuiet より長ければよい（延びる向きには崩れない）。
+	waitLong := testTiming
+	waitLong.textNoInput = time.Hour
 	go func() {
 		ch <- term.Input{Time: time.Now(), Records: []term.Record{key(false, 0xf0, 0)}} // IME の切り替え
 		time.Sleep(100 * time.Millisecond)                                              // textQuiet より長く変換している
 		ch <- term.Input{Time: time.Now(), Records: []term.Record{key(true, 0xe7, 0x65e5), key(true, 0xe7, 0x672c), key(true, 0xe7, 0x8a9e)}}
 	}()
-	rec, err := recordStep(box, ime, testTiming)
+	rec, err := recordStep(box, ime, waitLong)
 	if err != nil {
 		t.Fatal(err)
 	}
