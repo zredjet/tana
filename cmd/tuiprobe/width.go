@@ -343,15 +343,24 @@ func showDrift(c console, r *cprReader, hold time.Duration) error {
 	if _, err := c.Write([]byte(b.String())); err != nil {
 		return err
 	}
-	wait := hold
-	if wait <= 0 {
-		wait = 24 * time.Hour
+	if hold <= 0 {
+		hold = 24 * time.Hour
 	}
-	_, err := r.box.next(wait)
-	if errors.Is(err, errTimeout) {
-		return nil
+	// キーの入力で終わる。フォーカス・大きさの変更・キーを離したレコードでは終わらない（撮影のためにウィンドウを触っても消えない）。
+	deadline := time.Now().Add(hold)
+	for left := hold; left > 0; left = time.Until(deadline) {
+		x, err := r.box.next(left)
+		if errors.Is(err, errTimeout) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if hasKey(x) {
+			return nil
+		}
 	}
-	return err
+	return nil
 }
 
 func caseByID(id string) widthCase {

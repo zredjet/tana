@@ -266,6 +266,7 @@ func recordStep(box *inbox, st keyStep, tm keyTiming) (stepResult, error) {
 		base = start
 	}
 	var all []byte
+	var dec textDecoder
 	for _, x := range got {
 		r := readJSON{TMs: ms(x.Time.Sub(base))}
 		if x.Records == nil {
@@ -275,8 +276,9 @@ func recordStep(box *inbox, st keyStep, tm keyTiming) (stepResult, error) {
 			r.Records = append(r.Records, toRecordJSON(rec))
 		}
 		res.Reads = append(res.Reads, r)
-		all = append(all, inputBytes(x)...)
+		all = append(all, dec.decode(x)...)
 	}
+	all = append(all, dec.flush()...)
 	res.Hex = hex.EncodeToString(all)
 	return res, nil
 }
@@ -284,13 +286,14 @@ func recordStep(box *inbox, st keyStep, tm keyTiming) (stepResult, error) {
 // hasText は、x が文字（Unix のバイト列か、Windows のキーを押したレコードの文字）を含むかを返す。
 func hasText(x term.Input) bool { return len(inputBytes(x)) > 0 }
 
-// hasKey は、x がキーの入力（Unix のバイト列か、Windows のキーのレコード）を含むかを返す。
+// hasKey は、x がキーの入力（Unix のバイト列か、Windows のキーを押したレコード）を含むかを返す。
+// キーを離したレコードは含めない（前の手順で押したキーを離したものが、後から届くことがある）。
 func hasKey(x term.Input) bool {
 	if len(x.Bytes) > 0 {
 		return true
 	}
 	for _, r := range x.Records {
-		if r.Kind == term.KeyRecord {
+		if r.Kind == term.KeyRecord && r.KeyDown {
 			return true
 		}
 	}

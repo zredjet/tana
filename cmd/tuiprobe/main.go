@@ -176,16 +176,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// widthSectionName は、width の結果を置く節の名前。Windows では、既定と違う出力の方法・入力のモードを名前に含める。
+// widthSectionName は、width の結果を置く節の名前。既定と違う出力の方法・入力のモード（どちらも Windows でだけ意味を持つ）を名前に含める。
 func widthSectionName(o options) string {
 	name := "width"
-	if runtime.GOOS == "windows" {
-		if o.output != term.OutputWriteConsoleW {
-			name += "_" + o.output.String()
-		}
-		if !o.vtInput {
-			name += "_novtinput"
-		}
+	if o.output != term.OutputWriteConsoleW {
+		name += "_" + o.output.String()
+	}
+	if !o.vtInput {
+		name += "_novtinput"
 	}
 	return name
 }
@@ -193,19 +191,17 @@ func widthSectionName(o options) string {
 // keysSectionName は、keys の結果を置く節の名前（VT2 の比較のため、Windows の VT の入力モードは別の節にする）。
 func keysSectionName(o options) string {
 	name := "keys"
-	if runtime.GOOS == "windows" {
-		if o.vtInput {
-			name += "_vtinput"
-		}
-		if o.output != term.OutputWriteConsoleW {
-			name += "_" + o.output.String()
-		}
+	if o.vtInput {
+		name += "_vtinput"
+	}
+	if o.output != term.OutputWriteConsoleW {
+		name += "_" + o.output.String()
 	}
 	return name
 }
 
-// detectTerminal は、環境変数から端末の名前を推測する。Windows の conhost は、Windows Terminal から起動すると
-// WT_SESSION を受け継ぐので見分けられない。-terminal で指定すること。
+// detectTerminal は、環境変数から端末の名前を推測する。conhost は環境変数で見分けられない
+// （Windows Terminal から起動すると WT_SESSION を受け継ぐ）。-terminal で指定すること。
 func detectTerminal(getenv func(string) string) string {
 	switch {
 	case getenv("TERM_PROGRAM") == "Apple_Terminal":
@@ -214,8 +210,6 @@ func detectTerminal(getenv func(string) string) string {
 		return "iTerm2"
 	case getenv("WT_SESSION") != "":
 		return "Windows Terminal"
-	case runtime.GOOS == "windows":
-		return "conhost"
 	case getenv("TERM_PROGRAM") != "":
 		return getenv("TERM_PROGRAM")
 	case getenv("TERM") != "":

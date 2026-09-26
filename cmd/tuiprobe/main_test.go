@@ -278,7 +278,11 @@ func TestKeyStepsPasteMode(t *testing.T) {
 
 func TestSaveSection(t *testing.T) {
 	t.Parallel()
-	path := filepath.Join(t.TempDir(), "r.json")
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "r.json")
 	if err := saveSection(path, fileHeader{Terminal: "T", Font: "F", Date: "2026-09-26"}, "width", map[string]int{"a": 1}); err != nil {
 		t.Fatal(err)
 	}
@@ -300,6 +304,10 @@ func TestSaveSection(t *testing.T) {
 	if !bytes.Contains(data, []byte(`"<x>"`)) {
 		t.Errorf("HTML-escaped output: %s", data)
 	}
+	// 一時ファイルに書いてから名前を変えるので、一時ファイルが残らない。
+	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 1 {
+		t.Errorf("files in the folder: %v, %v; want only r.json", entries, err)
+	}
 }
 
 func TestSlugAndDetect(t *testing.T) {
@@ -318,6 +326,9 @@ func TestSlugAndDetect(t *testing.T) {
 	}
 	if got := detectTerminal(env(map[string]string{"WT_SESSION": "x"})); got != "Windows Terminal" {
 		t.Errorf("detect WT_SESSION = %q", got)
+	}
+	if got := detectTerminal(env(map[string]string{})); got != "unknown" {
+		t.Errorf("detect with no variables = %q", got)
 	}
 }
 
@@ -346,8 +357,11 @@ func TestSectionNames(t *testing.T) {
 	if got := keysSectionName(o); got != "keys" {
 		t.Errorf("keysSectionName(default) = %q", got)
 	}
-	if !slices.Contains([]string{"width", "width_utf8cp_novtinput"}, widthSectionName(options{output: term.OutputUTF8CodePage})) {
-		t.Errorf("widthSectionName(utf8cp, no vt input) = %q", widthSectionName(options{output: term.OutputUTF8CodePage}))
+	if got := widthSectionName(options{output: term.OutputUTF8CodePage}); got != "width_utf8cp_novtinput" {
+		t.Errorf("widthSectionName(utf8cp, no vt input) = %q", got)
+	}
+	if got := keysSectionName(options{output: term.OutputWriteConsoleW, vtInput: true}); got != "keys_vtinput" {
+		t.Errorf("keysSectionName(vt input) = %q", got)
 	}
 }
 
@@ -453,5 +467,67 @@ func TestSelectAndMergeSteps(t *testing.T) {
 	}
 	if old.Completed || coversAllSteps(old.Steps) {
 		t.Error("old section without f11 counted as complete")
+	}
+}
+
+// TestRecordStepIgnoresKeyUp は、キーを離したレコードだけでは手順の記録を始めないことを確かめる
+// （確かめの Enter を長く押したとき、離したレコードが drain の後に届く）。
+func TestRecordStepIgnoresKeyUp(t *testing.T) {
+	t.Parallel()
+	ch := make(chan term.Input, 10)
+	box := &inbox{ctx: context.Background(), in: ch}
+	ch <- term.Input{Time: time.Now(), Records: []term.Record{{Kind: term.KeyRecord, KeyDown: false, RepeatCount: 1, VirtualKey: 0x0d, Char: '\r'}}}
+	rec, err := recordStep(box, keySteps[0], testTiming)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Result != "no_input" {
+		t.Errorf("key-up only: result %q, want no_input: %+v", rec.Result, rec)
+	}
+}
+
+// TestRecordStepJoinsSplitSurrogates は、サロゲートの対が 2 回の読み取りに分かれて届いても、1 つの文字として記録することを確かめる。
+func TestRecordStepJoinsSplitSurrogates(t *testing.T) {
+	t.Parallel()
+	ch := make(chan term.Input, 10)
+	box := &inbox{ctx: context.Background(), in: ch}
+	key := func(c uint16) []term.Record {
+		return []term.Record{{Kind: term.KeyRecord, KeyDown: true, RepeatCount: 1, Char: c}}
+	}
+	ime := keySteps[slices.IndexFunc(keySteps, func(st keyStep) bool { return st.id == "ime" })]
+	ch <- term.Input{Time: time.Now(), Records: key(0xd83c)}
+	ch <- term.Input{Time: time.Now(), Records: key(0xdf63)}
+	rec, err := recordStep(box, ime, testTiming)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(mustHex(t, rec.Hex)); got != "🍣" {
+		t.Errorf("hex = %q, want %q", got, "🍣")
+	}
+}
+
+// TestShowDriftWaitsForKey は、ずれの画面の撮影の待ちが、キー以外のレコード（フォーカス・大きさの変更・キーを離したもの）では終わらず、
+// キーで終わることを確かめる。
+func TestShowDriftWaitsForKey(t *testing.T) {
+	t.Parallel()
+	f := newFake(nil)
+	r := &cprReader{box: f.box()}
+	f.in <- term.Input{Time: time.Now(), Records: []term.Record{{Kind: term.FocusRecord, Focus: true}, {Kind: term.WindowSizeRecord, Width: 80, Height: 24}}}
+	f.in <- term.Input{Time: time.Now(), Records: []term.Record{{Kind: term.KeyRecord, KeyDown: false, RepeatCount: 1, VirtualKey: 0x0d}}}
+	const hold = 100 * time.Millisecond
+	start := time.Now()
+	if err := showDrift(f, r, hold); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d < hold {
+		t.Errorf("showDrift returned after %v on non-key input, want at least %v", d, hold)
+	}
+	f.send([]byte("x"))
+	start = time.Now()
+	if err := showDrift(f, r, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > time.Minute {
+		t.Errorf("showDrift did not end on a key: %v", d)
 	}
 }

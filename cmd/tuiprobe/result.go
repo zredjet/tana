@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 )
 
@@ -72,7 +73,26 @@ func saveSection(path string, h fileHeader, name string, v any) error {
 	if err := enc.Encode(m); err != nil {
 		return err
 	}
-	return os.WriteFile(path, buf.Bytes(), 0o644)
+	return writeFileAtomic(path, buf.Bytes())
+}
+
+// writeFileAtomic は、同じフォルダの一時ファイルに書いてから名前を変える。
+// 書いている途中で強制終了しても（Windows でコンソールを閉じると約 5 秒で終了させられる）、元のファイル（ほかの節）が壊れない。
+func writeFileAtomic(path string, data []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	_, err = f.Write(data)
+	err = errors.Join(err, f.Close())
+	if err == nil {
+		err = os.Rename(tmp, path)
+	}
+	if err != nil {
+		os.Remove(tmp)
+	}
+	return err
 }
 
 // loadSection は、path の JSON の節 name を v に読む。ファイルか節がなければ false を返す。
