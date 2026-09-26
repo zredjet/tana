@@ -4119,6 +4119,53 @@
     "join_row": 4,
     "completed": true
   },
+  "screen": {
+    "started": "2026-09-26T15:57:33+09:00",
+    "probe_revision": "9c27bcb26988+dirty",
+    "goos": "windows",
+    "goarch": "arm64",
+    "cols": 120,
+    "rows": 30,
+    "output_method": "writeconsole",
+    "vt_input": true,
+    "env": {
+      "SESSIONNAME": "Console",
+      "WT_PROFILE_ID": "{0caa0dad-35be-5f56-a8ff-afceeeaa6101}",
+      "WT_SESSION": "f8b76aba-1bb5-48d1-a91b-c844a129f594"
+    },
+    "info": {
+      "console_in_orig": "0x1f7",
+      "console_in_set": "0x3a8",
+      "console_input_cp": "932",
+      "console_out_orig": "0x7",
+      "console_out_set": "0xf",
+      "console_output_cp": "932",
+      "keyboard_layout": "00000411",
+      "os_version": "Windows 10.0 build 26200",
+      "output_cp_orig": "932",
+      "output_method": "writeconsole"
+    },
+    "pid": 2156,
+    "keys": [],
+    "inputs": [],
+    "resizes": [
+      {
+        "t_ms": 0.558,
+        "source": "event",
+        "cols": 120,
+        "rows": 30
+      }
+    ],
+    "frames": {
+      "count": 2,
+      "max_draw_ms": 0,
+      "max_flush_ms": 0.558,
+      "max_bytes": 5654,
+      "max_coalesced": 0
+    },
+    "exit": "signal",
+    "error": "terminated"
+  },
   "screen_selftest_panic": {
     "started": "2026-09-26T15:31:31+09:00",
     "probe_revision": "9c27bcb26988+dirty",

@@ -533,3 +533,38 @@ func TestShowDriftWaitsForKey(t *testing.T) {
 		t.Errorf("showDrift did not end on a key: %v", d)
 	}
 }
+
+// TestAppendRun は、確認用の画面の記録を、前の記録を残して配列の後ろに加えることを確かめる（1 つの記録だった節は、配列の最初の要素にする）。
+func TestAppendRun(t *testing.T) {
+	t.Parallel()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "r.json")
+	h := fileHeader{Terminal: "t", Date: "2026-09-26"}
+	if err := saveSection(path, h, "screen", map[string]string{"exit": "first"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, exit := range []string{"second", "third"} {
+		runs, err := appendRun(path, "screen", map[string]string{"exit": exit})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := saveSection(path, h, "screen", runs); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var got []map[string]string
+	if ok, err := loadSection(path, "screen", &got); !ok || err != nil {
+		t.Fatalf("loadSection: %v %v", ok, err)
+	}
+	if len(got) != 3 || got[0]["exit"] != "first" || got[2]["exit"] != "third" {
+		t.Errorf("runs = %v", got)
+	}
+	// 節がなければ、1 つだけの配列にする。
+	runs, err := appendRun(filepath.Join(dir, "none.json"), "screen", map[string]string{"exit": "only"})
+	if err != nil || len(runs) != 1 {
+		t.Errorf("appendRun on a new file = %v, %v", runs, err)
+	}
+}

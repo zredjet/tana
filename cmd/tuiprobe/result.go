@@ -118,6 +118,33 @@ func loadSection(path, name string, v any) (bool, error) {
 	return true, nil
 }
 
+// appendRun は、path の節 name（記録の配列）の後ろに run を加えた配列を返す（書くのは saveSection）。
+// 節が配列でない 1 つの記録なら、それを最初の要素にする。確認用の画面は何度も起動しうるので、前の記録を上書きしない。
+func appendRun(path, name string, run any) ([]json.RawMessage, error) {
+	var raw json.RawMessage
+	ok, err := loadSection(path, name, &raw)
+	if err != nil {
+		return nil, err
+	}
+	var runs []json.RawMessage
+	if ok {
+		if t := bytes.TrimSpace(raw); len(t) > 0 && t[0] == '[' {
+			if err := json.Unmarshal(t, &runs); err != nil {
+				return nil, fmt.Errorf("%s: %s: %w", path, name, err)
+			}
+		} else {
+			runs = append(runs, raw)
+		}
+	}
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(run); err != nil {
+		return nil, err
+	}
+	return append(runs, bytes.TrimSpace(b.Bytes())), nil
+}
+
 // revision は、ビルドしたときのコミット（変更があれば +dirty を付ける）を返す。
 func revision() string {
 	info, ok := debug.ReadBuildInfo()

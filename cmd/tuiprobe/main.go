@@ -180,7 +180,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 		if o.selfTest.kind != "" {
 			name += "_selftest_" + strings.ReplaceAll(o.selfTest.kind, "-", "_") // 手で確かめた記録（screen）を上書きしない
 		}
-		result, runErr = runScreen(t, sec, o.selfTest)
+		var res *screenSection
+		res, runErr = runScreen(t, sec, o.selfTest)
+		result = res
+		if o.selfTest.kind == "" && res != nil {
+			// 手で確かめた記録は、起動するたびに配列の後ろに加える（起動し直しても、前の記録が消えないように）。
+			runs, err := appendRun(o.out, name, res)
+			if err != nil {
+				runErr = errors.Join(runErr, err)
+			} else {
+				result = runs
+			}
+		}
 	}
 	restoreErr := t.Restore()
 
