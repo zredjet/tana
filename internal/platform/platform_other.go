@@ -13,6 +13,9 @@ import (
 // DotFilesHidden は、名前が . で始まるものを隠しファイルとして扱うか（filer §6）。
 const DotFilesHidden = true
 
+// TrashMayAsk は、ごみ箱へ入れるときに OS が完全削除の確認ダイアログを出しうるか（filer §8.4）。ごみ箱を使わない。
+const TrashMayAsk = false
+
 // IsExecutable は、開くと実行されるものか（開く前に確認を出す。filer §7）を返す。実行属性の付いたファイル（リンクは辿る）。
 func IsExecutable(path string, isDir bool) bool {
 	if isDir {

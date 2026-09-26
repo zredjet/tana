@@ -15,7 +15,7 @@ import (
 	"github.com/zredjet/tana/internal/textwidth"
 )
 
-// ファイル操作の画面（確認・衝突の決定・進捗・結果。filer §8.2〜§8.5）のキーと描画。
+// ファイル操作の画面（確認・衝突の決定・進捗・結果・完全削除の確認。filer §8.2〜§8.6）のキーと描画。
 
 // opAction は、ファイル操作の画面のキーを app の操作に変える。貼り付けはコマンドとして解釈しない（tui §5。filer U2）。
 func opAction(s app.Screen, ev keys.Event) (app.Action, bool) {
@@ -58,6 +58,18 @@ func opAction(s app.Screen, ev keys.Event) (app.Action, bool) {
 		return app.Action{Kind: k, Decision: d}, true
 	}
 	switch s {
+	case app.ScreenConfirm:
+		if ev.Rune == 'D' {
+			return act(app.ActPurge) // ごみ箱: すべての項目がごみ箱に入らないとき、完全削除の確認へ
+		}
+	case app.ScreenDelete:
+		// 確定は y だけ（Enter はやめる。filer §8.6。U2）。
+		switch ev.Rune {
+		case 'y':
+			return act(app.ActYes)
+		case 'n':
+			return act(app.ActNo)
+		}
 	case app.ScreenConflicts:
 		switch ev.Rune {
 		case 's':
@@ -98,6 +110,8 @@ func opAction(s app.Screen, ev keys.Event) (app.Action, bool) {
 			return act(app.ActToggle)
 		case 'e':
 			return act(app.ActEnglish)
+		case 'D':
+			return act(app.ActPurge) // ごみ箱に入らなかった項目の完全削除の確認へ
 		}
 	}
 	return app.Action{}, false
@@ -121,6 +135,8 @@ func (f *Filer) drawOp(s *screen.Screen) {
 		f.drawProgress(s)
 	case app.ScreenResult:
 		f.drawResult(s)
+	case app.ScreenDelete:
+		f.drawDelete(s)
 	}
 }
 
@@ -149,11 +165,14 @@ func (f *Filer) drawConfirm(s *screen.Screen) {
 	w := min(cols-4, 68)
 	in := w - 4
 	lines := []line{{}, {text: msg.ConfirmSummary(v.Op, v.Count, textfmt.TruncPath(v.Dest, in-20))}}
-	size := ""
-	if v.Bytes > 0 {
-		size = textfmt.Size(v.Bytes)
+	if v.Op != fsops.OpTrash { // ごみ箱では fsops が中身を数えないので、合計は出さない（filer §8.2）
+		size := ""
+		if v.Bytes > 0 {
+			size = textfmt.Size(v.Bytes)
+		}
+		lines = append(lines, line{text: msg.Totals(v.Files, size)})
 	}
-	lines = append(lines, line{text: msg.Totals(v.Files, size)}, line{})
+	lines = append(lines, line{})
 	if n := len(v.NotRunnable); n > 0 {
 		lines = append(lines, line{text: "! " + msg.NotRunnable(n), st: styleWarn})
 		for i, it := range v.NotRunnable {
@@ -175,6 +194,9 @@ func (f *Filer) drawConfirm(s *screen.Screen) {
 	case v.Runnable == 0:
 		lines = append(lines, line{text: msg.NothingRunnable, st: styleProblem})
 		keys = msg.ConfirmKeysNone
+		if v.Untrashable > 0 {
+			keys = msg.ConfirmKeysPurge // ごみ箱に入らない項目は、利用者が選べば完全削除の確認へ（フェーズ20で決めた）
+		}
 	case v.Conflicts > 0:
 		keys = msg.ConfirmKeysConflict
 	}
@@ -334,10 +356,16 @@ func (f *Filer) drawProgress(s *screen.Screen) {
 		{text: msg.ProgressFiles(p.DoneFiles, p.TotalFiles, doneSize, totalSize)},
 		{text: msg.ProgressTimes(speed, remaining, msg.Duration(int(p.Elapsed.Seconds())))},
 		{}}
+	if p.TrashDialog { // Windows のごみ箱の確認ダイアログ（filer §8.4）
+		for _, l := range textfmt.Wrap(msg.TrashDialog, in) {
+			lines = append(lines, line{text: l, st: styleWarn})
+		}
+		lines = append(lines, line{})
+	}
 	switch {
 	case p.Unresponsive:
 		lines = append(lines, line{text: msg.Unresponsive, st: styleProblem})
-		for _, l := range msg.UnresponsiveLeftovers {
+		for _, l := range msg.Leftovers(p.Op) {
 			lines = append(lines, line{text: l})
 		}
 		lines = append(lines, line{text: msg.ForceQuitKey, st: styleBold})
@@ -348,8 +376,11 @@ func (f *Filer) drawProgress(s *screen.Screen) {
 	}
 	drawLines(s, w, msg.Stage(p.Stage), lines)
 	if p.AskCancel {
-		drawLines(s, 52, msg.CancelTitle, []line{{}, {text: msg.CancelQuestion, st: styleBold}, {text: msg.CancelNoPartial},
-			{text: msg.CancelDoneKept}, {}, {text: msg.CancelChoices, st: styleBold}})
+		lines := []line{{}, {text: msg.CancelQuestion, st: styleBold}}
+		for _, l := range msg.CancelNotes(p.Op) {
+			lines = append(lines, line{text: l})
+		}
+		drawLines(s, 52, msg.CancelTitle, append(lines, line{}, line{text: msg.CancelChoices, st: styleBold}))
 	}
 }
 
@@ -433,6 +464,9 @@ func (f *Filer) drawResult(s *screen.Screen) {
 			keysText = msg.InsideKey(r.Details, r.Expanded) + "   " + keysText
 		}
 	}
+	if v.Untrashable > 0 { // ごみ箱に入らなかった項目があれば、完全削除の確認へ進めることを案内する（filer §8.5）
+		keysText = msg.PurgeKey + "   " + keysText
+	}
 	s.Put(full, 1, rows-1, keysText, screen.Style{})
 }
 
@@ -457,4 +491,71 @@ func englishLines(details []string, w, n int) []string {
 	}
 	head := (n - 1) / 2
 	return append(append(lines[:head:head], "..."), lines[len(lines)-(n-1-head):]...)
+}
+
+// 完全削除の確認に出す項目の数。多いときは、先頭のこの数だけと「ほか n 項目」を出す（filer §8.6）。
+const deleteShown = 5
+
+// drawDelete は、完全削除の確認を描く（filer §8.6）。確定は y だけ（U2）。
+// 項目は、場所（フォルダ）と名前で示す。fsops の計画に項目ごとの合計はないので、ファイルかフォルダかと、ファイルのサイズだけを出す（filer §11 の F5）。
+func (f *Filer) drawDelete(s *screen.Screen) {
+	cols, _ := s.Size()
+	v := f.app.Delete()
+	w := min(cols-4, 68)
+	in := w - 4
+	n := v.Runnable
+	if n == 0 {
+		n = v.Count
+	}
+	second := msg.DeleteIrreversible
+	if v.FromTrash {
+		second = msg.DeleteQuestion
+	}
+	lines := []line{{}, {text: msg.DeleteLead(n, v.FromTrash), st: styleBold}, {text: second, st: styleProblem}, {},
+		{text: msg.Place(textfmt.TruncPath(v.Dir, in-textwidth.Width(msg.Place(""))))}}
+	const infoW = 14 // 「ジャンクション」
+	nameW := in - 4 - 2 - infoW
+	for i, it := range v.Items {
+		if i == deleteShown && len(v.Items) > deleteShown+1 {
+			lines = append(lines, line{text: "    " + msg.More(len(v.Items)-deleteShown), st: styleDim})
+			break
+		}
+		name := it.Name
+		info := textfmt.Size(it.Info.Size)
+		if it.Info.Type != fsops.TypeFile {
+			info = msg.Type(it.Info.Type)
+		}
+		if it.Info.Type == fsops.TypeDir {
+			name += "/"
+		}
+		name = textfmt.TruncName(name, nameW)
+		lines = append(lines, line{text: "    " + name + strings.Repeat(" ", nameW-textwidth.Width(name)) + "  " + info})
+	}
+	if v.Runnable > 0 {
+		size := ""
+		if v.Bytes > 0 {
+			size = textfmt.Size(v.Bytes)
+		}
+		lines = append(lines, line{}, line{text: msg.Totals(v.Files, size)})
+	}
+	if k := len(v.NotRunnable); k > 0 {
+		lines = append(lines, line{}, line{text: "! " + msg.NotRunnable(k), st: styleWarn})
+		for i, it := range v.NotRunnable {
+			if i == 3 {
+				lines = append(lines, line{text: "    " + msg.Count(k-3), st: styleDim})
+				break
+			}
+			lines = append(lines, line{text: "    " + textfmt.TruncName(it.Name, 20) + "  " + it.Reason})
+		}
+	}
+	for _, w := range v.Warnings {
+		lines = append(lines, line{text: "! " + w, st: styleWarn})
+	}
+	keys := msg.DeleteChoices
+	if v.Runnable == 0 {
+		lines = append(lines, line{text: msg.NothingRunnable, st: styleProblem})
+		keys = msg.DeleteChoicesNone
+	}
+	lines = append(lines, line{}, line{text: keys, st: styleBold})
+	drawLines(s, w, msg.DeleteTitle, lines)
 }

@@ -86,6 +86,12 @@ type scene struct {
 
 func newScene(t *testing.T) *scene {
 	t.Helper()
+	return newSceneWith(t, nil)
+}
+
+// newSceneWith は、設定を mod で変えた newScene。
+func newSceneWith(t *testing.T, mod func(*app.Config)) *scene {
+	t.Helper()
 	fs := fakeFS()
 	cfg := app.Config{
 		Dirs:           []string{leftDir, rightDir},
@@ -105,6 +111,9 @@ func newScene(t *testing.T) *scene {
 		IsExecutable: func(p string, dir bool) bool { return strings.HasSuffix(p, ".exe") },
 		CanOpen:      func(string) bool { return true },
 		Now:          func() time.Time { return now },
+	}
+	if mod != nil {
+		mod(&cfg)
 	}
 	a, cmds := app.New(cfg)
 	sc := &scene{t: t, a: a, f: &Filer{app: a}}
@@ -377,7 +386,8 @@ func TestKeyMap(t *testing.T) {
 		{key(keys.KeyLeft), app.ActParent}, {key(keys.KeyRight), app.ActEnterDir},
 		{char(' '), app.ActMark}, {char('a'), app.ActMarkAll}, {char('.'), app.ActToggleHidden}, {ctrl('r'), app.ActReload},
 		{char('g'), app.ActGoPath}, {char('='), app.ActSyncOther}, {char('?'), app.ActHelp}, {char('q'), app.ActQuit},
-		{key(keys.KeyEsc), app.ActCancel}, {char('d'), app.ActNotYet}, {char('D'), app.ActNotYet},
+		{key(keys.KeyEsc), app.ActCancel}, {char('d'), app.ActTrash}, {char('D'), app.ActPurge},
+		{char('r'), app.ActRename}, {char('n'), app.ActNewDir},
 		{char('y'), app.ActYank}, {char('p'), app.ActPasteCopy}, {char('P'), app.ActPasteMove}, {char('L'), app.ActLastResult},
 		{char('h'), app.ActParent}, {char('l'), app.ActEnterDir},
 	} {
@@ -385,7 +395,7 @@ func TestKeyMap(t *testing.T) {
 			t.Errorf("%v: %v %v, want %v", tt.ev, act.Kind, ok, tt.want)
 		}
 	}
-	for _, ev := range []keys.Event{paste("q"), paste("\r"), ctrl('c'), char('x'), char('c'), char('m'), {Kind: keys.UnknownEvent, Raw: "\x1b[?1c"}} {
+	for _, ev := range []keys.Event{paste("q"), paste("D"), paste("\r"), ctrl('c'), char('x'), char('c'), char('m'), {Kind: keys.UnknownEvent, Raw: "\x1b[?1c"}} {
 		if act, ok := sc.f.action(ev); ok {
 			t.Errorf("%v: %v, want no action", ev, act)
 		}

@@ -59,20 +59,28 @@ func TestError(t *testing.T) {
 
 // TestBrowseTextsWidth は、画面の文言に幅が曖昧な文字（conhost で 2 桁になる）を使っていないことを確かめる（filer §9.1）。
 func TestBrowseTextsWidth(t *testing.T) {
-	texts := []string{Loading, LoadCanceled, CannotOpenName, ExecConfirm, ExecChoices, PathInputTitle, NotYet, TooSmall, HelpTitle,
+	texts := []string{Loading, LoadCanceled, CannotOpenName, ExecConfirm, ExecChoices, PathInputTitle, TooSmall, HelpTitle,
 		CannotOpenDir(""), ShowingAncestor(""), Opened(""), OpenFailed(""), Items(1, 2, 3),
 		TypeParent, TypeDir, TypeJunction, TypeSymlink, TypeSpecial, UnitBytes, LinkArrow, KeyGuide, YankedIndicator(3),
 		Planning, NothingToYank, NothingYanked, DestNotFound, SpaceWarning, NothingRunnable, ConfirmKeys, ConfirmKeysConflict,
-		ConfirmKeysNone, UnsetIsSkip, InnerHidden, InnerCollapsed, CancelTitle, CancelQuestion, CancelNoPartial, CancelDoneKept,
+		ConfirmKeysNone, UnsetIsSkip, InnerHidden, InnerCollapsed, CancelTitle, CancelQuestion,
 		CancelChoices, Canceling, Unresponsive, ProgressKeys, ResultKeys, NewerMark, MetadataWarning, Yanked(2),
 		EnglishTitle, NoEnglish, InsideKey(2, false), InsideKey(2, true),
 		ConflictKeys[0], ConflictKeys[1], ConflictRowTitle, ConflictRowKeys[0].Text, ConflictRowKeys[1].Text,
 		ConflictRowKeys[2].Text, ConflictRowKeys[3].Text, ConflictColumns[0], ConflictColumns[1], ConflictColumns[2], ConflictColumns[3],
 		ConflictHeader(fsops.OpCopy, "a", "b"), ResultTitle(fsops.OpMove, "x", "a", "b"), Done(fsops.OpCopy, 1, 2, true),
 		PaneIndicator(1, 2), PreviewEmpty, PreviewBinary, PreviewNotLocal,
-		LabelDir, LabelJunction, LabelSymlink, LabelSpecial, LabelError}
+		LabelDir, LabelJunction, LabelSymlink, LabelSpecial, LabelError,
+		NoTarget, TrashUnavailableSkip, ConfirmKeysPurge, PurgeKey, TrashDialog, DeleteTitle, DeleteChoices, DeleteChoicesNone,
+		DeleteQuestion, DeleteIrreversible, RenameTitle, RenameKeys, RenameBusy, NewDirTitle, NewDirKeys, NewDirBusy,
+		DeleteLead(2, true), DeleteLead(2, false), Place("a"), More(3), NameFailed(true, ""), NameFailed(false, "")}
 	for _, h := range Help {
 		texts = append(texts, h[0], h[1])
+	}
+	for op := fsops.OpCopy; op <= fsops.OpDelete; op++ {
+		texts = append(texts, Did(op), ConfirmSummary(op, 2, "a"), ResultTitle(op, "x", "a", ""))
+		texts = append(texts, CancelNotes(op)...)
+		texts = append(texts, Leftovers(op)...)
 	}
 	for _, s := range texts {
 		if i := strings.IndexAny(s, "…→←↑↓○●※×①②③◆■□△▲"); i >= 0 {
@@ -150,6 +158,33 @@ func TestResultError(t *testing.T) {
 		if got := ResultError(tt.o, tt.err); got != tt.want {
 			t.Errorf("ResultError(%v, %v) = %q, want %q", tt.o, tt.err, got, tt.want)
 		}
+	}
+}
+
+// TestOpWording は、操作ごとの言い方（ごみ箱・完全削除は「〜へコピーします」の形にしない）を確かめる。
+func TestOpWording(t *testing.T) {
+	for _, tt := range []struct{ got, want string }{
+		{Done(fsops.OpCopy, 3, 0, false), "3 項目をコピーしました"},
+		{Done(fsops.OpTrash, 3, 0, false), "3 項目をごみ箱に入れました"},
+		{Done(fsops.OpDelete, 2, 0, false), "2 項目を完全に削除しました"},
+		{ConfirmSummary(fsops.OpTrash, 3, ""), "3 項目をごみ箱に入れます"},
+		{ConfirmSummary(fsops.OpMove, 3, "D:"), "3 項目を D: へ移動します"},
+		{ResultTitle(fsops.OpTrash, "完了", "C:\\x", ""), "ごみ箱に入れた結果: 完了   C:\\x"},
+		{ResultTitle(fsops.OpCopy, "完了", "a", "b"), "コピーの結果: 完了   a -> b"},
+	} {
+		if tt.got != tt.want {
+			t.Errorf("got %q, want %q", tt.got, tt.want)
+		}
+	}
+}
+
+// TestNameError は、名前の変更・フォルダの作成のエラーに「コピー先・移動先で: 」を付けないことを確かめる（fsops.Mkdir のエラーは OnDest）。
+func TestNameError(t *testing.T) {
+	if got := NameError(&fsops.OpError{Op: "mkdir", Kind: fsops.KindExist, OnDest: true}); got != Kind(fsops.KindExist) {
+		t.Errorf("NameError = %q", got)
+	}
+	if got := NameError(nil); got != Kind(fsops.KindUnknown) {
+		t.Errorf("NameError(nil) = %q", got)
 	}
 }
 

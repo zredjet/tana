@@ -14,6 +14,9 @@ import (
 // DotFilesHidden は、名前が . で始まるものを隠しファイルとして扱うか（filer §6）。Windows はエクスプローラーと同じく隠さない。
 const DotFilesHidden = false
 
+// TrashMayAsk は、ごみ箱へ入れるときに OS が完全削除の確認ダイアログを出しうるか（filer §8.4）。fsops は、事前確認が見落とした場合の安全装置として FOF_WANTNUKEWARNING を付ける（fsops §12.2）。
+const TrashMayAsk = true
+
 // executableExts は、開くとプログラムやスクリプトが動きうる拡張子（filer §7 の「など」）。
 // インストーラー・パッケージ（.msix など）、ヘルプ（.chm）、シェルのショートカット（.settingcontent-ms・.scf）も含める。
 var executableExts = []string{

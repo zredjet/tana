@@ -119,12 +119,13 @@ func (p *Pane) markAll() {
 }
 
 // set は、読み込んだ一覧を置く。
-// keep（同じフォルダの再読み込み）なら、マークを名前で保ち、カーソルを同じ名前の項目に置く。なければ同じ行の位置に置く（filer §6）。
+// keep（同じフォルダの再読み込み）なら、マークを名前で保ち、カーソルを同じ名前の項目（focus があればその名前の項目。名前を変えた後など）に置く。
+// なければ同じ行の位置に置く（filer §6）。
 // そうでなければ、マークを外し、カーソルを focus の名前の項目（なければ先頭）に置く。
 func (p *Pane) set(dir string, items []listing.Item, showHidden, keep bool, focus string) {
 	oldCursor := p.cursor
 	if keep {
-		if it, ok := p.current(); ok {
+		if it, ok := p.current(); ok && focus == "" {
 			focus = it.Name
 		}
 	} else {

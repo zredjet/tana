@@ -422,6 +422,7 @@ func TestResultOnFailure(t *testing.T) {
 type fakePlan struct {
 	req       fsops.Request
 	conflicts []fsops.Conflict
+	errs      map[string]fsops.Kind // 名前ごとの、計画の時点で分かった実行しない理由（Item.Err）
 	exec      func(ctx context.Context, opt fsops.ExecOptions) (*fsops.Result, error)
 }
 
@@ -429,7 +430,17 @@ func (p *fakePlan) Request() fsops.Request { return p.req }
 func (p *fakePlan) Items() []fsops.Item {
 	var out []fsops.Item
 	for _, s := range p.req.Sources {
-		out = append(out, fsops.Item{Src: s, Dst: filepath.Join(p.req.DestDir, filepath.Base(s)), Method: fsops.MethodCopy})
+		it := fsops.Item{Src: s, Method: fsops.MethodCopy}
+		switch p.req.Op {
+		case fsops.OpTrash:
+			it.Method = fsops.MethodTrash
+		default:
+			it.Dst = filepath.Join(p.req.DestDir, filepath.Base(s))
+		}
+		if k, ok := p.errs[filepath.Base(s)]; ok {
+			it.Err = &fsops.OpError{Op: "plan", Path: s, Kind: k}
+		}
+		out = append(out, it)
 	}
 	return out
 }

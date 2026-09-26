@@ -187,8 +187,6 @@ const (
 	InnerCollapsed      = "Space で表示します"
 	CancelTitle         = "中止の確認"
 	CancelQuestion      = "中止しますか？"
-	CancelNoPartial     = "書きかけのファイルは残りません。"
-	CancelDoneKept      = "完了した項目はそのまま残ります。"
 	CancelChoices       = "y 中止する   n 続ける"
 	Canceling           = "中止しています..."
 	Unresponsive        = "応答がありません。Q で終了できますが、次のものが残る場合があります:"
@@ -201,10 +199,29 @@ const (
 	MetadataWarning     = "一部の属性を引き継げませんでした"
 )
 
-// UnresponsiveLeftovers は、応答がなくなったまま終了したときに残りうるもの（fsops の doc.go の「保証すること」）。
-var UnresponsiveLeftovers = []string{
-	"・移動元と移動先の両方に同じものがある、または一部だけ移動されている",
-	"・.fsops-<16 進>.tmp という一時ファイル",
+// CancelNotes は、中止の確認に添える説明（中止したら何が残るか）。
+func CancelNotes(op fsops.OpKind) []string {
+	switch op {
+	case fsops.OpTrash:
+		return []string{"ごみ箱に入れた項目は、ごみ箱に残ります。", "残りの項目はそのまま残ります。"}
+	case fsops.OpDelete:
+		return []string{"削除した項目は元に戻りません。", "残りの項目は削除しません。"}
+	}
+	return []string{"書きかけのファイルは残りません。", "完了した項目はそのまま残ります。"}
+}
+
+// Leftovers は、応答がなくなったまま終了したときに残りうるもの（fsops の doc.go の「保証すること」）。
+func Leftovers(op fsops.OpKind) []string {
+	switch op {
+	case fsops.OpTrash:
+		return []string{"・一部の項目だけがごみ箱に入っている"}
+	case fsops.OpDelete:
+		return []string{"・一部の項目（フォルダの中の一部を含む）だけが削除されている"}
+	}
+	return []string{
+		"・移動元と移動先の両方に同じものがある、または一部だけ移動されている",
+		"・.fsops-<16 進>.tmp という一時ファイル",
+	}
 }
 
 // Yanked は、y で覚えたときの文言。
@@ -218,8 +235,11 @@ func CannotPlan(reason string) string { return "計画を作れません: " + re
 // CannotExecute は、実行できなかったときの文言。
 func CannotExecute(reason string) string { return "実行できません: " + reason }
 
-// ConfirmSummary は、確認画面の 1 行目（「3 項目を D:\backup へコピーします」）。
+// ConfirmSummary は、確認画面の 1 行目（「3 項目を D:\backup へコピーします」「3 項目をごみ箱に入れます」）。
 func ConfirmSummary(op fsops.OpKind, n int, dest string) string {
+	if op == fsops.OpTrash {
+		return strconv.Itoa(n) + " 項目をごみ箱に入れます"
+	}
 	return strconv.Itoa(n) + " 項目を " + dest + " へ" + Op(op) + "します"
 }
 
@@ -326,8 +346,20 @@ func Duration(sec int) string {
 }
 
 // ResultTitle は、結果の画面の 1 行目（「移動の結果: 一部にエラーがあります   C:\x -> D:\y」）。
+// 行き先のない操作（ごみ箱・完全削除）では to を空にし、項目のあったフォルダだけを出す。
 func ResultTitle(op fsops.OpKind, status string, from, to string) string {
-	return Op(op) + "の結果: " + status + "   " + from + " -> " + to
+	name := Op(op) + "の結果"
+	switch op {
+	case fsops.OpTrash:
+		name = "ごみ箱に入れた結果"
+	case fsops.OpDelete:
+		name = "完全削除の結果"
+	}
+	s := name + ": " + status + "   " + from
+	if to != "" {
+		s += " -> " + to
+	}
+	return s
 }
 
 // OutcomeCount は、結果の件数の 1 つ（「失敗 1」）。
@@ -346,9 +378,20 @@ func SkippedInside(n int) string {
 	return "（選択によるスキップ " + strconv.Itoa(n) + " 件）"
 }
 
+// Did は、操作を終えたことを表す言い方（「コピーしました」「ごみ箱に入れました」）。
+func Did(op fsops.OpKind) string {
+	switch op {
+	case fsops.OpTrash:
+		return "ごみ箱に入れました"
+	case fsops.OpDelete:
+		return "完全に削除しました"
+	}
+	return Op(op) + "しました"
+}
+
 // Done は、結果の画面を出さないときのメッセージ（「3 項目をコピーしました」「（選択によるスキップ 1 件）」「一部の属性を…（L で詳細）」）。
 func Done(op fsops.OpKind, done, skipped int, warned bool) string {
-	s := strconv.Itoa(done) + " 項目を" + Op(op) + "しました"
+	s := strconv.Itoa(done) + " 項目を" + Did(op)
 	if skipped > 0 {
 		s += SkippedInside(skipped)
 	}

@@ -30,6 +30,7 @@ func (a *App) execute() []Cmd {
 	op.cancel = cancel
 	op.slot = &progressSlot{}
 	op.started = a.cfg.Now()
+	op.changed = op.started
 	op.done = make(chan struct{})
 	plan, slot, wake, gen, done := op.plan, op.slot, a.cfg.Wake, op.gen, op.done
 	run := func() any {
@@ -56,7 +57,9 @@ func (a *App) SetWake(f func()) { a.cfg.Wake = f }
 // Refresh は、最新の進捗を読む（tui が Wake の知らせを受けたときに呼ぶ）。
 func (a *App) Refresh() {
 	if op := a.op; op != nil && op.screen == ScreenProgress {
-		op.progress = op.slot.get()
+		if p := op.slot.get(); p != op.progress {
+			op.progress, op.changed = p, a.cfg.Now()
+		}
 	}
 }
 
@@ -84,6 +87,7 @@ type ProgressView struct {
 	Remaining             time.Duration // 負なら分からない
 	AskCancel, Canceling  bool
 	Unresponsive          bool
+	TrashDialog           bool // ごみ箱へ移動中に進捗が変わらない。Windows の確認ダイアログが開いている可能性がある（filer §8.4）
 }
 
 // Progress は、進捗の画面の内容を返す（ScreenProgress のとき）。
@@ -93,12 +97,13 @@ func (a *App) Progress() ProgressView {
 	v := ProgressView{Op: op.req.Op, Stage: p.Stage, Current: p.Current, DoneFiles: p.DoneFiles, TotalFiles: p.TotalFiles,
 		DoneBytes: p.DoneBytes, TotalBytes: p.TotalBytes, Elapsed: a.cfg.Now().Sub(op.started), Remaining: -1,
 		AskCancel: op.askCancel, Canceling: op.canceling, Unresponsive: op.unresponsive}
-	if v.Stage == 0 {
-		v.Stage = fsops.StageCopy
-		if op.req.Op == fsops.OpMove {
-			v.Stage = fsops.StageMove
-		}
+	if v.Stage == 0 { // 最初の進捗が届く前
+		v.Stage = map[fsops.OpKind]fsops.Stage{fsops.OpCopy: fsops.StageCopy, fsops.OpMove: fsops.StageMove,
+			fsops.OpTrash: fsops.StageTrash, fsops.OpDelete: fsops.StageDelete}[op.req.Op]
 	}
+	// Windows では、ごみ箱に入らないと Windows が判断すると、完全削除の確認ダイアログが出て Execute が止まる（fsops §12.2）。
+	// ダイアログは ctx では閉じられないので、進捗が変わらなければ、ほかのウィンドウを確かめるよう知らせる（U5 の例外）。
+	v.TrashDialog = a.cfg.TrashMayAsk && op.req.Op == fsops.OpTrash && a.cfg.Now().Sub(op.changed) >= trashDialogWait
 	if sec := v.Elapsed.Seconds(); sec >= 1 && p.DoneBytes > 0 {
 		v.Speed = float64(p.DoneBytes) / sec
 		if p.TotalBytes > p.DoneBytes {
@@ -144,15 +149,16 @@ func (a *App) Abort(wait time.Duration) {
 
 // resultState は、直前の操作の結果（L でもう一度出す）。
 type resultState struct {
-	op       fsops.OpKind
-	from, to string
-	res      *fsops.Result
-	expanded map[int]bool // 詳細を展開した項目（Items の添字）
-	english  bool
-	cursor   int
-	rows     int
-	open     bool
-	frame    int
+	op          fsops.OpKind
+	from, to    string
+	res         *fsops.Result
+	untrashable []string     // ごみ箱に入らなかった項目（D で完全削除の確認へ進める。filer §8.5）
+	expanded    map[int]bool // 詳細を展開した項目（Items の添字）
+	english     bool
+	cursor      int
+	rows        int
+	open        bool
+	frame       int
 }
 
 func (a *App) executed(m executed) []Cmd {
@@ -168,6 +174,9 @@ func (a *App) executed(m executed) []Cmd {
 	}
 	res := m.res
 	a.result = &resultState{op: op.req.Op, from: op.from, to: op.req.DestDir, res: res, expanded: map[int]bool{}}
+	if op.req.Op == fsops.OpTrash {
+		a.result.untrashable = untrashable(res)
+	}
 	done, skipped, warned := 0, 0, false
 	for _, it := range res.Items {
 		a.logErr(errOrNil(it.Err))
@@ -226,20 +235,27 @@ func needsResultScreen(res *fsops.Result) bool {
 }
 
 // afterOperation は、操作の後始末をする。完了した項目のマークを外し（それ以外は残す。filer §6）、
-// 影響するペインを読み直す。移動の後は、覚えた項目を忘れる（filer §7）。
+// 影響するペインを読み直す。移動の後は、覚えた項目を忘れる（filer §7）。ごみ箱・完全削除の後は、消えた項目（とその中）を覚えた項目から除く。
 func (a *App) afterOperation(req fsops.Request, res *fsops.Result) []Cmd {
+	var gone []string
 	for _, it := range res.Items {
 		if it.Outcome != fsops.OutcomeDone {
 			continue
 		}
+		gone = append(gone, it.Src)
 		for _, p := range a.panes {
 			if filepath.Clean(p.dir) == filepath.Dir(it.Src) {
 				delete(p.marks, filepath.Base(it.Src))
 			}
 		}
 	}
-	if req.Op == fsops.OpMove {
+	switch req.Op {
+	case fsops.OpMove:
 		a.yanked = nil
+	case fsops.OpTrash, fsops.OpDelete:
+		a.yanked = slices.DeleteFunc(a.yanked, func(y string) bool {
+			return slices.ContainsFunc(gone, func(g string) bool { return y == g || strings.HasPrefix(y, g+string(filepath.Separator)) })
+		})
 	}
 	var cmds []Cmd
 	for i, p := range a.panes {
@@ -254,7 +270,7 @@ func (a *App) afterOperation(req fsops.Request, res *fsops.Result) []Cmd {
 // 画面を読み直すかの判断だけに使う（fsops に渡すパスは作らない）。
 func affected(dir string, req fsops.Request) bool {
 	dir = filepath.Clean(dir)
-	if dir == filepath.Clean(req.DestDir) {
+	if req.DestDir != "" && dir == filepath.Clean(req.DestDir) {
 		return true
 	}
 	if req.Op == fsops.OpCopy {
@@ -283,13 +299,14 @@ type ResultRow struct {
 
 // ResultView は、結果の画面の内容。
 type ResultView struct {
-	Op       fsops.OpKind
-	Status   fsops.Status
-	From, To string
-	Counts   []OutcomeCount // 問題のあるものから
-	Rows     []ResultRow
-	Cursor   int
-	English  bool // カーソル行の英語の詳細を、画面の下に出す
+	Op          fsops.OpKind
+	Status      fsops.Status
+	From, To    string
+	Counts      []OutcomeCount // 問題のあるものから
+	Rows        []ResultRow
+	Cursor      int
+	English     bool // カーソル行の英語の詳細を、画面の下に出す
+	Untrashable int  // ごみ箱に入らなかった項目の数（D で完全削除の確認へ進める）
 }
 
 // OutcomeCount は、結果の種類ごとの件数。
@@ -305,7 +322,7 @@ var outcomeOrder = []fsops.Outcome{fsops.OutcomeTrashUnconfirmed, fsops.OutcomeC
 // Result は、結果の画面の内容を返す（ScreenResult のとき）。
 func (a *App) Result() ResultView {
 	r := a.result
-	v := ResultView{Op: r.op, Status: r.res.Status, From: r.from, To: r.to, English: r.english}
+	v := ResultView{Op: r.op, Status: r.res.Status, From: r.from, To: r.to, English: r.english, Untrashable: len(r.untrashable)}
 	rows := r.rowsOf()
 	for _, o := range outcomeOrder {
 		n := 0
@@ -417,6 +434,13 @@ func (a *App) doResult(act Action) []Cmd {
 		}
 	case ActEnglish:
 		r.english = !r.english
+	case ActPurge:
+		// ごみ箱に入らなかった項目の完全削除の確認へ（filer §8.5・§8.6）。利用者が D を選んだときだけ進む（fsops I5 の UI 側）。
+		if a.frames <= r.frame || len(r.untrashable) == 0 {
+			return nil
+		}
+		r.open = false
+		return a.begin(fsops.Request{Op: fsops.OpDelete, Sources: slices.Clone(r.untrashable)}, r.from, true)
 	}
 	return nil
 }

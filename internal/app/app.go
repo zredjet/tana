@@ -34,12 +34,17 @@ type Config struct {
 	Readlink     func(path string) (string, error)
 	ReadHead     func(path string, max int) (fsops.Head, error) // プレビュー（filer §6）
 	NewPlan      func(ctx context.Context, req fsops.Request) (Plan, error)
-	Wake         func() // 実行中の進捗が届いたことをイベントループに知らせる（tui が設定する）。nil なら知らせない
+	Rename       func(path, newName string) error // 名前の変更（filer §8.7）
+	Mkdir        func(parent, name string) error  // 新しいフォルダ（filer §8.7）
+	Wake         func()                           // 実行中の進捗が届いたことをイベントループに知らせる（tui が設定する）。nil なら知らせない
 	Open         func(path string) error
 	IsExecutable func(path string, isDir bool) bool
 	CanOpen      func(path string) bool
 	Now          func() time.Time
 	Log          func(err error) // 英語の詳細の記録（TANA_LOG。filer §10）。nil なら記録しない
+
+	// TrashMayAsk は、ごみ箱へ入れるときに OS が完全削除の確認ダイアログを出しうるか（Windows。filer §8.4、fsops §12.2）。
+	TrashMayAsk bool
 }
 
 // DefaultConfig は、本物の fsops と platform を使う設定を返す。
@@ -51,10 +56,13 @@ func DefaultConfig(dirs []string) Config {
 		Readlink:       fsops.Readlink,
 		ReadHead:       fsops.ReadHead,
 		NewPlan:        newFsopsPlan,
+		Rename:         fsops.Rename,
+		Mkdir:          fsops.Mkdir,
 		Open:           platform.Open,
 		IsExecutable:   platform.IsExecutable,
 		CanOpen:        platform.CanOpen,
 		Now:            time.Now,
+		TrashMayAsk:    platform.TrashMayAsk,
 	}
 }
 
@@ -62,18 +70,26 @@ func DefaultConfig(dirs []string) Config {
 type DialogKind int
 
 const (
-	DialogNone DialogKind = iota
-	DialogPath            // パスの入力（g）
-	DialogExec            // 実行ファイルを開く前の確認（filer §7）
-	DialogHelp            // ヘルプ
+	DialogNone   DialogKind = iota
+	DialogPath              // パスの入力（g）
+	DialogExec              // 実行ファイルを開く前の確認（filer §7）
+	DialogHelp              // ヘルプ
+	DialogRename            // 名前の変更（filer §8.7）
+	DialogNewDir            // 新しいフォルダ（filer §8.7）
 )
 
 type dialog struct {
 	kind  DialogKind
-	edit  *lineedit.Editor // DialogPath
-	path  string           // DialogExec: 開くパス
-	name  string           // DialogExec: 表示する名前
+	edit  *lineedit.Editor // DialogPath・DialogRename・DialogNewDir
+	path  string           // DialogExec: 開くパス。DialogRename: 変える項目のパス（列挙で得た名前から作る。U4）
+	name  string           // DialogExec: 表示する名前。DialogRename: 今の名前
 	frame int              // 開いたときの a.frames。これより後に描いてから届いたキーだけで確定する（filer U2）
+
+	// DialogRename・DialogNewDir
+	dir  string // 項目のあるフォルダ、フォルダを作る場所
+	pane int    // 始めたペイン
+	err  string // fsops のエラーの文言（入力欄の下に出す）
+	busy int    // 変更・作成を待っている処理の世代（0 なら待っていない）
 }
 
 // App は、画面の状態。
@@ -132,6 +148,21 @@ func (a *App) Dialog() DialogKind { return a.dialog.kind }
 // PathEditor は、パスの入力欄を返す（DialogPath のとき）。
 func (a *App) PathEditor() *lineedit.Editor { return a.dialog.edit }
 
+// NameView は、名前の変更・新しいフォルダの画面の内容（filer §8.7）。
+type NameView struct {
+	Edit *lineedit.Editor // 入力欄（元のバイト列を持つ。表示する形への置き換えは描くときに行う。U4）
+	Name string           // 名前の変更: 今の名前（列挙で得たもの）
+	Dir  string           // 項目のあるフォルダ、フォルダを作る場所
+	Err  string           // fsops のエラーの文言（入力欄の下に出す）
+	Busy bool             // 変更・作成を待っている
+}
+
+// NameDialog は、名前の変更・新しいフォルダの画面の内容を返す（DialogRename・DialogNewDir のとき）。
+func (a *App) NameDialog() NameView {
+	d := a.dialog
+	return NameView{Edit: d.edit, Name: d.name, Dir: d.dir, Err: d.err, Busy: d.busy != 0}
+}
+
 // ExecName は、実行の確認で表示する名前を返す（DialogExec のとき）。
 func (a *App) ExecName() string { return a.dialog.name }
 
@@ -169,7 +200,6 @@ const (
 	ActHelp
 	ActQuit
 	ActCancel // Esc。読み込みの中止、ダイアログを閉じる
-	ActNotYet // まだない操作
 
 	// ダイアログの中の操作。
 	ActYes
@@ -195,6 +225,10 @@ const (
 	ActEnglish    // 結果の英語の詳細
 	ActLastResult // 直前の操作の結果をもう一度出す（L）
 	ActForceQuit  // 中止しても応答がないときの終了（Q。filer §8.4）
+	ActTrash      // ごみ箱へ（d）
+	ActPurge      // 完全削除（D。確認画面・結果の画面では、ごみ箱に入らない項目の完全削除の確認へ）
+	ActRename     // 名前の変更（r）
+	ActNewDir     // 新しいフォルダ（n）
 )
 
 // Action は、利用者の操作。
@@ -227,6 +261,8 @@ func (a *App) do(act Action) []Cmd {
 			return a.doConflicts(act)
 		case ScreenProgress:
 			return a.doProgress(act) // 実行中はほかの操作を受け付けない（filer §7）
+		case ScreenDelete:
+			return a.doDelete(act)
 		}
 		return nil
 	case a.result != nil && a.result.open:
@@ -299,8 +335,6 @@ func (a *App) do(act Action) []Cmd {
 		a.dialog = dialog{kind: DialogHelp}
 	case ActQuit:
 		a.quit = true
-	case ActNotYet:
-		a.setMessage(msg.NotYet, false)
 	case ActYank:
 		a.yank()
 	case ActPasteCopy:
@@ -311,6 +345,14 @@ func (a *App) do(act Action) []Cmd {
 		if a.result != nil {
 			a.result.open, a.result.frame = true, a.frames
 		}
+	case ActTrash:
+		return a.trash()
+	case ActPurge:
+		return a.purge()
+	case ActRename:
+		a.rename()
+	case ActNewDir:
+		a.newDir()
 	}
 	return nil
 }
@@ -319,7 +361,7 @@ func (a *App) do(act Action) []Cmd {
 func paneLocal(k ActionKind) bool {
 	switch k {
 	case ActUp, ActDown, ActPageUp, ActPageDown, ActHome, ActEnd, ActEnter, ActEnterDir, ActParent, ActMark, ActMarkAll, ActGoPath, ActSyncOther,
-		ActYank, ActPasteCopy, ActPasteMove:
+		ActYank, ActPasteCopy, ActPasteMove, ActTrash, ActPurge, ActRename, ActNewDir:
 		return true
 	}
 	return false
@@ -365,27 +407,17 @@ func (a *App) doDialog(act Action) []Cmd {
 		case ActNo, ActCancel:
 			a.dialog = dialog{}
 		}
+	case DialogRename, DialogNewDir:
+		return a.doName(act)
 	case DialogPath:
-		e := d.edit
+		if edit(d.edit, act) {
+			return nil
+		}
 		switch act.Kind {
-		case ActInsert:
-			e.Insert(act.Text)
-		case ActBackspace:
-			e.DeleteBackward()
-		case ActDelete:
-			e.DeleteForward()
-		case ActLeft:
-			e.Left()
-		case ActRight:
-			e.Right()
-		case ActLineHome:
-			e.Home()
-		case ActLineEnd:
-			e.End()
 		case ActCancel:
 			a.dialog = dialog{}
 		case ActSubmit:
-			text := e.Text()
+			text := d.edit.Text()
 			a.dialog = dialog{}
 			a.message, a.messageErr = "", false
 			if strings.TrimSpace(text) == "" {
@@ -395,6 +427,29 @@ func (a *App) doDialog(act Action) []Cmd {
 		}
 	}
 	return nil
+}
+
+// edit は、入力欄 e の編集の操作（文字を入れる、消す、カーソルを動かす）を行う。編集の操作でなければ false。
+func edit(e *lineedit.Editor, act Action) bool {
+	switch act.Kind {
+	case ActInsert:
+		e.Insert(act.Text)
+	case ActBackspace:
+		e.DeleteBackward()
+	case ActDelete:
+		e.DeleteForward()
+	case ActLeft:
+		e.Left()
+	case ActRight:
+		e.Right()
+	case ActLineHome:
+		e.Home()
+	case ActLineEnd:
+		e.End()
+	default:
+		return false
+	}
+	return true
 }
 
 // Resolve は、入力されたパス（g の入力欄、起動の引数）を絶対パスにする。相対パスは dir から数える。
@@ -528,6 +583,8 @@ func (a *App) update(m any) []Cmd {
 		return a.executed(m)
 	case opTick:
 		return a.opTick(m)
+	case named:
+		return a.named(m)
 	case opened:
 		if m.err != nil {
 			a.logErr(m.err)

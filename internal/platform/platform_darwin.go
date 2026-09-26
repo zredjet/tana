@@ -13,6 +13,9 @@ import (
 // DotFilesHidden は、名前が . で始まるものを隠しファイルとして扱うか（filer §6）。
 const DotFilesHidden = true
 
+// TrashMayAsk は、ごみ箱へ入れるときに OS が完全削除の確認ダイアログを出しうるか（filer §8.4）。macOS のごみ箱（NSFileManager）は確認を出さない。
+const TrashMayAsk = false
+
 // executableExts は、開くとコマンドやプログラムが動きうる拡張子（filer §7）。
 // .terminal（Terminal の設定。コマンドを含められる）、.jar（Java）、.workflow・.action（Automator）、.fileloc（ファイル・アプリの場所）。
 var executableExts = []string{".command", ".tool", ".terminal", ".jar", ".workflow", ".action", ".fileloc"}

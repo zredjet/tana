@@ -4,6 +4,7 @@
 //   - 開く前に確認を出す実行ファイルの判定（IsExecutable。filer §7）
 //   - 開いてよい名前かの判定（CanOpen。Windows の VU10。filer §7）
 //   - 名前が . で始まるものを隠すか（DotFilesHidden。filer §6）
+//   - ごみ箱へ入れるときに OS が確認ダイアログを出しうるか（TrashMayAsk。filer §8.4）
 //
 // OS ごとのコードは、term とこのパッケージに閉じる（CLAUDE.md）。
 // 標準ライブラリと golang.org/x/sys だけを使い、ほかの tana のパッケージを import しない。

@@ -12,12 +12,15 @@ import (
 	"github.com/zredjet/tana/internal/msg"
 )
 
-// ファイル操作（コピー・移動）の流れ（filer §8.1〜§8.5）。
-// 覚える（y） → 貼り付け（p・P） → 計画（NewPlan） → 確認 → 衝突の決定 → 実行 → 進捗 → 結果 → 再読み込み。
+// ファイル操作の流れ（filer §8.1〜§8.6）。
+// コピー・移動: 覚える（y） → 貼り付け（p・P） → 計画（NewPlan） → 確認 → 衝突の決定 → 実行 → 進捗 → 結果 → 再読み込み。
+// ごみ箱（d）: 計画 → 確認 → 実行 → 結果。ごみ箱に入らない項目は、利用者が選んだときだけ完全削除の確認へ進む（op_delete.go）。
+// 完全削除（D）: 計画 → 完全削除の確認（y だけで確定） → 実行 → 結果。
 
 const (
 	opTickInterval   = time.Second      // 実行中に経過時間を描き直し、応答がないかを調べる間隔
 	unresponsiveWait = 10 * time.Second // 中止してから、応答がないと知らせるまでの時間（filer §8.4）
+	trashDialogWait  = 3 * time.Second  // ごみ箱へ移動中に進捗が変わらないとき、確認ダイアログの可能性を知らせるまでの時間（filer §8.4）
 	sameTimeWindow   = 2 * time.Second  // 更新日時の差がこれ以内なら同じとみなす（FAT32 は 2 秒単位。filer §8.3）
 )
 
@@ -51,17 +54,19 @@ const (
 	ScreenConflicts               // 衝突の決定（filer §8.3）
 	ScreenProgress                // 進捗（filer §8.4）
 	ScreenResult                  // 結果（filer §8.5）
+	ScreenDelete                  // 完全削除の確認（filer §8.6）
 )
 
 // operation は、進めているファイル操作。
 type operation struct {
-	gen    int
-	req    fsops.Request
-	from   string // 覚えたときのフォルダ（見出しに出す）
-	pane   int    // 貼り付けたペイン
-	screen Screen
-	frame  int // この画面を出したときの a.frames。描いた後に届いたキーでだけ確定する（filer U2）
-	cancel context.CancelFunc
+	gen       int
+	req       fsops.Request
+	from      string // 項目のあったフォルダ（覚えたときのフォルダ。見出しに出す）
+	pane      int    // 始めたペイン
+	fromTrash bool   // 完全削除: ごみ箱に入らなかった項目から進んだ（filer §8.6）
+	screen    Screen
+	frame     int // この画面を出したときの a.frames。描いた後に届いたキーでだけ確定する（filer U2）
+	cancel    context.CancelFunc
 
 	planning, slow bool // 計画を作っている。0.2 秒を超えた
 	plan           Plan
@@ -78,7 +83,8 @@ type operation struct {
 	slot         *progressSlot
 	progress     fsops.Progress
 	started      time.Time
-	askCancel    bool // 中止の確認を出している
+	changed      time.Time // 進捗が最後に変わった時刻（ごみ箱の確認ダイアログの知らせ。filer §8.4）
+	askCancel    bool      // 中止の確認を出している
 	askFrame     int
 	canceling    bool
 	cancelAt     time.Time
@@ -162,12 +168,18 @@ func (a *App) paste(op fsops.OpKind) []Cmd {
 	if !p.loaded {
 		return nil
 	}
-	req := fsops.Request{Op: op, Sources: slices.Clone(a.yanked), DestDir: p.dir}
+	return a.begin(fsops.Request{Op: op, Sources: slices.Clone(a.yanked), DestDir: p.dir}, a.yankDir, false)
+}
+
+// begin は、操作 req の計画を作り始める（filer §8.1）。from は項目のあったフォルダ（見出しに出す）。
+// fromTrash は、完全削除を、ごみ箱に入らなかった項目から始めたこと（filer §8.6）。
+func (a *App) begin(req fsops.Request, from string, fromTrash bool) []Cmd {
 	a.opening = 0 // 関連付けで開く前の確認をやめる（操作の後に古い「実行しますか」を出さない）
 	a.gen++
 	gen := a.gen
 	ctx, cancel := context.WithCancel(context.Background())
-	a.op = &operation{gen: gen, req: req, from: a.yankDir, pane: a.active, cancel: cancel, planning: true, collapsed: map[fsops.ConflictID]bool{}}
+	a.op = &operation{gen: gen, req: req, from: from, pane: a.active, fromTrash: fromTrash, cancel: cancel, planning: true,
+		collapsed: map[fsops.ConflictID]bool{}}
 	newPlan := a.cfg.NewPlan
 	return []Cmd{
 		{Run: func() any {
@@ -213,6 +225,10 @@ func (a *App) planned(m planned) {
 		}
 	}
 	op.warnings = warningTexts(op.plan.Warnings())
+	if op.req.Op == fsops.OpDelete {
+		a.show(ScreenDelete) // 完全削除は専用の確認で（filer §8.6。U2）
+		return
+	}
 	a.show(ScreenConfirm)
 }
 
@@ -249,6 +265,7 @@ type ConfirmView struct {
 	NotRunnable       []ItemNote
 	Conflicts, TopLvl int
 	Warnings          []string
+	Untrashable       int // ごみ箱: 計画の時点でごみ箱に入らないと分かった項目の数（KindTrashUnavailable）
 }
 
 // Confirm は、確認画面の内容を返す（ScreenConfirm のとき）。
@@ -258,10 +275,14 @@ func (a *App) Confirm() ConfirmView {
 	v := ConfirmView{Op: op.req.Op, Dest: op.req.DestDir, Files: pl.TotalFiles(), Bytes: pl.TotalBytes()}
 	for _, it := range pl.Items() {
 		v.Count++
-		if it.Err != nil {
-			v.NotRunnable = append(v.NotRunnable, ItemNote{Name: filepath.Base(it.Src), Reason: msg.Error(it.Err)})
-		} else {
+		switch {
+		case it.Err == nil:
 			v.Runnable++
+		case it.Err.Kind == fsops.KindTrashUnavailable && op.req.Op == fsops.OpTrash:
+			v.Untrashable++
+			v.NotRunnable = append(v.NotRunnable, ItemNote{Name: filepath.Base(it.Src), Reason: msg.TrashUnavailableSkip})
+		default:
+			v.NotRunnable = append(v.NotRunnable, ItemNote{Name: filepath.Base(it.Src), Reason: msg.Error(it.Err)})
 		}
 	}
 	for _, c := range pl.Conflicts() {
@@ -303,6 +324,23 @@ func (a *App) doConfirm(act Action) []Cmd {
 			a.show(ScreenConflicts)
 		default:
 			return a.execute()
+		}
+	case ActPurge:
+		// ごみ箱: すべての項目が実行されず、ごみ箱に入らない項目があれば、完全削除の確認へ進める（filer §8.2。フェーズ20で決めた）。
+		// 利用者が D を選んだときだけ進む。UI が自分から完全削除に切り替えない（fsops I5 の UI 側。U2）。
+		if !a.armed() {
+			return nil
+		}
+		if v := a.Confirm(); v.Op == fsops.OpTrash && v.Runnable == 0 && v.Untrashable > 0 {
+			var srcs []string
+			for _, it := range a.op.plan.Items() {
+				if it.Err != nil && it.Err.Kind == fsops.KindTrashUnavailable {
+					srcs = append(srcs, it.Src)
+				}
+			}
+			from := a.op.from
+			a.discard()
+			return a.begin(fsops.Request{Op: fsops.OpDelete, Sources: srcs}, from, true)
 		}
 	}
 	return nil

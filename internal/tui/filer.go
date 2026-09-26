@@ -128,7 +128,9 @@ func (f *Filer) action(ev keys.Event) (app.Action, bool) {
 		}
 		return app.Action{}, false
 	case app.DialogPath:
-		return pathAction(ev)
+		return editAction(ev, true)
+	case app.DialogRename, app.DialogNewDir:
+		return editAction(ev, false)
 	}
 	if ev.Kind != keys.KeyEvent { // 貼り付けはコマンドとして解釈しない（tui §5）
 		return app.Action{}, false
@@ -171,8 +173,14 @@ func (f *Filer) action(ev keys.Event) (app.Action, bool) {
 			return act(app.ActPasteMove)
 		case 'L':
 			return act(app.ActLastResult)
-		case 'd', 'D', 'r', 'n':
-			return act(app.ActNotYet)
+		case 'd':
+			return act(app.ActTrash)
+		case 'D':
+			return act(app.ActPurge)
+		case 'r':
+			return act(app.ActRename)
+		case 'n':
+			return act(app.ActNewDir)
 		}
 		return app.Action{}, false
 	}
@@ -208,14 +216,15 @@ func (f *Filer) action(ev keys.Event) (app.Action, bool) {
 	return app.Action{}, false
 }
 
-// pathAction は、パスの入力欄のキーを操作に変える。貼り付けは最初の行だけを入れる（コマンドとして解釈しない。tui §5）。
+// editAction は、入力欄（パス、名前）のキーを操作に変える。貼り付けは入力欄に入れるだけで、コマンドとして解釈しない（tui §5。filer U2）。
+// firstLine なら貼り付けの最初の行だけを入れる（パスの入力）。そうでなければ改行を除いて入れる（名前。lineedit が取り除く。filer §8.7）。
 // 貼り付けの改行は、端末によって LF・CRLF・CR（Terminal.app・iTerm2 は LF を CR にして送る）のどれでも届く。
-func pathAction(ev keys.Event) (app.Action, bool) {
+func editAction(ev keys.Event, firstLine bool) (app.Action, bool) {
 	act := func(k app.ActionKind) (app.Action, bool) { return app.Action{Kind: k}, true }
 	switch ev.Kind {
 	case keys.PasteEvent:
 		line := ev.Text
-		if i := strings.IndexAny(line, "\r\n"); i >= 0 {
+		if i := strings.IndexAny(line, "\r\n"); i >= 0 && firstLine {
 			line = line[:i]
 		}
 		return app.Action{Kind: app.ActInsert, Text: line}, true
@@ -326,6 +335,8 @@ func (f *Filer) Draw(s *screen.Screen) {
 	switch a.Dialog() {
 	case app.DialogPath:
 		f.drawPathInput(s)
+	case app.DialogRename, app.DialogNewDir:
+		f.drawName(s)
 	case app.DialogExec:
 		f.drawExec(s)
 	case app.DialogHelp:
@@ -542,6 +553,41 @@ func (f *Filer) drawPathInput(s *screen.Screen) {
 	v := e.View(field.W)
 	s.Put(field, 0, 0, e.Text()[v.Start:v.End], screen.Style{})
 	s.SetCursor(field.X+v.CursorCol, field.Y, true)
+}
+
+// drawName は、名前の変更・新しいフォルダの入力欄を描く（filer §8.7）。本物のカーソルを入力の位置に置く（IME。filer VU4）。
+// 入力欄の文字は元のバイト列で、表示する形への置き換えは screen が描くときに行う（U4・U6）。
+func (f *Filer) drawName(s *screen.Screen) {
+	a := f.app
+	v := a.NameDialog()
+	title, keys, busy := msg.RenameTitle, msg.RenameKeys, msg.RenameBusy
+	if a.Dialog() == app.DialogNewDir {
+		title, keys, busy = msg.NewDirTitle, msg.NewDirKeys, msg.NewDirBusy
+	}
+	r := dialogRegion(s, 64, 9)
+	drawBox(s, r, boxDouble, title, screen.Style{Attr: screen.AttrBold})
+	in := screen.Region{X: r.X + 2, Y: r.Y + 1, W: r.W - 4, H: r.H - 2}
+	head := screen.Region{X: in.X, Y: in.Y + 1, W: in.W, H: 1}
+	if a.Dialog() == app.DialogRename {
+		putName(s, head, textfmt.TruncName(v.Name, in.W), screen.Style{}) // 今の名前（置き換えた文字は色を変える）
+	} else {
+		s.Put(head, 0, 0, msg.Place(textfmt.TruncPath(v.Dir, in.W-textwidth.Width(msg.Place("")))), screen.Style{})
+	}
+	s.Put(in, 0, 2, "[", screen.Style{})
+	s.Put(in, in.W-1, 2, "]", screen.Style{})
+	field := screen.Region{X: in.X + 1, Y: in.Y + 2, W: in.W - 2, H: 1}
+	fv := v.Edit.View(field.W)
+	s.Put(field, 0, 0, v.Edit.Text()[fv.Start:fv.End], screen.Style{})
+	switch {
+	case v.Busy:
+		s.Put(in, 0, 4, busy, screen.Style{Attr: screen.AttrDim})
+	case v.Err != "":
+		s.Put(in, 0, 4, "! "+v.Err, styleError)
+	}
+	s.Put(in, 0, 6, keys, screen.Style{Attr: screen.AttrBold})
+	if !v.Busy {
+		s.SetCursor(field.X+fv.CursorCol, field.Y, true)
+	}
 }
 
 // drawExec は、実行ファイルを開く前の確認を描く（filer §7）。
