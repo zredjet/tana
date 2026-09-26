@@ -519,16 +519,17 @@ func TestGoPath(t *testing.T) {
 func TestResolve(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS == "windows" {
-		for in, want := range map[string]string{`D:`: `D:\`, `D:\x\..\y`: `D:\y`, `sub`: `C:\a\sub`, `..`: `C:\`, `\\srv\share\x`: `\\srv\share\x`} {
-			if got := resolve(`C:\a`, in); got != want {
-				t.Errorf("resolve(%q) = %q, want %q", in, got, want)
+		for in, want := range map[string]string{`D:`: `D:\`, `D:\x\..\y`: `D:\y`, `sub`: `C:\a\sub`, `..`: `C:\`, `\\srv\share\x`: `\\srv\share\x`,
+			`\x`: `C:\x`, `/x/y`: `C:\x\y`} { // ドライブ名のないルートからのパスは、今のドライブのルートから
+			if got := Resolve(`C:\a`, in); got != want {
+				t.Errorf("Resolve(%q) = %q, want %q", in, got, want)
 			}
 		}
 		return
 	}
 	for in, want := range map[string]string{"/x/../y": "/y", "sub": "/a/sub", "..": "/", "a b/": "/a/a b"} {
-		if got := resolve("/a", in); got != want {
-			t.Errorf("resolve(%q) = %q, want %q", in, got, want)
+		if got := Resolve("/a", in); got != want {
+			t.Errorf("Resolve(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
@@ -611,5 +612,88 @@ func TestNamesKept(t *testing.T) {
 			t.Errorf("entered %q: %q", n, got)
 		}
 		h.do(ActParent)
+	}
+}
+
+// TestFocusOrUpWhileLoading は、読み込み中のペインで ← → を押しても、読み込みを置き換えないことを確かめる（Backspace と同じ）。
+func TestFocusOrUpWhileLoading(t *testing.T) {
+	t.Parallel()
+	root := tree(t)
+	h := newHarness(t, nil, root, root)
+	h.moveTo("sub")
+	h.hold = true
+	h.do(ActEnter)
+	h.act(Action{Kind: ActFocusOrUp, Pane: 0}) // すでに操作中のペイン（親へ）
+	h.release()
+	if got := h.pane(0).Dir(); got != filepath.Join(root, "sub") {
+		t.Errorf("Dir = %q, want %q (the enter must not be replaced)", got, filepath.Join(root, "sub"))
+	}
+}
+
+// TestReloadUnloaded は、最初の読み込みを中止したペインを、再読み込みで読み込めることを確かめる。
+func TestReloadUnloaded(t *testing.T) {
+	t.Parallel()
+	root := tree(t)
+	h := &harness{t: t, hold: true}
+	cfg := DefaultConfig([]string{root, root})
+	cfg.Open = func(p string) error { t.Errorf("opened %s", p); return nil }
+	a, cmds := New(cfg)
+	h.a = a
+	h.run(cmds)
+	h.do(ActCancel)
+	h.release() // 中止した読み込みの結果は捨てる
+	if h.pane(0).Loaded() {
+		t.Fatal("loaded after the initial load was canceled")
+	}
+	h.do(ActReload)
+	if !h.pane(0).Loaded() || !h.pane(1).Loaded() || h.pane(0).Dir() != root {
+		t.Errorf("after reload: loaded %v %v, Dir %q", h.pane(0).Loaded(), h.pane(1).Loaded(), h.pane(0).Dir())
+	}
+}
+
+// TestCancelOpen は、開く前の確認の中止では、読み込みの中止と言わないことを確かめる。
+func TestCancelOpen(t *testing.T) {
+	t.Parallel()
+	root := tree(t)
+	h := newHarness(t, nil, root)
+	h.moveTo("a.txt")
+	h.hold = true
+	h.do(ActEnter)
+	h.do(ActCancel)
+	h.release()
+	if len(h.opened) != 0 {
+		t.Errorf("opened %q after Esc", h.opened)
+	}
+	h.wantMessage(msg.Kind(fsops.KindCanceled))
+}
+
+// TestStaleLinkTarget は、再読み込みの前に始めたリンク先の読み取りの結果を、新しい一覧に使わないことを確かめる。
+func TestStaleLinkTarget(t *testing.T) {
+	t.Parallel()
+	root := tree(t)
+	if err := os.Symlink("sub", filepath.Join(root, "dirlink")); err != nil {
+		t.Skipf("cannot create a symbolic link: %v", err)
+	}
+	h := newHarness(t, nil, root)
+	h.hold = true
+	h.moveTo("dirlink") // リンク先の読み取りが貯まる
+	var stale []any
+	for _, c := range h.held {
+		stale = append(stale, c.Run()) // 再読み込みの前に読んだ結果（届くのは後）
+	}
+	h.held = nil
+	if err := os.Remove(filepath.Join(root, "dirlink")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("a.txt", filepath.Join(root, "dirlink")); err != nil {
+		t.Fatal(err)
+	}
+	h.do(ActReload)
+	h.release() // 再読み込みと、その後のリンク先の読み取り
+	for _, m := range stale {
+		h.run(h.a.Update(m))
+	}
+	if target, ok := h.pane(0).LinkTarget("dirlink"); !ok || target != "a.txt" {
+		t.Errorf("LinkTarget = %q, %v, want a.txt (the stale sub must be dropped)", target, ok)
 	}
 }

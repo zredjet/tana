@@ -16,6 +16,7 @@ type Pane struct {
 
 	targets map[string]string   // リンク先（名前 → リンク先）
 	pending map[string]struct{} // 読み取り中のリンク先
+	listGen int                 // 一覧を置き換えた回数（古いリンク先の読み取りの結果を捨てる）
 }
 
 // Dir は、表示しているフォルダ（リンクに入ったときはリンクのパスのまま。filer §6）を返す。
@@ -44,11 +45,11 @@ func (p *Pane) Marked(name string) bool {
 }
 
 // Counts は、表示する項目の数（.. を除く）、マークの数、隠している項目の数を返す。
+// .. は並びの先頭にあり、隠れないので、数えずに求める（描くたびに呼ぶ）。
 func (p *Pane) Counts() (items, marks, hidden int) {
-	for _, i := range p.visible {
-		if !p.items[i].Parent {
-			items++
-		}
+	items = len(p.visible)
+	if items > 0 && p.items[p.visible[0]].Parent {
+		items--
 	}
 	return items, len(p.marks), len(p.items) - len(p.visible)
 }
@@ -131,6 +132,7 @@ func (p *Pane) set(dir string, items []listing.Item, showHidden, keep bool, focu
 		oldCursor = 0
 	}
 	p.dir, p.items, p.loaded = dir, items, true
+	p.listGen++
 	clear(p.targets)
 	p.pending = map[string]struct{}{}
 	names := make(map[string]bool, len(items))

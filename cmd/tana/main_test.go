@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -16,14 +17,22 @@ func TestParseArgs(t *testing.T) {
 		t.Fatal(err)
 	}
 	abs := filepath.Join(wd, "x")
-	for _, tt := range []struct {
+	cases := []struct {
 		args []string
 		want []string
 	}{
 		{nil, []string{wd, wd}},
 		{[]string{"sub"}, []string{filepath.Join(wd, "sub"), wd}},
 		{[]string{abs, ".."}, []string{abs, filepath.Dir(wd)}},
-	} {
+	}
+	if runtime.GOOS == "windows" { // ドライブ名だけ、ドライブ名のないルートからのパス（app.Resolve と同じ）
+		vol := filepath.VolumeName(wd)
+		cases = append(cases, struct {
+			args []string
+			want []string
+		}{[]string{`Q:`, `\x`}, []string{`Q:\`, vol + `\x`}})
+	}
+	for _, tt := range cases {
 		got, err := parseArgs(tt.args)
 		if err != nil || strings.Join(got, "|") != strings.Join(tt.want, "|") {
 			t.Errorf("parseArgs(%q) = %q, %v, want %q", tt.args, got, err, tt.want)

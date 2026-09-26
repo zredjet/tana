@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -89,11 +88,8 @@ func parseArgs(args []string) ([]string, error) {
 			if args[i] == "" {
 				return nil, errors.New(msg.InvalidFolder + `""`)
 			}
-			// 利用者が打った文字列から作る（表示用に加工したものではない。filer U4）。
-			dirs[i] = filepath.Join(wd, args[i])
-			if filepath.IsAbs(args[i]) {
-				dirs[i] = filepath.Clean(args[i])
-			}
+			// 利用者が打った文字列から作る（表示用に加工したものではない。filer U4）。g の入力欄と同じ解き方をする。
+			dirs[i] = app.Resolve(wd, args[i])
 		}
 	}
 	return dirs, nil

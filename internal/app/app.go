@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -143,7 +144,6 @@ const (
 	ActEnter        // フォルダに入る、ファイルを開く
 	ActParent       // 親のフォルダへ
 	ActNextPane     // 次のペインへ
-	ActFocus        // Action.Pane のペインへ
 	ActFocusOrUp    // Action.Pane のペインへ。すでにそのペインなら親のフォルダへ
 	ActMark         // マークの切り替え
 	ActMarkAll      // すべてマークする・すべて外す
@@ -172,7 +172,7 @@ const (
 // Action は、利用者の操作。
 type Action struct {
 	Kind ActionKind
-	Pane int    // ActFocus・ActFocusOrUp
+	Pane int    // ActFocusOrUp
 	Text string // ActInsert
 }
 
@@ -209,15 +209,13 @@ func (a *App) Do(act Action) []Cmd {
 		return a.parent(a.active)
 	case ActNextPane:
 		a.active = (a.active + 1) % len(a.panes)
-	case ActFocus:
-		if act.Pane >= 0 && act.Pane < len(a.panes) {
-			a.active = act.Pane
-		}
 	case ActFocusOrUp:
-		if act.Pane == a.active {
+		switch {
+		case act.Pane == a.active && p.load != nil:
+			// 親へ移るのは操作中のペインの操作なので、読み込み中は受け付けない（ActParent と同じ）。
+		case act.Pane == a.active:
 			return a.parent(a.active)
-		}
-		if act.Pane >= 0 && act.Pane < len(a.panes) {
+		case act.Pane >= 0 && act.Pane < len(a.panes):
 			a.active = act.Pane
 		}
 	case ActMark:
@@ -233,11 +231,14 @@ func (a *App) Do(act Action) []Cmd {
 			q.filter(a.showHidden)
 		}
 	case ActReload:
+		// 最初の読み込みに失敗した・中止したペイン（一覧がない）は、起動時と同じく読み込み直す。
 		var cmds []Cmd
 		for i, q := range a.panes {
-			if q.loaded {
-				cmds = append(cmds, a.load(i, q.dir, loadReload, "")...)
+			kind := loadReload
+			if !q.loaded {
+				kind = loadInitial
 			}
+			cmds = append(cmds, a.load(i, q.dir, kind, "")...)
 		}
 		return cmds
 	case ActGoPath:
@@ -267,16 +268,20 @@ func paneLocal(k ActionKind) bool {
 
 // cancel は、読み込みと、開く前の確認を中止する（filer U5。待つのをやめて結果を捨てる）。
 func (a *App) cancel() []Cmd {
-	canceled := a.opening != 0
+	opening := a.opening != 0
 	a.opening = 0
+	loading := false
 	for _, p := range a.panes {
 		if p.load != nil {
 			p.load = nil
-			canceled = true
+			loading = true
 		}
 	}
-	if canceled {
+	switch {
+	case loading:
 		a.setMessage(msg.LoadCanceled, false)
+	case opening:
+		a.setMessage(msg.Kind(fsops.KindCanceled), false)
 	}
 	return nil
 }
@@ -327,20 +332,24 @@ func (a *App) doDialog(act Action) []Cmd {
 			if strings.TrimSpace(text) == "" {
 				return nil
 			}
-			return a.load(a.active, resolve(a.panes[a.active].dir, text), loadGo, "")
+			return a.load(a.active, Resolve(a.panes[a.active].dir, text), loadGo, "")
 		}
 	}
 	return nil
 }
 
-// resolve は、入力されたパスを絶対パスにする。相対パスは dir から数える。Windows の D: はドライブのルートにする。
+// Resolve は、入力されたパス（g の入力欄、起動の引数）を絶対パスにする。相対パスは dir から数える。
+// Windows の D: はドライブのルートに、ドライブ名のない \foo は dir のドライブのルートからにする。
 // 入力されたパスは利用者が打った文字列で、表示用に加工したものではない（filer U4）。
-func resolve(dir, input string) string {
-	if filepath.IsAbs(input) {
+func Resolve(dir, input string) string {
+	switch {
+	case filepath.IsAbs(input):
 		return filepath.Clean(input)
-	}
-	if vol := filepath.VolumeName(input); vol != "" {
+	case filepath.VolumeName(input) != "":
+		vol := filepath.VolumeName(input)
 		return filepath.Clean(vol + string(filepath.Separator) + input[len(vol):])
+	case input != "" && os.IsPathSeparator(input[0]): // Windows のみ（Unix では IsAbs）
+		return filepath.Clean(filepath.VolumeName(dir) + input)
 	}
 	return filepath.Join(dir, input)
 }
@@ -430,9 +439,9 @@ func (a *App) Update(m any) []Cmd {
 			p.load.slow = true
 		}
 	case linkRead:
-		p := a.panes[m.pane]
-		delete(p.pending, m.name)
-		if p.dir == m.dir && p.loaded {
+		// 読み取りを始めた後に一覧を置き換えていれば（再読み込みを含む）、結果を捨てる。
+		if p := a.panes[m.pane]; p.listGen == m.listGen {
+			delete(p.pending, m.name)
 			p.targets[m.name] = m.target
 		}
 	case checked:
@@ -558,9 +567,8 @@ func (a *App) openCmd(path, name string) []Cmd {
 
 // linkRead は、リンク先の読み取りの結果（状態行に出す）。
 type linkRead struct {
-	pane      int
-	dir, name string
-	target    string
+	pane, listGen int
+	name, target  string
 }
 
 // linkTarget は、ペイン i のカーソル行がリンク・ジャンクションで、リンク先をまだ読んでいなければ、読む処理を返す。
@@ -577,12 +585,12 @@ func (a *App) linkTarget(i int) []Cmd {
 		return nil
 	}
 	p.pending[it.Name] = struct{}{}
-	dir, name, readlink := p.dir, it.Name, a.cfg.Readlink
+	path, name, gen, readlink := filepath.Join(p.dir, it.Name), it.Name, p.listGen, a.cfg.Readlink
 	return []Cmd{{Run: func() any {
-		target, err := readlink(filepath.Join(dir, name))
+		target, err := readlink(path)
 		if err != nil {
 			target = "(" + msg.Error(err) + ")"
 		}
-		return linkRead{pane: i, dir: dir, name: name, target: target}
+		return linkRead{pane: i, listGen: gen, name: name, target: target}
 	}}}
 }
