@@ -492,7 +492,10 @@ func BenchmarkDraw100k(b *testing.B) {
 }
 
 // Yazi 風の表示の見本（filer §5.3）。パスは / で書き、どの OS でも同じ画面にする（親のパスは画面に出さない）。
-const colDir = "/Users/hiro/Documents"
+const (
+	colDir  = "/Users/hiro/Documents"
+	colHome = "/Users/hiro" // colDir の親。filepath.Dir は Windows で \ にするので、見出しに出すパスは文字列で書く
+)
 
 func columnsFS(t *testing.T) (map[string][]fsops.Entry, map[string][]byte) {
 	home := filepath.Dir(colDir)
@@ -508,7 +511,7 @@ func columnsFS(t *testing.T) (map[string][]fsops.Entry, map[string][]byte) {
 		home: {hidden, typed("Desktop", fsops.TypeDir, at(9, 20, 10, 0, 0)), typed("Documents", fsops.TypeDir, at(9, 24, 11, 19, 0)),
 			typed("Downloads", fsops.TypeDir, at(9, 25, 9, 0, 0)), typed("Music", fsops.TypeDir, at(8, 1, 0, 0, 0)),
 			file(".zshrc", 120, at(9, 1, 0, 0, 0))},
-		colDir: {typed("写真", fsops.TypeDir, at(9, 12, 9, 15, 0)), typed("議事録", fsops.TypeDir, at(9, 20, 18, 2, 0)),
+		filepath.Clean(colDir): {typed("写真", fsops.TypeDir, at(9, 12, 9, 15, 0)), typed("議事録", fsops.TypeDir, at(9, 20, 18, 2, 0)),
 			typed("空のフォルダ", fsops.TypeDir, at(9, 1, 0, 0, 0)), file("メモ.txt", int64(len(memo)), at(9, 26, 10, 0, 0)),
 			file("古いメモ.txt", int64(len(old)), at(2, 3, 4, 5, 0)), file("data.bin", 8, at(9, 2, 0, 0, 0)), file(".hidden", 1, at(9, 2, 0, 0, 0))},
 		filepath.Join(colDir, "写真"): {typed("2025年度", fsops.TypeDir, at(1, 1, 0, 0, 0)), typed("2026年度", fsops.TypeDir, at(1, 1, 0, 0, 0)),
@@ -528,16 +531,17 @@ func newColumnsScene(t *testing.T) *scene {
 	t.Helper()
 	dirs, files := columnsFS(t)
 	cfg := app.Config{
-		Dirs:           []string{colDir, filepath.Dir(colDir)},
+		Dirs:           []string{colDir, colHome},
 		DotFilesHidden: true,
+		// Windows では、移動した後のパスは \ で区切られるので、見本は Clean した形で引く。
 		ReadDir: func(dir string) ([]fsops.Entry, error) {
-			if e, ok := dirs[dir]; ok {
+			if e, ok := dirs[filepath.Clean(dir)]; ok {
 				return e, nil
 			}
 			return nil, &fsops.OpError{Op: "readdir", Path: dir, Kind: fsops.KindNotFound}
 		},
 		ReadHead: func(p string, max int) (fsops.Head, error) {
-			b, ok := files[p]
+			b, ok := files[filepath.Clean(p)]
 			if !ok {
 				return fsops.Head{}, &fsops.OpError{Op: "readhead", Path: p, Kind: fsops.KindNotFound}
 			}
@@ -601,7 +605,7 @@ func TestColumnsKeys(t *testing.T) {
 		t.Errorf("Right: Dir %q", got)
 	}
 	sc.keys(key(keys.KeyLeft))
-	if got := sc.a.Panes()[0].Dir(); got != colDir {
+	if got := sc.a.Panes()[0].Dir(); got != filepath.Clean(colDir) {
 		t.Errorf("Left: Dir %q", got)
 	}
 	sc.keys(char('v'))
