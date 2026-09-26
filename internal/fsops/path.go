@@ -23,20 +23,18 @@ func checkPath(p string) (string, error) {
 }
 
 // withUserPaths は、OS が返したエラーに含まれるパス（\\?\ 形式を含む）を、呼び出し側に返す形のパスに置き換える（§8.2）。
+// *OpError が *fs.PathError を包んでいる場合（削除待ちのエラー。deletePendingErr）は、両方を置き換える。
 func withUserPaths(err error, src, dst string) error {
-	if le, ok := errors.AsType[*os.LinkError](err); ok {
-		le.Old, le.New = src, dst
-		return err
-	}
-	if pe, ok := errors.AsType[*fs.PathError](err); ok {
-		pe.Path = src
-		return err
-	}
-	if oe, ok := errors.AsType[*OpError](err); ok { // OS ごとの関数が \\?\ 形式のパスで作った *OpError
+	if oe, ok := errors.AsType[*OpError](err); ok && oe != nil { // OS ごとの関数が \\?\ 形式のパスで作った *OpError
 		oe.Path = src
 		if dst != "" {
 			oe.Dest = dst
 		}
+	}
+	if le, ok := errors.AsType[*os.LinkError](err); ok {
+		le.Old, le.New = src, dst
+	} else if pe, ok := errors.AsType[*fs.PathError](err); ok {
+		pe.Path = src
 	}
 	return err
 }

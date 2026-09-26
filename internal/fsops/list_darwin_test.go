@@ -77,3 +77,14 @@ func TestMkdirLockedParentDarwin(t *testing.T) {
 	testfs.SetImmutable(t, locked)
 	wantOpError(t, Mkdir(locked, "x"), "mkdir", KindReadOnly, filepath.Join(locked, "x"))
 }
+
+// TestMkdirLockedParentThroughLinkDarwin は、親フォルダのパスがリンクで、リンク先のフォルダがロックされているときも KindReadOnly にすることを確かめる
+// （途中の要素のリンクは辿る。§11.4）。
+func TestMkdirLockedParentThroughLinkDarwin(t *testing.T) {
+	t.Parallel()
+	root := testfs.TempDir(t)
+	testfs.Build(t, root, testfs.Tree{"locked": testfs.Dir(), "link": testfs.DirSymlink("locked")})
+	testfs.SetImmutable(t, filepath.Join(root, "locked"))
+	link := filepath.Join(root, "link")
+	wantOpError(t, Mkdir(link, "x"), "mkdir", KindReadOnly, filepath.Join(link, "x"))
+}

@@ -12,7 +12,11 @@ func readOnlySys(p string) func() bool {
 			return false
 		}
 		a, err := windows.GetFileAttributes(p16)
-		return err == nil && a&windows.FILE_ATTRIBUTE_READONLY != 0 && a&windows.FILE_ATTRIBUTE_DIRECTORY == 0
+		if err != nil {
+			return false
+		}
+		_, readOnly := attrFlags(a) // 一覧の読み取り専用（§14.3）と同じ判定。フォルダの属性は見ない
+		return readOnly
 	}
 }
 

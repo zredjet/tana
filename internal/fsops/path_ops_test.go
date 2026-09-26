@@ -2,6 +2,7 @@ package fsops
 
 import (
 	"context"
+	"io/fs"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -213,5 +214,17 @@ func TestWithUserPathsOpError(t *testing.T) {
 	err := withUserPaths(inner, `C:\dir\f.txt`, "")
 	if inner.Path != `C:\dir\f.txt` || err != error(inner) {
 		t.Errorf("Path = %q, want the user path", inner.Path)
+	}
+}
+
+// TestWithUserPathsOpErrorWrappingPathError は、*OpError が *fs.PathError を包んでいるとき（Windows の削除待ちのエラー。deletePendingErr）、
+// 両方のパスを \\?\ の付かない形にすることを確かめる（§8.2）。
+func TestWithUserPathsOpErrorWrappingPathError(t *testing.T) {
+	t.Parallel()
+	pe := &fs.PathError{Op: "CreateFile", Path: `\\?\C:\dir\f.txt`, Err: fs.ErrPermission}
+	oe := &OpError{Op: "lstat", Path: `\\?\C:\dir\f.txt`, Kind: KindLocked, Err: pe}
+	withUserPaths(oe, `C:\dir\f.txt`, "")
+	if oe.Path != `C:\dir\f.txt` || pe.Path != `C:\dir\f.txt` {
+		t.Errorf("OpError.Path = %q, PathError.Path = %q, want both the user path", oe.Path, pe.Path)
 	}
 }
