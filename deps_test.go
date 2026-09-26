@@ -33,6 +33,8 @@ var directionRules = []directionRule{
 	// screen・lineedit は textwidth だけを使う（tui §3）。
 	{"internal/screen", []string{"internal/textwidth"}},
 	{"internal/lineedit", []string{"internal/textwidth"}},
+	// tui は土台のパッケージを組み合わせる（filer §4）。term を通して x/sys を使う。
+	{"internal/tui", []string{"internal/term", "internal/keys", "internal/screen", "internal/lineedit", "internal/textwidth", "golang.org/x/sys"}},
 }
 
 // within は、p が root そのものか、その配下のパッケージかを返す。
