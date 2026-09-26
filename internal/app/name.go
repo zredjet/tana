@@ -92,6 +92,7 @@ func (a *App) submitName() []Cmd {
 // named は、名前の変更・フォルダの作成の結果を反映する。
 // エラーは入力欄の下に出し、入力欄は閉じない。待つのをやめていれば、メッセージ行に出す（filer §8.7）。
 // 成功しても失敗しても、項目のあるフォルダを表示しているペインを読み直す（失敗した場合も、途中の状態を見せるため）。
+// 名前を変えたフォルダそのもの（とその中）を表示しているペインも読み直す（元のパスは消えたので、開ける祖先を表示する。filer §6）。
 func (a *App) named(m named) []Cmd {
 	d := &a.dialog
 	waiting := (d.kind == DialogRename || d.kind == DialogNewDir) && d.busy == m.gen
@@ -108,10 +109,10 @@ func (a *App) named(m named) []Cmd {
 		a.dialog = dialog{}
 	}
 	var cmds []Cmd
-	dir := filepath.Clean(m.dir)
+	dir, old := filepath.Clean(m.dir), filepath.Clean(m.path)
 	for i, p := range a.panes {
 		pd := filepath.Clean(p.dir)
-		inside := m.rename && strings.HasPrefix(pd, filepath.Clean(m.path)+string(filepath.Separator)) // 名前を変えたフォルダの中
+		inside := m.rename && (pd == old || strings.HasPrefix(pd, old+string(filepath.Separator))) // 名前を変えたフォルダそのものか、その中
 		if !p.loaded || pd != dir && !inside {
 			continue
 		}

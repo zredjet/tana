@@ -346,14 +346,18 @@ func TestTrashDialogHint(t *testing.T) {
 	}
 }
 
-// TestTrashAfterwards は、ごみ箱の後、完了した項目のマークを外し、覚えた項目から消え、ほかは残ることを確かめる。
+// TestTrashAfterwards は、ごみ箱の後、完了した項目のマークを外し、元の場所から消えた項目（ごみ箱に入ったか確かめられないものを含む）を
+// 覚えた項目から除き、ほかは残すことを確かめる。
 func TestTrashAfterwards(t *testing.T) {
 	t.Parallel()
 	var ops []fsops.OpKind
 	fp := &fakePlan{}
-	fp.exec = trashResult(fp, map[string]fsops.ItemResult{"b.txt": {Outcome: fsops.OutcomeFailed, Err: &fsops.OpError{Kind: fsops.KindLocked}}})
+	fp.exec = trashResult(fp, map[string]fsops.ItemResult{
+		"b.txt": {Outcome: fsops.OutcomeFailed, Err: &fsops.OpError{Kind: fsops.KindLocked}},
+		"sub":   {Outcome: fsops.OutcomeTrashUnconfirmed, Err: &fsops.OpError{Kind: fsops.KindUnknown}},
+	})
 	h, _ := trashHarness(t, fp, &ops, nil)
-	h.markNames("a.txt", "b.txt")
+	h.markNames("sub", "a.txt", "b.txt")
 	h.do(ActYank)
 	h.do(ActTrash)
 	h.confirm()
@@ -361,7 +365,7 @@ func TestTrashAfterwards(t *testing.T) {
 		t.Errorf("marks: a.txt %v (want false), b.txt %v (want true)", p.Marked("a.txt"), p.Marked("b.txt"))
 	}
 	if h.a.Yanked() != 1 {
-		t.Errorf("yanked %d, want 1 (the item in the trash is forgotten)", h.a.Yanked())
+		t.Errorf("yanked %d, want 1 (only b.txt; the items gone from their place are forgotten)", h.a.Yanked())
 	}
 }
 

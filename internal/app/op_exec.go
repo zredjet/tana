@@ -98,8 +98,16 @@ func (a *App) Progress() ProgressView {
 		DoneBytes: p.DoneBytes, TotalBytes: p.TotalBytes, Elapsed: a.cfg.Now().Sub(op.started), Remaining: -1,
 		AskCancel: op.askCancel, Canceling: op.canceling, Unresponsive: op.unresponsive}
 	if v.Stage == 0 { // 最初の進捗が届く前
-		v.Stage = map[fsops.OpKind]fsops.Stage{fsops.OpCopy: fsops.StageCopy, fsops.OpMove: fsops.StageMove,
-			fsops.OpTrash: fsops.StageTrash, fsops.OpDelete: fsops.StageDelete}[op.req.Op]
+		switch op.req.Op {
+		case fsops.OpMove:
+			v.Stage = fsops.StageMove
+		case fsops.OpTrash:
+			v.Stage = fsops.StageTrash
+		case fsops.OpDelete:
+			v.Stage = fsops.StageDelete
+		default:
+			v.Stage = fsops.StageCopy
+		}
 	}
 	// Windows では、ごみ箱に入らないと Windows が判断すると、完全削除の確認ダイアログが出て Execute が止まる（fsops §12.2）。
 	// ダイアログは ctx では閉じられないので、進捗が変わらなければ、ほかのウィンドウを確かめるよう知らせる（U5 の例外）。
@@ -237,8 +245,11 @@ func needsResultScreen(res *fsops.Result) bool {
 // afterOperation は、操作の後始末をする。完了した項目のマークを外し（それ以外は残す。filer §6）、
 // 影響するペインを読み直す。移動の後は、覚えた項目を忘れる（filer §7）。ごみ箱・完全削除の後は、消えた項目（とその中）を覚えた項目から除く。
 func (a *App) afterOperation(req fsops.Request, res *fsops.Result) []Cmd {
-	var gone []string
+	var gone []string // 元の場所から消えた項目（ごみ箱に入ったか確かめられないものも、元の場所にはない）
 	for _, it := range res.Items {
+		if it.Outcome == fsops.OutcomeTrashUnconfirmed {
+			gone = append(gone, it.Src)
+		}
 		if it.Outcome != fsops.OutcomeDone {
 			continue
 		}

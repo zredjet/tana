@@ -278,7 +278,7 @@ func (a *App) Confirm() ConfirmView {
 		switch {
 		case it.Err == nil:
 			v.Runnable++
-		case it.Err.Kind == fsops.KindTrashUnavailable && op.req.Op == fsops.OpTrash:
+		case trashUnavailable(it.Err) && op.req.Op == fsops.OpTrash:
 			v.Untrashable++
 			v.NotRunnable = append(v.NotRunnable, ItemNote{Name: filepath.Base(it.Src), Reason: msg.TrashUnavailableSkip})
 		default:
@@ -332,13 +332,7 @@ func (a *App) doConfirm(act Action) []Cmd {
 			return nil
 		}
 		if v := a.Confirm(); v.Op == fsops.OpTrash && v.Runnable == 0 && v.Untrashable > 0 {
-			var srcs []string
-			for _, it := range a.op.plan.Items() {
-				if it.Err != nil && it.Err.Kind == fsops.KindTrashUnavailable {
-					srcs = append(srcs, it.Src)
-				}
-			}
-			from := a.op.from
+			srcs, from := untrashableItems(a.op.plan.Items()), a.op.from
 			a.discard()
 			return a.begin(fsops.Request{Op: fsops.OpDelete, Sources: srcs}, from, true)
 		}

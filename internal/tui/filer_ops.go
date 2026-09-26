@@ -173,16 +173,7 @@ func (f *Filer) drawConfirm(s *screen.Screen) {
 		lines = append(lines, line{text: msg.Totals(v.Files, size)})
 	}
 	lines = append(lines, line{})
-	if n := len(v.NotRunnable); n > 0 {
-		lines = append(lines, line{text: "! " + msg.NotRunnable(n), st: styleWarn})
-		for i, it := range v.NotRunnable {
-			if i == 3 {
-				lines = append(lines, line{text: "    " + msg.Count(n-3), st: styleDim})
-				break
-			}
-			lines = append(lines, line{text: "    " + textfmt.TruncName(it.Name, 20) + "  " + it.Reason})
-		}
-	}
+	lines = append(lines, notRunnableLines(v.NotRunnable)...)
 	if v.Conflicts > 0 {
 		lines = append(lines, line{text: "! " + msg.Conflicts(v.Conflicts, v.TopLvl), st: styleWarn})
 	}
@@ -202,6 +193,22 @@ func (f *Filer) drawConfirm(s *screen.Screen) {
 	}
 	lines = append(lines, line{}, line{text: keys, st: styleBold})
 	drawLines(s, w, msg.Op(v.Op), lines)
+}
+
+// notRunnableLines は、実行されない項目の行（「! n 項目は実行しません」と、先頭の 3 件とその理由、残りの件数）。項目がなければ空。
+func notRunnableLines(notes []app.ItemNote) []line {
+	n := len(notes)
+	if n == 0 {
+		return nil
+	}
+	lines := []line{{text: "! " + msg.NotRunnable(n), st: styleWarn}}
+	for i, it := range notes {
+		if i == 3 {
+			return append(lines, line{text: "    " + msg.Count(n-3), st: styleDim})
+		}
+		lines = append(lines, line{text: "    " + textfmt.TruncName(it.Name, 20) + "  " + it.Reason})
+	}
+	return lines
 }
 
 // 衝突の一覧の欄の幅（filer §8.3）。コピー元・コピー先は「サイズ 5 桁、空白、日時 11 桁、空白、新 2 桁」。
@@ -511,16 +518,15 @@ func (f *Filer) drawDelete(s *screen.Screen) {
 	v := f.app.Delete()
 	w := min(cols-4, 68)
 	in := w - 4
-	n := v.Runnable
-	if n == 0 {
-		n = v.Count
+	lines := []line{{}}
+	if v.Runnable > 0 { // 実行できる項目がなければ、「削除します」とは出さない（下に「実行できる項目がありません」と出す）
+		second := msg.DeleteIrreversible
+		if v.FromTrash {
+			second = msg.DeleteQuestion
+		}
+		lines = append(lines, line{text: msg.DeleteLead(v.Runnable, v.FromTrash), st: styleBold}, line{text: second, st: styleProblem}, line{})
 	}
-	second := msg.DeleteIrreversible
-	if v.FromTrash {
-		second = msg.DeleteQuestion
-	}
-	lines := []line{{}, {text: msg.DeleteLead(n, v.FromTrash), st: styleBold}, {text: second, st: styleProblem}, {},
-		{text: msg.Place(textfmt.TruncPath(v.Dir, in-textwidth.Width(msg.Place(""))))}}
+	lines = append(lines, line{text: msg.Place(textfmt.TruncPath(v.Dir, in-textwidth.Width(msg.Place(""))))})
 	const infoW = 14 // 「ジャンクション」
 	nameW := in - 4 - 2 - infoW
 	for i, it := range v.Items {
@@ -546,15 +552,8 @@ func (f *Filer) drawDelete(s *screen.Screen) {
 		}
 		lines = append(lines, line{}, line{text: msg.Totals(v.Files, size)})
 	}
-	if k := len(v.NotRunnable); k > 0 {
-		lines = append(lines, line{}, line{text: "! " + msg.NotRunnable(k), st: styleWarn})
-		for i, it := range v.NotRunnable {
-			if i == 3 {
-				lines = append(lines, line{text: "    " + msg.Count(k-3), st: styleDim})
-				break
-			}
-			lines = append(lines, line{text: "    " + textfmt.TruncName(it.Name, 20) + "  " + it.Reason})
-		}
+	if len(v.NotRunnable) > 0 {
+		lines = append(append(lines, line{}), notRunnableLines(v.NotRunnable)...)
 	}
 	for _, w := range v.Warnings {
 		lines = append(lines, line{text: "! " + w, st: styleWarn})

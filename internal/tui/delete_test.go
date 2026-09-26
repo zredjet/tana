@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/zredjet/tana/internal/fsops"
 	"github.com/zredjet/tana/internal/keys"
 	"github.com/zredjet/tana/internal/msg"
+	"github.com/zredjet/tana/internal/textwidth"
 )
 
 // ごみ箱・完全削除（filer §8.2・§8.5・§8.6）と、名前の変更・新しいフォルダ（filer §8.7）の画面のテスト。
@@ -273,5 +275,44 @@ func TestRunFilerDelete(t *testing.T) {
 	}
 	if _, err := os.Lstat(target); !os.IsNotExist(err) {
 		t.Errorf("not deleted: %v", err)
+	}
+}
+
+// TestDeleteNothingRunnable は、完全削除の対象がすべて実行できないとき、「次の n 項目を完全に削除します」と出さないことを確かめる。
+func TestDeleteNothingRunnable(t *testing.T) {
+	t.Parallel()
+	sc := newSceneWith(t, func(c *app.Config) {
+		c.NewPlan = func(_ context.Context, req fsops.Request) (app.Plan, error) {
+			return &listPlan{req: req, errs: map[string]fsops.Kind{"README.md": fsops.KindNotFound}}, nil
+		}
+	})
+	sc.moveTo("README.md")
+	sc.keys(char('D'))
+	s := sc.draw(80, 24)
+	var text strings.Builder
+	for y := range 24 {
+		text.WriteString(s.Row(y))
+	}
+	if strings.Contains(text.String(), msg.DeleteLead(1, false)) || strings.Contains(text.String(), msg.DeleteIrreversible) ||
+		!strings.Contains(text.String(), msg.NothingRunnable) {
+		t.Errorf("nothing to delete, but the screen says it will delete:\n%s", render(s))
+	}
+}
+
+// TestResultTitleFits は、結果の画面の見出し（2 つのパスと、その間の「 -> 」）が、長いパスでも 80 桁に収まることを確かめる（filer §9.2）。
+func TestResultTitleFits(t *testing.T) {
+	t.Parallel()
+	long := strings.Repeat("x/", 40) // 1 文字の要素を並べる（切り詰めた後の幅が、割り当てた幅いっぱいになる）
+	from, to := "/Users/hiro/"+long+"src", "/Volumes/backup/"+long+"dst"
+	status := msg.Status(fsops.StatusCompletedWithErrors)
+	for _, op := range []fsops.OpKind{fsops.OpCopy, fsops.OpMove, fsops.OpTrash, fsops.OpDelete} {
+		dest := to
+		if op == fsops.OpTrash || op == fsops.OpDelete {
+			dest = ""
+		}
+		f, d := fitPaths(80, msg.ResultTitle(op, status, "", ""), from, dest)
+		if title := msg.ResultTitle(op, status, f, d); textwidth.Width(title) > 80-2 {
+			t.Errorf("%v: the title is %d columns wide at 80 columns: %q", op, textwidth.Width(title), title)
+		}
 	}
 }

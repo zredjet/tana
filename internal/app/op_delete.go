@@ -87,12 +87,29 @@ func (a *App) doDelete(act Action) []Cmd {
 	return nil
 }
 
+// trashUnavailable は、ごみ箱が使えないと確かめられた理由かを返す。完全削除を勧めるのはこの理由のときだけ
+// （確かめられなかった理由では、ごみ箱が使えるかもしれない項目を、取り消せない操作に誘導しない。fsops §12.1）。
+func trashUnavailable(err *fsops.OpError) bool {
+	return err != nil && err.Kind == fsops.KindTrashUnavailable
+}
+
 // untrashable は、ごみ箱に入らなかった項目（Outcome が失敗で、Kind が KindTrashUnavailable のもの）のパスを返す（filer §8.5）。
 // Kind だけで選ばない。「ごみ箱に入ったか確かめられない」は Kind が同じでも元の場所から消えているので、完全削除を勧めない。
 func untrashable(res *fsops.Result) []string {
 	var out []string
 	for _, it := range res.Items {
-		if it.Outcome == fsops.OutcomeFailed && it.Err != nil && it.Err.Kind == fsops.KindTrashUnavailable {
+		if it.Outcome == fsops.OutcomeFailed && trashUnavailable(it.Err) {
+			out = append(out, it.Src)
+		}
+	}
+	return out
+}
+
+// untrashableItems は、計画の時点でごみ箱に入らないと分かった項目のパスを返す（filer §8.2）。
+func untrashableItems(items []fsops.Item) []string {
+	var out []string
+	for _, it := range items {
+		if trashUnavailable(it.Err) {
 			out = append(out, it.Src)
 		}
 	}

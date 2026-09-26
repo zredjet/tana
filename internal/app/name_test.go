@@ -222,3 +222,21 @@ func TestNameAsync(t *testing.T) {
 		t.Errorf("message %q (error %v)", text, isErr)
 	}
 }
+
+// TestRenameReloadsInside は、名前を変えたフォルダそのもの（とその中）を表示しているペインも読み直すことを確かめる。
+// 元のパスは消えたので、開ける祖先を表示する（filer §6）。
+func TestRenameReloadsInside(t *testing.T) {
+	t.Parallel()
+	root := tree(t)
+	h := newHarness(t, nil, root, filepath.Join(root, "sub"))
+	h.moveTo("sub")
+	h.do(ActRename)
+	h.act(Action{Kind: ActInsert, Text: "2"})
+	h.do(ActSubmit)
+	if !slices.Contains(h.names(0), "sub2") {
+		t.Fatalf("not renamed: %q", h.names(0))
+	}
+	if got := h.pane(1).Dir(); got != root {
+		t.Errorf("the pane showing the renamed folder stays at %q, want %q (re-read, showing the ancestor)", got, root)
+	}
+}

@@ -346,7 +346,8 @@ func Duration(sec int) string {
 }
 
 // ResultTitle は、結果の画面の 1 行目（「移動の結果: 一部にエラーがあります   C:\x -> D:\y」）。
-// 行き先のない操作（ごみ箱・完全削除）では to を空にし、項目のあったフォルダだけを出す。
+// 行き先のない操作（ごみ箱・完全削除）では、項目のあったフォルダだけを出す（to は使わない）。
+// 「 -> 」を付けるかは操作で決める（to の中身では決めない）。tui は to を空にした見出しで、パスに使える幅を数えるため。
 func ResultTitle(op fsops.OpKind, status string, from, to string) string {
 	name := Op(op) + "の結果"
 	switch op {
@@ -356,7 +357,7 @@ func ResultTitle(op fsops.OpKind, status string, from, to string) string {
 		name = "完全削除の結果"
 	}
 	s := name + ": " + status + "   " + from
-	if to != "" {
+	if op == fsops.OpCopy || op == fsops.OpMove {
 		s += " -> " + to
 	}
 	return s
