@@ -12,7 +12,9 @@
 //	t.Info()                        // 記録用の端末と OS の情報
 //
 // Input は、1 回の読み取り（Bytes は keys に渡すバイト列。Windows はレコードの文字を UTF-8 にしたもの）、
-// 大きさの変更（Resize）、シグナル（Signal。Options.Signals のとき）、読み取りの失敗（Err）のどれか。
+// 大きさの変更（Resize）、シグナル（Signal。Options.Signals のとき）、読み取りの失敗（Err）を知らせる。
+// Windows では、1 回の読み取りに大きさの変更のレコードとキーのレコードが一緒に入るので、Resize と Bytes が同時にありうる。
+// Resize を見たときも Bytes を捨てないこと（T3）。
 //
 // # 使い方
 //
@@ -23,8 +25,9 @@
 //		switch {
 //		case x.Err != nil:    // 読み取りに失敗した
 //		case x.Signal != nil: // 終わる（Restore を呼ぶ）
-//		case x.Resize:        // t.Size() を読み直して描き直す
-//		default:              // x.Bytes を keys.Decoder に渡す
+//		default:
+//			if x.Resize { ... }      // t.Size() を読み直して描き直す
+//			if len(x.Bytes) > 0 { ... } // x.Bytes を keys.Decoder に渡す（Resize と一緒に届くことがある）
 //		}
 //	}
 //

@@ -60,7 +60,7 @@ func TestRunModes(t *testing.T) {
 			f.send([]byte("x"))
 		}
 	}
-	res, err := runModes(f, f.box(), sectionHeader{Cols: 80, Rows: 24}, true, 0, cprTimeout)
+	res, err := runModes(f, f.box(), sectionHeader{Cols: 80, Rows: 30}, true, 0, cprTimeout)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestRunModesNoDECRQM(t *testing.T) {
 			f.send([]byte("x"))
 		}
 	}
-	res, err := runModes(f, f.box(), sectionHeader{Cols: 80, Rows: 24}, false, 0, cprTimeout)
+	res, err := runModes(f, f.box(), sectionHeader{Cols: 80, Rows: 30}, false, 0, cprTimeout)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestRunModesNoResponse(t *testing.T) {
 			f.send([]byte("x"))
 		}
 	}
-	res, err := runModes(f, f.box(), sectionHeader{Cols: 80, Rows: 24}, false, 0, 20*time.Millisecond)
+	res, err := runModes(f, f.box(), sectionHeader{Cols: 80, Rows: 30}, false, 0, 20*time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,5 +138,16 @@ func TestJoinCasesCanJoin(t *testing.T) {
 		if joined := c.Text == jc.a+jc.b; joined != (jc.id != "ascii+ascii") {
 			t.Errorf("%s: %q+%q joined = %v", jc.id, jc.a, jc.b, joined)
 		}
+	}
+}
+
+// TestRunModesTooFewRows は、結合の確かめの行が収まらない端末では、測らずに理由を返すことを確かめる
+// （画面の外の行は端末が最後の行に収めるので、行が重なって結果を誤る）。
+func TestRunModesTooFewRows(t *testing.T) {
+	t.Parallel()
+	f := newFake(cursorModel(80, nil))
+	res, err := runModes(f, f.box(), sectionHeader{Cols: 80, Rows: 24}, false, 0, cprTimeout)
+	if err == nil || res.Completed || len(res.Joins) != 0 {
+		t.Errorf("24 rows: err %v, completed %v, joins %d; want an error before measuring", err, res.Completed, len(res.Joins))
 	}
 }

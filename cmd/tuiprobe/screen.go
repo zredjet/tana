@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/zredjet/tana/internal/keys"
 	"github.com/zredjet/tana/internal/lineedit"
@@ -291,7 +292,7 @@ func (p *probeScreen) editKey(k keys.Event, now time.Time) {
 
 // validText は、正しい UTF-8 なら s を、そうでなければ空を返す（JSON に書くため。バイト列は hex に残す）。
 func validText(s string) string {
-	if strings.ToValidUTF8(s, "") == s {
+	if utf8.ValidString(s) {
 		return s
 	}
 	return ""

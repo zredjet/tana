@@ -71,6 +71,7 @@ type Input struct {
 	// Records は、Windows で ReadConsoleInputW で読んだレコード（記録用。VT の入力モードでも、この形で届く）。
 	Records []Record
 	// Resize は、端末の大きさが変わった印（Unix: SIGWINCH、Windows: 大きさの変更のレコード）。新しい大きさは Size で得る。
+	// Windows では Bytes と同時にありうる（同じ読み取りにキーのレコードもあった場合）。
 	Resize bool
 	// Signal は、受け取ったシグナル（Options.Signals のとき）。
 	Signal os.Signal

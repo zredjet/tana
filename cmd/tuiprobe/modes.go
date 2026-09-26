@@ -95,7 +95,11 @@ type modesSection struct {
 // runModes は、VT5（制御シーケンスが使えるか）と VT7（位置の指定で結合が切れるか）を測り、撮影用の画面を hold の間だけ出す。
 // timeout は、カーソル位置の問い合わせの応答を待つ時間。
 func runModes(c console, box *inbox, sec sectionHeader, decrqm bool, hold, timeout time.Duration) (*modesSection, error) {
-	res := &modesSection{sectionHeader: sec}
+	res := &modesSection{sectionHeader: sec, JoinRow: 4}
+	// 結合の確かめ（1 組 3 行）と、その下の案内が収まらないと、画面の外の行を端末が最後の行に収めて、行が重なり結果を誤る。
+	if need := res.JoinRow + 3*len(joinCases) + 1; sec.Rows < need {
+		return res, fmt.Errorf("端末の行数が足りません（%d 行。%d 行以上にしてください）", sec.Rows, need)
+	}
 	r := &cprReader{box: box}
 	fmt.Fprint(c, "\x1b[2J\x1b[1;1Htuiprobe modes: 制御シーケンスと、位置の指定による結合の切れ方を測ります")
 	var err error
@@ -110,7 +114,6 @@ func runModes(c console, box *inbox, sec sectionHeader, decrqm bool, hold, timeo
 			return res, err
 		}
 	}
-	res.JoinRow = 4
 	if res.Joins, err = measureJoins(c, r, res.JoinRow, timeout); err != nil {
 		return res, err
 	}
