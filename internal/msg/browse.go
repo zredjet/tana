@@ -61,22 +61,38 @@ const (
 	LabelError    = "<ERR>" // 列挙はできたが調べられなかった項目
 )
 
-// KeyGuide は、画面の最下行のキーの案内（filer §5.1。キーの割り当ては仮。§15）。
-const KeyGuide = "Enter 開く  BS 親へ  Tab 切替  Space マーク  g パス  . 隠し  ? ヘルプ  q 終了"
+// KeyGuide・KeyGuideColumns は、画面の最下行のキーの案内（2 ペインと Yazi 風。filer §5.1・§5.3。キーの割り当ては仮。§15）。
+// 80 桁に収める（ほかのキーはヘルプで示す）。
+const (
+	KeyGuide        = "Enter 開く  BS 親へ  Tab 切替  Space マーク  v 表示  ? ヘルプ  q 終了"
+	KeyGuideColumns = "Enter 開く  h 親へ  l 入る  Tab 切替  Space マーク  v 表示  ? ヘルプ  q 終了"
+)
+
+// PaneIndicator は、Yazi 風の表示で、どちらのペインを表示しているかの印（[1/2]。filer §5.3）。
+func PaneIndicator(i, n int) string { return "[" + strconv.Itoa(i) + "/" + strconv.Itoa(n) + "]" }
+
+// プレビューの文言（filer §6）。
+const (
+	PreviewEmpty    = "（空のフォルダ）"
+	PreviewBinary   = "テキストではないファイルです"
+	PreviewNotLocal = "中身が手元にないファイルです（読むと取得が始まるので、プレビューしません）"
+)
 
 // Help は、ヘルプの画面の行（キー、説明）。
 var Help = [][2]string{
 	{"Up Down  j k", "カーソルの移動"},
 	{"PgUp PgDn Home End", "ページ単位の移動、先頭、末尾"},
 	{"Enter", "フォルダに入る。ファイルは関連付けで開く"},
-	{"Backspace", "親のフォルダへ"},
-	{"Tab", "操作するペインの切り替え"},
-	{"Left Right", "左・右のペインへ。すでにその側なら親のフォルダへ"},
+	{"Backspace  h", "親のフォルダへ"},
+	{"l", "フォルダに入る（ファイルでは何もしない）"},
+	{"Tab", "ペインの切り替え（Yazi 風では表示するペイン）"},
+	{"Left Right", "2 ペイン: 左・右のペインへ。Yazi 風: 親へ・入る"},
 	{"Space", "マークの切り替え"},
 	{"a", "すべてマークする・すべて外す"},
 	{"g", "パスを入力して移動（ドライブの切り替えも）"},
 	{"=", "反対側のペインを同じフォルダにする"},
 	{".", "隠しファイルの表示の切り替え"},
+	{"v", "表示形式の切り替え（2 ペイン・Yazi 風）"},
 	{"Ctrl+R", "再読み込み"},
 	{"Esc", "読み込みの中止"},
 	{"q", "終了"},

@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/text/encoding/japanese"
+
 	"github.com/zredjet/tana/internal/app"
 	"github.com/zredjet/tana/internal/fsops"
 	"github.com/zredjet/tana/internal/keys"
@@ -98,6 +100,7 @@ func newScene(t *testing.T) *scene {
 			return nil, &fsops.OpError{Op: "readdir", Path: dir, Kind: fsops.KindNotFound}
 		},
 		Readlink:     func(string) (string, error) { return `D:\backup\latest`, nil },
+		ReadHead:     func(string, int) (fsops.Head, error) { return fsops.Head{}, nil },
 		Open:         func(string) error { return nil },
 		IsExecutable: func(p string, dir bool) bool { return strings.HasSuffix(p, ".exe") },
 		CanOpen:      func(string) bool { return true },
@@ -122,12 +125,19 @@ func (sc *scene) run(cmds []app.Cmd) {
 	}
 }
 
-// keys は、キーの列を画面のキーの割り当てで app に渡す。
+// keys は、キーの列を画面のキーの割り当てで app に渡す（Handle と同じ）。
 func (sc *scene) keys(evs ...keys.Event) {
 	for _, ev := range evs {
-		if act, ok := sc.f.action(ev); ok {
-			sc.run(sc.a.Do(act))
-		}
+		sc.run(sc.f.key(ev))
+	}
+}
+
+// fire は、Delay のある Cmd（プレビューを読むまでの待ちなど）の待ちが終わったことにする。
+func (sc *scene) fire() {
+	delayed := sc.delayed
+	sc.delayed = nil
+	for _, c := range delayed {
+		sc.run(sc.a.Update(c.Run()))
 	}
 }
 
@@ -368,6 +378,7 @@ func TestKeyMap(t *testing.T) {
 		{char(' '), app.ActMark}, {char('a'), app.ActMarkAll}, {char('.'), app.ActToggleHidden}, {ctrl('r'), app.ActReload},
 		{char('g'), app.ActGoPath}, {char('='), app.ActSyncOther}, {char('?'), app.ActHelp}, {char('q'), app.ActQuit},
 		{key(keys.KeyEsc), app.ActCancel}, {char('c'), app.ActNotYet}, {char('D'), app.ActNotYet},
+		{char('h'), app.ActParent}, {char('l'), app.ActEnterDir},
 	} {
 		if act, ok := sc.f.action(tt.ev); !ok || act.Kind != tt.want {
 			t.Errorf("%v: %v %v, want %v", tt.ev, act.Kind, ok, tt.want)
@@ -477,5 +488,133 @@ func BenchmarkDraw100k(b *testing.B) {
 		if err := s.Flush(io.Discard); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+// Yazi 風の表示の見本（filer §5.3）。パスは / で書き、どの OS でも同じ画面にする（親のパスは画面に出さない）。
+const colDir = "/Users/hiro/Documents"
+
+func columnsFS(t *testing.T) (map[string][]fsops.Entry, map[string][]byte) {
+	home := filepath.Dir(colDir)
+	hidden := typed("AppData", fsops.TypeDir, at(6, 21, 18, 44, 0))
+	hidden.Hidden = true
+	memo := "買い物\tメモ\n- 牛乳\n- パン\n\x1b[31m赤い文字\x1b[0m\n" + "とても長い行" + strings.Repeat("あ", 40) + "\n"
+	old, err := japanese.ShiftJIS.NewEncoder().Bytes([]byte("古い文字コード（Shift_JIS）\r\n２行目\r\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dirs := map[string][]fsops.Entry{
+		filepath.Dir(home): {typed("hiro", fsops.TypeDir, at(9, 1, 0, 0, 0)), typed("Shared", fsops.TypeDir, at(1, 1, 0, 0, 0))},
+		home: {hidden, typed("Desktop", fsops.TypeDir, at(9, 20, 10, 0, 0)), typed("Documents", fsops.TypeDir, at(9, 24, 11, 19, 0)),
+			typed("Downloads", fsops.TypeDir, at(9, 25, 9, 0, 0)), typed("Music", fsops.TypeDir, at(8, 1, 0, 0, 0)),
+			file(".zshrc", 120, at(9, 1, 0, 0, 0))},
+		colDir: {typed("写真", fsops.TypeDir, at(9, 12, 9, 15, 0)), typed("議事録", fsops.TypeDir, at(9, 20, 18, 2, 0)),
+			typed("空のフォルダ", fsops.TypeDir, at(9, 1, 0, 0, 0)), file("メモ.txt", int64(len(memo)), at(9, 26, 10, 0, 0)),
+			file("古いメモ.txt", int64(len(old)), at(2, 3, 4, 5, 0)), file("data.bin", 8, at(9, 2, 0, 0, 0)), file(".hidden", 1, at(9, 2, 0, 0, 0))},
+		filepath.Join(colDir, "写真"): {typed("2025年度", fsops.TypeDir, at(1, 1, 0, 0, 0)), typed("2026年度", fsops.TypeDir, at(1, 1, 0, 0, 0)),
+			file("議事録.docx", 1000, at(1, 1, 0, 0, 0)), file("予算.xlsx", 2000, at(1, 1, 0, 0, 0))},
+		filepath.Join(colDir, "空のフォルダ"): {},
+	}
+	files := map[string][]byte{
+		filepath.Join(colDir, "メモ.txt"):   []byte(memo),
+		filepath.Join(colDir, "古いメモ.txt"): old,
+		filepath.Join(colDir, "data.bin"): []byte("\x00\x01binary"),
+	}
+	return dirs, files
+}
+
+// newColumnsScene は、Yazi 風の表示にした場面を作る。左のペインは colDir、右のペインはその親。
+func newColumnsScene(t *testing.T) *scene {
+	t.Helper()
+	dirs, files := columnsFS(t)
+	cfg := app.Config{
+		Dirs:           []string{colDir, filepath.Dir(colDir)},
+		DotFilesHidden: true,
+		ReadDir: func(dir string) ([]fsops.Entry, error) {
+			if e, ok := dirs[dir]; ok {
+				return e, nil
+			}
+			return nil, &fsops.OpError{Op: "readdir", Path: dir, Kind: fsops.KindNotFound}
+		},
+		ReadHead: func(p string, max int) (fsops.Head, error) {
+			b, ok := files[p]
+			if !ok {
+				return fsops.Head{}, &fsops.OpError{Op: "readhead", Path: p, Kind: fsops.KindNotFound}
+			}
+			return fsops.Head{Data: b[:min(len(b), max)], Size: int64(len(b))}, nil
+		},
+		Readlink:     func(string) (string, error) { return "", nil },
+		Open:         func(string) error { return nil },
+		IsExecutable: func(string, bool) bool { return false },
+		CanOpen:      func(string) bool { return true },
+		Now:          func() time.Time { return now },
+	}
+	a, cmds := app.New(cfg)
+	sc := &scene{t: t, a: a, f: &Filer{app: a}}
+	sc.run(cmds)
+	sc.keys(char('v'))
+	return sc
+}
+
+// TestGoldenColumns は、Yazi 風の表示（親フォルダ・操作中のペイン・プレビュー）を描く（filer §5.3・§6）。
+func TestGoldenColumns(t *testing.T) {
+	t.Parallel()
+	sc := newColumnsScene(t)
+	sc.moveTo("写真")
+	if pv := sc.a.Preview(); pv.Kind != app.PreviewNone {
+		t.Errorf("preview %v before the cursor rested", pv.Kind)
+	}
+	sc.fire()
+	golden(t, "columns-dir-80x24", sc.draw(80, 24))
+	sc.moveTo("メモ.txt")
+	sc.fire()
+	golden(t, "columns-text-80x24", sc.draw(80, 24))
+	golden(t, "columns-text-120x40", sc.draw(120, 40))
+	sc.moveTo("古いメモ.txt")
+	sc.fire()
+	golden(t, "columns-sjis-80x24", sc.draw(80, 24))
+	sc.moveTo("data.bin")
+	sc.fire()
+	golden(t, "columns-binary-80x24", sc.draw(80, 24))
+	sc.moveTo("空のフォルダ")
+	sc.fire()
+	sc.keys(char('.')) // 隠しファイルも出す（親フォルダの列の AppData・.zshrc）
+	golden(t, "columns-empty-hidden-80x24", sc.draw(80, 24))
+	sc.keys(char('.'), key(keys.KeyTab)) // もう一方のペイン（[2/2]）
+	sc.fire()
+	golden(t, "columns-tab-80x24", sc.draw(80, 24))
+}
+
+// TestColumnsKeys は、Yazi 風の表示の ← → と、v で戻したときに 2 ペインの画面が元どおりであることを確かめる。
+func TestColumnsKeys(t *testing.T) {
+	t.Parallel()
+	sc := newColumnsScene(t)
+	if act, _ := sc.f.action(key(keys.KeyLeft)); act.Kind != app.ActParent {
+		t.Errorf("Left in columns: %v, want ActParent", act.Kind)
+	}
+	if act, _ := sc.f.action(key(keys.KeyRight)); act.Kind != app.ActEnterDir {
+		t.Errorf("Right in columns: %v, want ActEnterDir", act.Kind)
+	}
+	sc.moveTo("写真")
+	sc.keys(key(keys.KeyRight))
+	if got := sc.a.Panes()[0].Dir(); got != filepath.Join(colDir, "写真") {
+		t.Errorf("Right: Dir %q", got)
+	}
+	sc.keys(key(keys.KeyLeft))
+	if got := sc.a.Panes()[0].Dir(); got != colDir {
+		t.Errorf("Left: Dir %q", got)
+	}
+	sc.keys(char('v'))
+	panes := render(sc.draw(80, 24))
+	sc.keys(char('v'), char('v'))
+	if again := render(sc.draw(80, 24)); again != panes {
+		t.Error("switching the view twice changed the two-pane screen")
+	}
+	if act, _ := sc.f.action(key(keys.KeyLeft)); act.Kind != app.ActFocusOrUp {
+		t.Errorf("Left in panes: %v, want ActFocusOrUp", act.Kind)
+	}
+	sc.keys(char('g'), char('v')) // 入力欄では v は文字
+	if got := sc.a.PathEditor().Text(); !strings.HasSuffix(got, "v") || sc.f.view != viewPanes {
+		t.Errorf("v in the path input: %q, view %v", got, sc.f.view)
 	}
 }

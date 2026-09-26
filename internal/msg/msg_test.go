@@ -61,7 +61,8 @@ func TestError(t *testing.T) {
 func TestBrowseTextsWidth(t *testing.T) {
 	texts := []string{Loading, LoadCanceled, CannotOpenName, ExecConfirm, ExecChoices, PathInputTitle, NotYet, TooSmall, HelpTitle,
 		CannotOpenDir(""), ShowingAncestor(""), Opened(""), OpenFailed(""), Items(1, 2, 3),
-		TypeParent, TypeDir, TypeJunction, TypeSymlink, TypeSpecial, UnitBytes, LinkArrow, KeyGuide,
+		TypeParent, TypeDir, TypeJunction, TypeSymlink, TypeSpecial, UnitBytes, LinkArrow, KeyGuide, KeyGuideColumns,
+		PaneIndicator(1, 2), PreviewEmpty, PreviewBinary, PreviewNotLocal,
 		LabelDir, LabelJunction, LabelSymlink, LabelSpecial, LabelError}
 	for _, h := range Help {
 		texts = append(texts, h[0], h[1])

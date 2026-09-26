@@ -22,9 +22,26 @@ const (
 )
 
 // Filer は、ファイラーのメイン画面（filer §5）。app の状態を描き、キー入力を app の操作に変える。
-// ペインは横に並べる（2 ペインの構成。§15 で決めるまでの案）。
+// 表示形式（2 ペインと Yazi 風）は Filer が持ち、v で切り替える（filer §4・§5.3）。app は表示形式を知らない。
 type Filer struct {
-	app *app.App
+	app  *app.App
+	view view
+}
+
+// view は表示形式。
+type view int
+
+const (
+	viewPanes   view = iota // 2 ペイン（ペインを横に並べる。§5.1）
+	viewColumns             // Yazi 風（親フォルダ、操作中のペイン、プレビュー。§5.3）
+)
+
+// needs は、表示形式が app に求めるもの。
+func (f *Filer) needs() app.Needs {
+	if f.view == viewColumns {
+		return app.Needs{Parent: true, Preview: true}
+	}
+	return app.Needs{}
 }
 
 // RunFiler は、App a の画面をイベントループ l で動かす。cmds は app.New が返した最初の処理。
@@ -49,15 +66,25 @@ func (f *Filer) run(l *Loop, cmds []app.Cmd) {
 func (f *Filer) Handle(l *Loop, ev Event) bool {
 	switch ev.Kind {
 	case KindKey:
-		if act, ok := f.action(ev.Key); ok {
-			f.run(l, f.app.Do(act))
-		}
+		f.run(l, f.key(ev.Key))
 	case KindMessage:
 		f.run(l, f.app.Update(ev.Msg))
 	case KindSignal:
 		return false
 	}
 	return !f.app.Quit()
+}
+
+// key は、キー入力を処理する。v は表示形式を切り替え（Filer が持つ）、ほかは app の操作に変える。
+func (f *Filer) key(ev keys.Event) []app.Cmd {
+	if f.app.Dialog() == app.DialogNone && ev.Kind == keys.KeyEvent && ev.Key == keys.KeyRune && ev.Mod == 0 && ev.Rune == 'v' {
+		f.view = 1 - f.view
+		return f.app.SetNeeds(f.needs())
+	}
+	if act, ok := f.action(ev); ok {
+		return f.app.Do(act)
+	}
+	return nil
 }
 
 // action は、キー入力を app の操作に変える（filer §7。割り当ては仮）。対応しないキーは false。
@@ -99,6 +126,10 @@ func (f *Filer) action(ev keys.Event) (app.Action, bool) {
 			return act(app.ActUp)
 		case 'j':
 			return act(app.ActDown)
+		case 'h':
+			return act(app.ActParent)
+		case 'l':
+			return act(app.ActEnterDir)
 		case ' ':
 			return act(app.ActMark)
 		case 'a':
@@ -141,8 +172,14 @@ func (f *Filer) action(ev keys.Event) (app.Action, bool) {
 	case keys.KeyTab:
 		return act(app.ActNextPane)
 	case keys.KeyLeft:
+		if f.view == viewColumns {
+			return act(app.ActParent)
+		}
 		return app.Action{Kind: app.ActFocusOrUp, Pane: 0}, true
 	case keys.KeyRight:
+		if f.view == viewColumns {
+			return act(app.ActEnterDir)
+		}
 		return app.Action{Kind: app.ActFocusOrUp, Pane: len(f.app.Panes()) - 1}, true
 	case keys.KeyEsc:
 		return act(app.ActCancel)
@@ -234,9 +271,15 @@ func (f *Filer) Draw(s *screen.Screen) {
 	a := f.app
 	panes := a.Panes()
 	paneH := rows - 3
-	for i, p := range panes {
-		x0, x1 := cols*i/len(panes), cols*(i+1)/len(panes)
-		f.drawPane(s, screen.Region{X: x0, Y: 0, W: x1 - x0, H: paneH}, p, i == a.Active())
+	guide := msg.KeyGuide
+	if f.view == viewColumns {
+		f.drawColumns(s, screen.Region{W: cols, H: paneH})
+		guide = msg.KeyGuideColumns
+	} else {
+		for i, p := range panes {
+			x0, x1 := cols*i/len(panes), cols*(i+1)/len(panes)
+			f.drawPane(s, screen.Region{X: x0, Y: 0, W: x1 - x0, H: paneH}, p, i == a.Active())
+		}
 	}
 	line := func(y int) screen.Region { return screen.Region{X: 0, Y: y, W: cols, H: 1} }
 	f.drawStatus(s, line(rows-3))
@@ -247,7 +290,7 @@ func (f *Filer) Draw(s *screen.Screen) {
 		}
 		s.Put(line(rows-2), 1, 0, text, st)
 	}
-	s.Put(line(rows-1), 1, 0, msg.KeyGuide, screen.Style{Attr: screen.AttrDim})
+	s.Put(line(rows-1), 1, 0, guide, screen.Style{Attr: screen.AttrDim})
 	switch a.Dialog() {
 	case app.DialogPath:
 		f.drawPathInput(s)
@@ -280,6 +323,16 @@ func (f *Filer) drawPane(s *screen.Screen, r screen.Region, p *app.Pane, active 
 		b, st = boxDouble, screen.Style{Attr: screen.AttrBold}
 	}
 	drawBox(s, r, b, textfmt.TruncPath(p.Dir(), r.W-6), st)
+	drawFooter(s, r, 2, p, st)
+	inner := screen.Region{X: r.X + 1, Y: r.Y + 1, W: r.W - 2, H: r.H - 2}
+	top := p.Window(inner.H)
+	for row := 0; row < inner.H && top+row < p.Len(); row++ {
+		f.drawItem(s, screen.Region{X: inner.X, Y: inner.Y + row, W: inner.W, H: 1}, p, top+row, active)
+	}
+}
+
+// drawFooter は、枠 r の下の枠の x 桁目から、ペイン p の項目数と、読み込み中の表示を出す（filer §5.1・§6）。
+func drawFooter(s *screen.Screen, r screen.Region, x int, p *app.Pane, st screen.Style) {
 	footer := ""
 	switch {
 	case p.Loading():
@@ -288,12 +341,7 @@ func (f *Filer) drawPane(s *screen.Screen, r screen.Region, p *app.Pane, active 
 		footer = msg.Items(p.Counts())
 	}
 	if footer != "" {
-		s.Put(screen.Region{X: r.X + 2, Y: r.Y + r.H - 1, W: r.W - 4, H: 1}, 0, 0, " "+footer+" ", st)
-	}
-	inner := screen.Region{X: r.X + 1, Y: r.Y + 1, W: r.W - 2, H: r.H - 2}
-	top := p.Window(inner.H)
-	for row := 0; row < inner.H && top+row < p.Len(); row++ {
-		f.drawItem(s, screen.Region{X: inner.X, Y: inner.Y + row, W: inner.W, H: 1}, p, top+row, active)
+		s.Put(screen.Region{X: r.X + x, Y: r.Y + r.H - 1, W: r.W - x - 2, H: 1}, 0, 0, " "+footer+" ", st)
 	}
 }
 
@@ -480,5 +528,129 @@ func (f *Filer) drawHelp(s *screen.Screen) {
 	for i, h := range msg.Help {
 		s.Put(in, 0, i, h[0], screen.Style{Attr: screen.AttrBold})
 		s.Put(in, 20, i, h[1], screen.Style{})
+	}
+}
+
+// drawColumns は、Yazi 風の表示（左に親フォルダ、中央に操作中のペイン、右にプレビュー。filer §5.3）を領域 r に描く。
+// 列の幅の比は 1:4:3。列の間には縦の罫線を置く（隣の列の書記素クラスタと結合させない。§9.1）。
+func (f *Filer) drawColumns(s *screen.Screen, r screen.Region) {
+	a := f.app
+	i := a.Active()
+	p := a.Panes()[i]
+	st := screen.Style{}
+	drawBox(s, r, boxSingle, "", st)
+	inner := screen.Region{X: r.X + 1, Y: r.Y + 1, W: r.W - 2, H: r.H - 2}
+	total := inner.W - 2
+	pw, cw := total/8, total*4/8
+	sep1 := inner.X + pw
+	sep2 := sep1 + 1 + cw
+	for _, x := range []int{sep1, sep2} {
+		s.Put(r, x-r.X, 0, "┬", st)
+		s.Put(r, x-r.X, r.H-1, "┴", st)
+		for y := 1; y < r.H-1; y++ {
+			s.Put(r, x-r.X, y, boxSingle.v, st)
+		}
+	}
+	// 見出し（今のフォルダのパス）は中央の列の上に置く。
+	ind := msg.PaneIndicator(i+1, len(a.Panes()))
+	titleX := sep1 - r.X + 2
+	titleW := r.W - titleX - len(ind) - 6
+	s.Put(screen.Region{X: r.X + titleX, Y: r.Y, W: titleW + 2, H: 1}, 0, 0, " "+textfmt.TruncPath(p.Dir(), titleW)+" ",
+		screen.Style{Attr: screen.AttrBold})
+	s.Put(r, r.W-4-len(ind), 0, " "+ind+" ", st)
+	drawFooter(s, r, sep1-r.X+1, p, st) // 中央の列（操作中のペイン）の下
+
+	f.drawParentColumn(s, screen.Region{X: inner.X, Y: inner.Y, W: pw, H: inner.H}, p)
+	top := p.Window(inner.H)
+	for row := 0; row < inner.H && top+row < p.Len(); row++ {
+		f.drawItem(s, screen.Region{X: sep1 + 1, Y: inner.Y + row, W: cw, H: 1}, p, top+row, true)
+	}
+	pv := a.Preview()
+	f.drawPreview(s, screen.Region{X: sep2 + 1, Y: inner.Y, W: inner.X + inner.W - sep2 - 1, H: inner.H}, pv)
+	if pv.Kind == app.PreviewText {
+		s.Put(screen.Region{X: sep2 + 2, Y: r.Y + r.H - 1, W: inner.X + inner.W - sep2 - 3, H: 1}, 0, 0, " "+pv.Encoding+" ", st)
+	}
+}
+
+// visible は、隠しファイルを表示しないときに隠しファイルを除いた項目を返す（filer §6）。
+func (f *Filer) visible(items []listing.Item) []listing.Item {
+	if f.app.ShowHidden() {
+		return items
+	}
+	out := make([]listing.Item, 0, len(items))
+	for _, it := range items {
+		if !it.Hidden {
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
+// drawParentColumn は、親フォルダの一覧を描き、今のフォルダの行を反転する。今のフォルダが見えるように送る。
+func (f *Filer) drawParentColumn(s *screen.Screen, r screen.Region, p *app.Pane) {
+	items, current, ok := p.Parent()
+	if !ok {
+		return
+	}
+	items = f.visible(items)
+	at := -1
+	for k, it := range items {
+		if it.Name == current {
+			at = k
+			break
+		}
+	}
+	top := 0
+	if at >= r.H {
+		top = min(at-r.H/2, len(items)-r.H)
+	}
+	for row := 0; row < r.H && top+row < len(items); row++ {
+		it := items[top+row]
+		st := itemStyle(it, false)
+		if top+row == at {
+			st.Attr |= screen.AttrReverse
+		}
+		line := screen.Region{X: r.X, Y: r.Y + row, W: r.W, H: 1}
+		s.Fill(line, st)
+		putName(s, screen.Region{X: r.X + 1, Y: line.Y, W: r.W - 1, H: 1}, textfmt.TruncName(it.Name, r.W-1), st)
+	}
+}
+
+// drawPreview は、カーソル行の項目のプレビューを描く（filer §6）。テキストは折り返さずに列の幅で切る。
+// 制御文字などは screen が置き換える（U6・T2）。
+func (f *Filer) drawPreview(s *screen.Screen, r screen.Region, pv app.Preview) {
+	in := screen.Region{X: r.X + 1, Y: r.Y, W: r.W - 1, H: r.H}
+	row := 0
+	put := func(text string, st screen.Style) { // 案内の文は列の幅で折り返す
+		for _, l := range textfmt.Wrap(text, in.W) {
+			s.Put(in, 0, row, l, st)
+			row++
+		}
+	}
+	dim := screen.Style{Attr: screen.AttrDim}
+	switch pv.Kind {
+	case app.PreviewDir:
+		items := f.visible(pv.Items)
+		if len(items) == 0 {
+			put(msg.PreviewEmpty, dim)
+		}
+		for row := 0; row < in.H && row < len(items); row++ {
+			it := items[row]
+			putName(s, screen.Region{X: in.X, Y: in.Y + row, W: in.W, H: 1}, textfmt.TruncName(it.Name, in.W), itemStyle(it, false))
+		}
+	case app.PreviewText:
+		for k := 0; k < in.H && k < len(pv.Lines); k++ {
+			s.Put(in, 0, k, pv.Lines[k], screen.Style{})
+		}
+	case app.PreviewBinary:
+		put(msg.PreviewBinary, dim)
+		put(textfmt.Bytes(pv.Size)+" "+msg.UnitBytes, dim)
+	case app.PreviewNotLocal:
+		put(msg.PreviewNotLocal, dim)
+		put(textfmt.Bytes(pv.Size)+" "+msg.UnitBytes, dim)
+	case app.PreviewSpecial:
+		put(msg.TypeSpecial, dim)
+	case app.PreviewError:
+		put(msg.Error(pv.Err), styleError)
 	}
 }
