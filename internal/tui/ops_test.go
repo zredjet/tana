@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -162,7 +161,7 @@ func TestGoldenProgress(t *testing.T) {
 // TestGoldenResult は、結果の画面を描く（filer §8.5）。問題のあるものを先に並べ、詳細を展開し、英語の詳細を出す。
 func TestGoldenResult(t *testing.T) {
 	t.Parallel()
-	locked := &fsops.OpError{Op: "remove", Path: filepath.Join(colDir, "写真", "IMG_0013.jpg"), Kind: fsops.KindLocked}
+	locked := &fsops.OpError{Op: "remove", Path: colDir + "/写真/IMG_0013.jpg", Kind: fsops.KindLocked} // 画面に出すので、どの OS でも同じ文字列
 	var plan *opPlan
 	sc, plan := newOpScene(t, fsops.OpMove, func(context.Context, fsops.ExecOptions) (*fsops.Result, error) {
 		s := plan.req.Sources
@@ -206,24 +205,28 @@ func TestRunFilerCopy(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(src, "hello.txt"), []byte("hi"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	f := newFakeTerm(80, 24)
-	step := 0
-	f.onWrite = func(out string) {
-		switch {
-		case step == 0 && strings.Contains(out, "hello.txt"):
-			step++
-			f.send("jy\tp") // hello.txt を覚え、右のペインに移って貼り付ける
-		case step == 1 && strings.Contains(out, "へコピーします"):
-			step++
-			f.send("\r")
-		case step == 2 && strings.Contains(out, "コピーしました"): // 差分だけを書くので、直前のメッセージと同じ先頭は書かれない
-			step++
-			f.send("q")
-		}
-	}
 	cfg := app.DefaultConfig([]string{src, dst})
 	cfg.Open = func(p string) error { t.Errorf("opened %s", p); return nil }
 	a, cmds := app.New(cfg)
+	f := newFakeTerm(80, 24)
+	step := 0
+	// onWrite はイベントループの goroutine から呼ばれる（描いて書いた直後）ので、app の状態を見てキーを送る。
+	// 出力の文字列で探さない（差分だけを書くので、前の画面と同じセルは出力に現れない）。
+	f.onWrite = func(string) {
+		switch {
+		case step == 0 && a.Panes()[0].Loaded() && a.Panes()[1].Loaded():
+			step++
+			f.send("jy\tp") // hello.txt を覚え、右のペインに移って貼り付ける
+		case step == 1 && a.Screen() == app.ScreenConfirm:
+			step++
+			f.send("\r") // 確認画面を描いた後の Enter
+		case step == 2 && a.Screen() == app.ScreenBrowse:
+			if text, _ := a.Message(); text == msg.Done(fsops.OpCopy, 1, 0, false) {
+				step++
+				f.send("q")
+			}
+		}
+	}
 	if err := RunFiler(New(f), a, cmds); err != nil {
 		t.Fatalf("RunFiler: %v", err)
 	}
