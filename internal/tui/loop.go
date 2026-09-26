@@ -80,6 +80,9 @@ type Stats struct {
 	Coalesced int           // 最後のフレームの前にまとめて処理したイベントの数
 }
 
+// maxBatch は、描く前にまとめて処理する時間の上限。イベントが途切れずに届き続けても、この間隔では描く。
+const maxBatch = 50 * time.Millisecond
+
 // Loop は、端末・keys・screen を組み合わせたイベントループ（filer §10）。
 type Loop struct {
 	t     Terminal
@@ -139,25 +142,33 @@ func (l *Loop) signal() {
 }
 
 // Go は、作業用の goroutine で f を動かす。f の panic は回収して、Run を PanicError で終わらせる（端末を戻すため。tui T1）。
+// Run が終わった後の panic は、端末がもう戻っているので、回収せずにそのまま panic させる（隠さない）。
 // ファイラーの作業用の goroutine は、すべてこれで始める（filer §10）。
 func (l *Loop) Go(f func()) {
 	go func() {
 		defer func() {
-			if r := recover(); r != nil {
-				pe := &PanicError{Value: r, Stack: debug.Stack()}
-				l.mu.Lock()
-				if l.failure == nil {
-					l.failure = pe
-				}
-				l.mu.Unlock()
-				l.signal()
+			r := recover()
+			if r == nil {
+				return
 			}
+			pe := &PanicError{Value: r, Stack: debug.Stack()}
+			l.mu.Lock()
+			done := l.done
+			if !done && l.failure == nil {
+				l.failure = pe
+			}
+			l.mu.Unlock()
+			if done {
+				panic(r)
+			}
+			l.signal()
 		}()
 		f()
 	}()
 }
 
 // Run は、入力を読んでハンドラに渡し、画面を描くことを、ハンドラが false を返すまで繰り返す。
+// たまっているイベントはまとめて処理してから描く（イベントが届き続けるときは、maxBatch ごとに描く）。
 // どの終わり方でも（ハンドラが終える、シグナル、読み取りの失敗、書き込みの失敗、Handle・Draw・Go の panic）、
 // 返る前に端末を戻す（tui T1）。panic は PanicError、シグナルは SignalError として返す。
 func (l *Loop) Run(h Handler) (err error) {
@@ -168,7 +179,12 @@ func (l *Loop) Run(h Handler) (err error) {
 		l.mu.Lock()
 		l.done = true
 		l.msgs = nil
+		failure := l.failure
 		l.mu.Unlock()
+		// 終わる直前に Go で始めた goroutine が panic していれば、それも返す（知らせを処理する前に終わった場合）。
+		if failure != nil && !errors.Is(err, failure) {
+			err = errors.Join(err, failure)
+		}
 		err = errors.Join(err, l.t.Restore())
 	}()
 	in := l.t.StartInput()
@@ -180,14 +196,22 @@ func (l *Loop) Run(h Handler) (err error) {
 			return err
 		}
 		l.stats.Coalesced = 0
-		// 1 つ待ち、その後はたまっているものを描く前にすべて処理する。
+		// 1 つ待ち、その後はたまっているものを描く前に処理する。ただし、イベントが途切れずに届き続けても描画が止まらないように、
+		// 最初のイベントから maxBatch が過ぎたら描く（filer U5）。
+		var batchStart time.Time
 		for block := true; ; block = false {
+			if !block && time.Since(batchStart) >= maxBatch {
+				break
+			}
 			handled, quit, err := l.step(h, in, block)
 			if err != nil || quit {
 				return err
 			}
 			if !handled {
 				break
+			}
+			if block {
+				batchStart = time.Now()
 			}
 			l.stats.Coalesced++
 		}

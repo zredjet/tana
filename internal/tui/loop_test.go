@@ -3,8 +3,12 @@ package tui
 import (
 	"bytes"
 	"errors"
+	"os"
+	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -446,5 +450,80 @@ func TestStatsAndNoColor(t *testing.T) {
 	if !strings.Contains((&PanicError{Value: "v", Stack: []byte("stack")}).Error(), "panic: v") ||
 		!strings.Contains((&SignalError{Signal: syscall.SIGTERM}).Error(), "terminated") {
 		t.Error("error strings")
+	}
+}
+
+// TestRunDrawsWhileEventsKeepComing は、イベントが途切れずに届き続けても、描画が止まらないことを確かめる（filer U5）。
+// 作業用の goroutine が Post を送り続ける間に、フレームが 3 つ描かれたら終える。
+func TestRunDrawsWhileEventsKeepComing(t *testing.T) {
+	t.Parallel()
+	f := newFakeTerm(20, 5)
+	l := New(f)
+	var stop atomic.Bool
+	defer stop.Store(true)
+	l.Go(func() {
+		for !stop.Load() {
+			l.Post(1)
+		}
+	})
+	r := &recorder{}
+	r.onEvent = func(*Loop, Event) bool { return r.draws < 3 }
+	if err := l.Run(r); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// panicAfterRunEnv は、TestGoPanicAfterRun が子のプロセスに渡す環境変数。
+const panicAfterRunEnv = "TANA_TUI_PANIC_AFTER_RUN"
+
+// TestGoPanicAfterRun は、Run が終わった後に Go で始めた goroutine が panic したら、隠さずにプロセスを panic で終えることを確かめる
+// （端末はもう戻っている）。プロセスが終わるので、子のプロセスで動かす。
+func TestGoPanicAfterRun(t *testing.T) {
+	if os.Getenv(panicAfterRunEnv) != "" {
+		f := newFakeTerm(20, 5)
+		l := New(f)
+		f.send("q")
+		l.Run(&recorder{onEvent: quitOn})
+		done := make(chan struct{})
+		l.Go(func() { panic("boom after run") })
+		<-done // panic でプロセスが終わるまで待つ
+		return
+	}
+	t.Parallel()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestGoPanicAfterRun$", "-test.count=1")
+	cmd.Env = append(os.Environ(), panicAfterRunEnv+"=1")
+	out, err := cmd.CombinedOutput()
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) || ee.ExitCode() == 0 || !strings.Contains(string(out), "boom after run") {
+		t.Errorf("child: err %v, output %q; want a panic with the value", err, out)
+	}
+}
+
+// TestRunReturnsPendingWorkerPanic は、知らせを処理する前に Run が終わっても、Go で始めた goroutine の panic を返すことを確かめる。
+func TestRunReturnsPendingWorkerPanic(t *testing.T) {
+	t.Parallel()
+	f := newFakeTerm(20, 5)
+	l := New(f)
+	r := &recorder{onEvent: func(l *Loop, ev Event) bool {
+		if ev.Kind == KindKey {
+			l.Go(func() { panic("boom before quit") })
+			// Go が panic を回収して置くまで待ってから、知らせを処理せずに終える。
+			for {
+				l.mu.Lock()
+				pending := l.failure != nil
+				l.mu.Unlock()
+				if pending {
+					return false
+				}
+				runtime.Gosched()
+			}
+		}
+		return true
+	}}
+	f.send("x")
+	err := l.Run(r)
+	var pe *PanicError
+	if !errors.As(err, &pe) || pe.Value != "boom before quit" {
+		t.Errorf("Run = %v, want the pending worker panic", err)
 	}
 }
