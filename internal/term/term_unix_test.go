@@ -316,3 +316,68 @@ func TestInfo(t *testing.T) {
 		t.Errorf("Info = %v, want os_version and termios_orig", info)
 	}
 }
+
+// waitInput は、cond を満たす入力が届くまで待つ。timeout までに届かなければ失敗する。
+func waitInput(t *testing.T, in <-chan Input, timeout time.Duration, cond func(Input) bool) Input {
+	t.Helper()
+	deadline := time.After(timeout)
+	for {
+		select {
+		case x, ok := <-in:
+			if !ok {
+				t.Fatal("input closed")
+			}
+			if x.Err != nil {
+				t.Fatalf("input error: %v", x.Err)
+			}
+			if cond(x) {
+				return x
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for input")
+		}
+	}
+}
+
+// TestResize は、SIGWINCH を大きさの変更として届け、Size が新しい大きさを返すことを確かめる（tui §8）。
+// 疑似端末の子はこのプロセスの制御端末ではないので、カーネルは SIGWINCH を送らない。自分に送って確かめる。
+func TestResize(t *testing.T) {
+	master, slave := openPty(t)
+	tm := startOn(t, slave, Options{})
+	defer tm.Restore()
+	in := tm.StartInput()
+	if err := unix.IoctlSetWinsize(master, unix.TIOCSWINSZ, &unix.Winsize{Row: 30, Col: 100}); err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Kill(os.Getpid(), unix.SIGWINCH); err != nil {
+		t.Fatal(err)
+	}
+	x := waitInput(t, in, 5*time.Second, func(x Input) bool { return x.Resize })
+	if x.Signal != nil || len(x.Bytes) != 0 || x.Time.IsZero() {
+		t.Errorf("resize input = %+v", x)
+	}
+	if cols, rows, err := tm.Size(); err != nil || cols != 100 || rows != 30 {
+		t.Errorf("Size after resize = %d, %d, %v, want 100, 30", cols, rows, err)
+	}
+}
+
+// TestSignals は、Options.Signals のとき、SIGHUP などを入力のチャネルに送り、Restore で受け取るのをやめることを確かめる。
+func TestSignals(t *testing.T) {
+	_, slave := openPty(t)
+	tm := startOn(t, slave, Options{Signals: true})
+	in := tm.StartInput()
+	for _, sig := range []unix.Signal{unix.SIGHUP, unix.SIGTERM, unix.SIGINT} {
+		if err := unix.Kill(os.Getpid(), sig); err != nil {
+			t.Fatal(err)
+		}
+		x := waitInput(t, in, 5*time.Second, func(x Input) bool { return x.Signal != nil })
+		if x.Signal != sig || x.Resize {
+			t.Errorf("signal input = %+v, want %v", x, sig)
+		}
+	}
+	if err := tm.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	for range in {
+	}
+}

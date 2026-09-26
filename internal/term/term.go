@@ -2,6 +2,8 @@ package term
 
 import (
 	"errors"
+	"os"
+	"os/signal"
 	"sync"
 	"time"
 )
@@ -53,14 +55,27 @@ type Options struct {
 	VTInput bool
 	// Output は Windows の出力の方法（VT1）。Unix では使わない。
 	Output OutputMethod
+
+	// Signals は、SIGINT・SIGTERM・SIGHUP を受けて、入力のチャネルに送る（Input.Signal）。
+	// Windows では、コンソールを閉じる通知なども SIGTERM として届く（その後、約 5 秒で OS に終了させられる）。
+	// 受け取り始めるのは StartInput を呼んだときで、Restore でやめる（読む者がいないのにシグナルを止めないように）。
+	Signals bool
 }
 
-// Input は、1 回の読み取りで得た入力。
+// Input は、1 回の読み取りで得た入力と、端末の大きさの変更・シグナルの知らせ。
 type Input struct {
-	Time    time.Time
-	Bytes   []byte   // Unix: 端末から読んだバイト列
-	Records []Record // Windows: ReadConsoleInputW で読んだレコード（VT の入力モードでも、この形で届く）
-	Err     error    // 読み取りに失敗した。この後は届かない
+	Time time.Time
+	// Bytes は keys に渡すバイト列。Unix は端末から読んだまま。
+	// Windows は Records の文字を UTF-8 にしたもの（T3。サロゲートの対が読み取りをまたぐときは、後の読み取りに含める）。
+	Bytes []byte
+	// Records は、Windows で ReadConsoleInputW で読んだレコード（記録用。VT の入力モードでも、この形で届く）。
+	Records []Record
+	// Resize は、端末の大きさが変わった印（Unix: SIGWINCH、Windows: 大きさの変更のレコード）。新しい大きさは Size で得る。
+	Resize bool
+	// Signal は、受け取ったシグナル（Options.Signals のとき）。
+	Signal os.Signal
+	// Err は、読み取りに失敗したこと。この後は届かない。
+	Err error
 }
 
 // ErrClosed は、Restore の後に Write などを呼んだ場合のエラー。
@@ -188,33 +203,67 @@ func (t *Term) Info() map[string]string {
 }
 
 // StartInput は、別の goroutine で入力を読み始め、読んだものを送るチャネルを返す。
+// 端末の大きさの変更と、Options.Signals のときはシグナルも、同じチャネルに送る。
 // 2 回目以降の呼び出しは、同じチャネルを返す。
 // 読み取りに失敗したら Err を持つ Input を送って閉じる。Restore でも閉じる。
 func (t *Term) StartInput() <-chan Input {
 	t.inputOnce.Do(func() {
 		ch := make(chan Input)
 		t.input = ch
-		go func() {
-			defer close(t.done)
-			defer close(ch)
-			send := func(in Input) bool {
-				select {
-				case ch <- in:
-					return true
-				case <-t.stop:
-					return false
-				}
+		send := func(in Input) bool {
+			select {
+			case ch <- in:
+				return true
+			case <-t.stop:
+				return false
 			}
+		}
+		sigs := resizeSignals()
+		if t.opts.Signals {
+			sigs = append(sigs, exitSignals()...)
+		}
+		sigCh := make(chan os.Signal, 8)
+		if len(sigs) > 0 {
+			signal.Notify(sigCh, sigs...)
+		}
+		readDone := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Go(func() {
+			defer close(readDone)
 			if err := t.sys.readLoop(send, t.stop); err != nil {
 				send(Input{Time: time.Now(), Err: err})
 			}
+		})
+		wg.Go(func() {
+			for {
+				select {
+				case sig := <-sigCh:
+					in := Input{Time: time.Now(), Signal: sig}
+					if isResizeSignal(sig) {
+						in = Input{Time: in.Time, Resize: true}
+					}
+					if !send(in) {
+						return
+					}
+				case <-readDone: // 読み取りに失敗した。チャネルを閉じる
+					return
+				case <-t.stop:
+					return
+				}
+			}
+		})
+		go func() {
+			wg.Wait()
+			signal.Stop(sigCh)
+			close(ch)
+			close(t.done)
 		}()
 	})
 	return t.input
 }
 
 // Restore は、端末を Open の前の状態に戻す（tui T1）。
-// 読み取りの goroutine を止め、開始時に変えたもの（代替画面、カーソル、自動改行、bracketed paste、
+// 読み取りの goroutine を止め、シグナルを受け取るのをやめ、開始時に変えたもの（代替画面、カーソル、自動改行、bracketed paste、
 // raw モード、Windows のコンソールモードとコードページ）を戻す。
 // 何度呼んでも、どの goroutine から呼んでもよい。2 回目以降は 1 回目と同じエラーを返す。
 func (t *Term) Restore() error {

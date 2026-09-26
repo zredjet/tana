@@ -2,7 +2,14 @@
 
 package term
 
-import "errors"
+import (
+	"errors"
+	"os"
+)
+
+func resizeSignals() []os.Signal    { return nil }
+func isResizeSignal(os.Signal) bool { return false }
+func exitSignals() []os.Signal      { return []os.Signal{os.Interrupt} }
 
 // sysTerm は、対応していない OS での空の実装。Open は常に失敗する。
 type sysTerm struct{}

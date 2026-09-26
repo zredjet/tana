@@ -164,47 +164,19 @@ func TestCPRReader(t *testing.T) {
 	if err != nil || row != 12 || col != 34 || string(before) != "x" || string(report) != "\x1b[12;34R" {
 		t.Errorf("read = %d, %d, %q, %q, %v", row, col, before, report, err)
 	}
-	// Windows: キーを押したレコードの文字だけを使う。繰り返しの回数も数える。
+	// Windows: term がレコードから作ったバイト列を使う（レコードそのものは読まない）。
 	var recs []term.Record
 	for _, c := range "\x1b[5;6R" {
 		recs = append(recs, term.Record{Kind: term.KeyRecord, KeyDown: true, RepeatCount: 1, Char: uint16(c)},
 			term.Record{Kind: term.KeyRecord, KeyDown: false, RepeatCount: 1, Char: uint16(c)})
 	}
-	ch <- term.Input{Records: recs}
+	ch <- term.Input{Records: recs, Bytes: []byte("\x1b[5;6R")}
 	row, col, before, _, err = r.read(time.Second)
 	if err != nil || row != 5 || col != 6 || string(before) != "y" {
 		t.Errorf("read (records) = %d, %d, %q, %v", row, col, before, err)
 	}
 	if _, _, _, _, err := r.read(10 * time.Millisecond); !errors.Is(err, errTimeout) {
 		t.Errorf("read with nothing pending: err = %v, want errTimeout", err)
-	}
-}
-
-func TestInputBytes(t *testing.T) {
-	t.Parallel()
-	key := func(down bool, rep uint16, c uint16) term.Record {
-		return term.Record{Kind: term.KeyRecord, KeyDown: down, RepeatCount: rep, Char: c}
-	}
-	recs := []term.Record{
-		key(true, 1, 0xd83c), key(true, 1, 0xdf63), // 🍣 を 2 つのレコードで
-		key(false, 1, 'x'), // キーを離したレコードは使わない
-		key(true, 3, 'a'),  // 繰り返し
-		key(true, 1, 0),    // 文字のないキー（Shift など）
-		{Kind: term.WindowSizeRecord, Width: 80, Height: 24},
-		key(true, 1, 0xd800), // 対にならないサロゲート
-		// conhost の貼り付け: Alt＋テンキーの並びの後の、Alt を離したレコードに文字が載る（docs/probe-results の conhost）。
-		{Kind: term.KeyRecord, KeyDown: true, RepeatCount: 1, VirtualKey: vkMenu, ControlKeys: 0x2},
-		{Kind: term.KeyRecord, KeyDown: true, RepeatCount: 1, VirtualKey: 0x66, ControlKeys: 0x2},
-		{Kind: term.KeyRecord, KeyDown: false, RepeatCount: 1, VirtualKey: 0x66, ControlKeys: 0x2},
-		{Kind: term.KeyRecord, KeyDown: false, RepeatCount: 1, VirtualKey: vkMenu, Char: 0xd83c},
-		{Kind: term.KeyRecord, KeyDown: true, RepeatCount: 1, VirtualKey: vkMenu, ControlKeys: 0x2},
-		{Kind: term.KeyRecord, KeyDown: false, RepeatCount: 1, VirtualKey: vkMenu, Char: 0xdf63},
-	}
-	if got, want := string(inputBytes(term.Input{Records: recs})), "🍣aaa\ufffd🍣"; got != want {
-		t.Errorf("inputBytes = %q, want %q", got, want)
-	}
-	if got := inputBytes(term.Input{Bytes: []byte("\x1b[A")}); string(got) != "\x1b[A" {
-		t.Errorf("inputBytes(bytes) = %q", got)
 	}
 }
 
@@ -409,7 +381,7 @@ func TestRecordStepIgnoresNonKeyRecords(t *testing.T) {
 	ch <- size
 	go func() {
 		time.Sleep(20 * time.Millisecond)
-		ch <- term.Input{Time: time.Now(), Records: []term.Record{{Kind: term.KeyRecord, KeyDown: true, RepeatCount: 1, VirtualKey: 0x1b, Char: 0x1b}}}
+		ch <- term.Input{Time: time.Now(), Records: []term.Record{{Kind: term.KeyRecord, KeyDown: true, RepeatCount: 1, VirtualKey: 0x1b, Char: 0x1b}}, Bytes: []byte{0x1b}}
 	}()
 	rec, err = recordStep(box, keySteps[0], waitLong)
 	if err != nil {
@@ -437,7 +409,7 @@ func TestRecordStepTextStartsOnText(t *testing.T) {
 	go func() {
 		ch <- term.Input{Time: time.Now(), Records: []term.Record{key(false, 0xf0, 0)}} // IME の切り替え
 		time.Sleep(100 * time.Millisecond)                                              // textQuiet より長く変換している
-		ch <- term.Input{Time: time.Now(), Records: []term.Record{key(true, 0xe7, 0x65e5), key(true, 0xe7, 0x672c), key(true, 0xe7, 0x8a9e)}}
+		ch <- term.Input{Time: time.Now(), Records: []term.Record{key(true, 0xe7, 0x65e5), key(true, 0xe7, 0x672c), key(true, 0xe7, 0x8a9e)}, Bytes: []byte("日本語")}
 	}()
 	rec, err := recordStep(box, ime, waitLong)
 	if err != nil {
@@ -515,7 +487,8 @@ func TestRecordStepIgnoresKeyUp(t *testing.T) {
 	}
 }
 
-// TestRecordStepJoinsSplitSurrogates は、サロゲートの対が 2 回の読み取りに分かれて届いても、1 つの文字として記録することを確かめる。
+// TestRecordStepJoinsSplitSurrogates は、サロゲートの対が 2 回の読み取りに分かれて届いたとき
+// （term は、上位サロゲートの読み取りのバイト列を空にし、後の読み取りに文字を含める）、1 つの文字として記録することを確かめる。
 func TestRecordStepJoinsSplitSurrogates(t *testing.T) {
 	t.Parallel()
 	ch := make(chan term.Input, 10)
@@ -525,13 +498,13 @@ func TestRecordStepJoinsSplitSurrogates(t *testing.T) {
 	}
 	ime := keySteps[slices.IndexFunc(keySteps, func(st keyStep) bool { return st.id == "ime" })]
 	ch <- term.Input{Time: time.Now(), Records: key(0xd83c)}
-	ch <- term.Input{Time: time.Now(), Records: key(0xdf63)}
+	ch <- term.Input{Time: time.Now(), Records: key(0xdf63), Bytes: []byte("🍣")}
 	rec, err := recordStep(box, ime, testTiming)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := string(mustHex(t, rec.Hex)); got != "🍣" {
-		t.Errorf("hex = %q, want %q", got, "🍣")
+	if got := string(mustHex(t, rec.Hex)); got != "🍣" || len(rec.Reads) != 2 {
+		t.Errorf("hex = %q, reads %d, want %q and 2 reads", got, len(rec.Reads), "🍣")
 	}
 }
 

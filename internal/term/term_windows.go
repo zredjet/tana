@@ -3,11 +3,22 @@ package term
 import (
 	"errors"
 	"fmt"
+	"os"
+	"syscall"
 	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
+
+// resizeSignals は空。Windows では、大きさの変更はレコードで届く（VT4）。
+func resizeSignals() []os.Signal { return nil }
+
+func isResizeSignal(os.Signal) bool { return false }
+
+// exitSignals は、Options.Signals で受け取るシグナル。Go は、Ctrl+Break を os.Interrupt として、
+// コンソールを閉じる通知・ログオフ・シャットダウンを SIGTERM として届ける（Ctrl+C はキーとして届くので、シグナルにならない）。
+func exitSignals() []os.Signal { return []os.Signal{os.Interrupt, syscall.SIGTERM} }
 
 // x/sys/windows にない関数（tui §3）。
 var (
@@ -27,6 +38,7 @@ type sysTerm struct {
 	method          OutputMethod
 	cancel          windows.Handle // 読み取りの goroutine を止めるイベント
 	enc             utf16Encoder
+	dec             recordDecoder // 読み取りの goroutine だけが使う
 }
 
 func openConsole(name string) (windows.Handle, error) {
@@ -171,7 +183,8 @@ func (s *sysTerm) readLoop(send func(Input) bool, stop <-chan struct{}) error {
 		for i := range recs {
 			recs[i] = decodeRecord(buf[i][:])
 		}
-		if !send(Input{Time: now, Records: recs}) {
+		text, resize := s.dec.decode(recs)
+		if !send(Input{Time: now, Bytes: text, Records: recs, Resize: resize}) {
 			return nil
 		}
 	}

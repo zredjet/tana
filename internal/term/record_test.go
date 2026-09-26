@@ -101,3 +101,74 @@ func TestOutputMethodNames(t *testing.T) {
 		t.Error("ParseOutputMethod(bogus): err = nil")
 	}
 }
+
+// TestRecordDecoder は、Windows の入力のレコードを keys に渡すバイト列に変えることを確かめる（T3。tui §8）。
+func TestRecordDecoder(t *testing.T) {
+	t.Parallel()
+	key := func(down bool, rep uint16, c uint16) Record {
+		return Record{Kind: KeyRecord, KeyDown: down, RepeatCount: rep, Char: c}
+	}
+	tests := []struct {
+		name       string
+		reads      [][]Record
+		want       []string // 読み取りごとのバイト列
+		wantResize []bool
+	}{
+		{
+			name: "key down chars, repeat, key up, no char",
+			reads: [][]Record{{
+				key(true, 1, 'a'), key(false, 1, 'a'), // キーを離したレコードは使わない
+				key(true, 3, 'b'),                                        // 繰り返し
+				key(true, 0, 'c'),                                        // 繰り返しの回数 0 も 1 回
+				key(true, 1, 0),                                          // 文字のないキー（Shift など）
+				key(true, 1, 0x1b), key(true, 1, '['), key(true, 1, 'A'), // VT の入力モードの矢印
+			}},
+			want:       []string{"abbbc\x1b[A"},
+			wantResize: []bool{false},
+		},
+		{
+			name:       "surrogate pair in one read and across reads",
+			reads:      [][]Record{{key(true, 1, 0xd83c), key(true, 1, 0xdf63), key(true, 1, 0xd83d)}, {key(true, 1, 0xde00)}},
+			want:       []string{"🍣", "😀"},
+			wantResize: []bool{false, false},
+		},
+		{
+			name:       "unpaired surrogates",
+			reads:      [][]Record{{key(true, 1, 0xdc00), key(true, 1, 'x'), key(true, 1, 0xd800)}, {key(true, 1, 'y')}},
+			want:       []string{"�x", "�y"},
+			wantResize: []bool{false, false},
+		},
+		{
+			// conhost の貼り付け: Alt＋テンキーの並びの後の、Alt を離したレコードに文字が載る（docs/probe-results の conhost）。
+			name: "conhost alt numpad paste",
+			reads: [][]Record{{
+				{Kind: KeyRecord, KeyDown: true, RepeatCount: 1, VirtualKey: vkMenu, ControlKeys: 0x2},
+				{Kind: KeyRecord, KeyDown: true, RepeatCount: 1, VirtualKey: 0x66, ControlKeys: 0x2},
+				{Kind: KeyRecord, KeyDown: false, RepeatCount: 1, VirtualKey: 0x66, ControlKeys: 0x2},
+				{Kind: KeyRecord, KeyDown: false, RepeatCount: 1, VirtualKey: vkMenu, Char: 0xd83c},
+				{Kind: KeyRecord, KeyDown: true, RepeatCount: 1, VirtualKey: vkMenu, ControlKeys: 0x2},
+				{Kind: KeyRecord, KeyDown: false, RepeatCount: 1, VirtualKey: vkMenu, Char: 0xdf63},
+			}},
+			want:       []string{"🍣"},
+			wantResize: []bool{false},
+		},
+		{
+			name: "window size, focus and menu records",
+			reads: [][]Record{
+				{{Kind: FocusRecord, Focus: true}, {Kind: MenuRecord}},
+				{key(true, 1, 'a'), {Kind: WindowSizeRecord, Width: 100, Height: 30}},
+			},
+			want:       []string{"", "a"},
+			wantResize: []bool{false, true},
+		},
+	}
+	for _, tt := range tests {
+		var d recordDecoder
+		for i, recs := range tt.reads {
+			got, resize := d.decode(recs)
+			if string(got) != tt.want[i] || resize != tt.wantResize[i] {
+				t.Errorf("%s: read %d: %q resize %v, want %q resize %v", tt.name, i, got, resize, tt.want[i], tt.wantResize[i])
+			}
+		}
+	}
+}

@@ -6,10 +6,19 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"time"
 
 	"golang.org/x/sys/unix"
 )
+
+// resizeSignals は、端末の大きさの変更を知らせるシグナル。
+func resizeSignals() []os.Signal { return []os.Signal{unix.SIGWINCH} }
+
+func isResizeSignal(sig os.Signal) bool { return sig == unix.SIGWINCH }
+
+// exitSignals は、Options.Signals で受け取るシグナル。
+func exitSignals() []os.Signal { return []os.Signal{unix.SIGINT, unix.SIGTERM, unix.SIGHUP} }
 
 // sysTerm は Unix の端末の状態。
 type sysTerm struct {
