@@ -2,8 +2,10 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -161,7 +163,9 @@ func TestGoldenProgress(t *testing.T) {
 // TestGoldenResult は、結果の画面を描く（filer §8.5）。問題のあるものを先に並べ、詳細を展開し、英語の詳細を出す。
 func TestGoldenResult(t *testing.T) {
 	t.Parallel()
-	locked := &fsops.OpError{Op: "remove", Path: colDir + "/写真/IMG_0013.jpg", Kind: fsops.KindLocked} // 画面に出すので、どの OS でも同じ文字列
+	// 画面に出すので、どの OS でも同じ文字列。深い階層でも、英語の詳細の Kind が見えることを確かめる。
+	deep := colDir + "/写真/" + strings.Repeat("とても深い階層のフォルダ/", 8) + "IMG_0013.jpg"
+	locked := &fsops.OpError{Op: "remove", Path: deep, Kind: fsops.KindLocked, Err: errors.New("The process cannot access the file because it is being used by another process.")}
 	var plan *opPlan
 	sc, plan := newOpScene(t, fsops.OpMove, func(context.Context, fsops.ExecOptions) (*fsops.Result, error) {
 		s := plan.req.Sources
@@ -184,6 +188,16 @@ func TestGoldenResult(t *testing.T) {
 	golden(t, "op-result-80x24", sc.draw(80, 24))
 	sc.keys(char(' '), char('e'))
 	golden(t, "op-result-expanded-120x40", sc.draw(120, 40))
+	sc.keys(key(keys.KeyDown), key(keys.KeyDown)) // IMG_0013.jpg（使用中）
+	s := sc.draw(80, 24)
+	golden(t, "op-result-english-80x24", s)
+	found := false
+	for y := range 24 {
+		found = found || strings.Contains(s.Row(y), "KindLocked")
+	}
+	if !found {
+		t.Error("KindLocked is not visible in the English detail of a deep path")
+	}
 	sc.keys(key(keys.KeyEnter)) // 描いた後なので閉じる
 	golden(t, "op-after-80x24", sc.draw(80, 24))
 }

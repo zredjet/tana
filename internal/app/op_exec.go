@@ -271,7 +271,9 @@ type ResultRow struct {
 	Detail     bool
 	Outcome    fsops.Outcome
 	Name       string
-	Reason     string
+	Reason     string   // 日本語の理由（一覧に出す）
+	English    []string // 英語の詳細（OpError.Error()。警告を含む）。e で画面の下に出す（filer §8.5）
+	Details    int      // フォルダの中で完了以外になったエントリの数（Space で表示する）
 	Expandable bool
 	Expanded   bool
 }
@@ -284,7 +286,7 @@ type ResultView struct {
 	Counts   []OutcomeCount // 問題のあるものから
 	Rows     []ResultRow
 	Cursor   int
-	English  bool
+	English  bool // カーソル行の英語の詳細を、画面の下に出す
 }
 
 // OutcomeCount は、結果の種類ごとの件数。
@@ -330,8 +332,15 @@ func (r *resultState) rowsOf() []ResultRow {
 	var rows []ResultRow
 	for _, i := range order {
 		it := r.res.Items[i]
-		row := ResultRow{Item: i, Outcome: it.Outcome, Name: filepath.Base(it.Src), Expandable: len(it.Details) > 0, Expanded: r.expanded[i]}
+		row := ResultRow{Item: i, Outcome: it.Outcome, Name: filepath.Base(it.Src), Details: len(it.Details),
+			Expandable: len(it.Details) > 0, Expanded: r.expanded[i]}
 		row.Reason = r.reason(it)
+		if it.Err != nil {
+			row.English = append(row.English, it.Err.Error())
+		}
+		for _, w := range it.Warnings {
+			row.English = append(row.English, w.Error())
+		}
 		rows = append(rows, row)
 		if !row.Expanded {
 			continue
@@ -341,11 +350,11 @@ func (r *resultState) rowsOf() []ResultRow {
 			if rel, err := filepath.Rel(it.Src, d.Src); err == nil {
 				name = rel
 			}
-			reason := msg.ResultError(d.Outcome, d.Err)
-			if r.english && d.Err != nil {
-				reason = d.Err.Error()
+			row := ResultRow{Item: i, Detail: true, Outcome: d.Outcome, Name: name, Reason: msg.ResultError(d.Outcome, d.Err)}
+			if d.Err != nil {
+				row.English = []string{d.Err.Error()}
 			}
-			rows = append(rows, ResultRow{Item: i, Detail: true, Outcome: d.Outcome, Name: name, Reason: reason})
+			rows = append(rows, row)
 		}
 	}
 	return rows
@@ -355,8 +364,6 @@ func (r *resultState) rowsOf() []ResultRow {
 func (r *resultState) reason(it fsops.ItemResult) string {
 	var parts []string
 	switch {
-	case r.english && it.Err != nil:
-		parts = append(parts, it.Err.Error())
 	case it.Err != nil:
 		parts = append(parts, msg.ResultError(it.Outcome, it.Err))
 	case it.Outcome == fsops.OutcomeSkipped:

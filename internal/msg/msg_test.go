@@ -65,6 +65,7 @@ func TestBrowseTextsWidth(t *testing.T) {
 		Planning, NothingToYank, NothingYanked, DestNotFound, SpaceWarning, NothingRunnable, ConfirmKeys, ConfirmKeysConflict,
 		ConfirmKeysNone, UnsetIsSkip, InnerHidden, InnerCollapsed, CancelTitle, CancelQuestion, CancelNoPartial, CancelDoneKept,
 		CancelChoices, Canceling, Unresponsive, ProgressKeys, ResultKeys, NewerMark, MetadataWarning, Yanked(2),
+		EnglishTitle, NoEnglish, InsideKey(2, false), InsideKey(2, true),
 		ConflictKeys[0], ConflictKeys[1], ConflictKeys[2], ConflictColumns[0], ConflictColumns[1], ConflictColumns[2], ConflictColumns[3],
 		ConflictHeader(fsops.OpCopy, "a", "b"), ResultTitle(fsops.OpMove, "x", "a", "b"), Done(fsops.OpCopy, 1, 2, true),
 		PaneIndicator(1, 2), PreviewEmpty, PreviewBinary, PreviewNotLocal,

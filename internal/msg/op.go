@@ -194,7 +194,9 @@ const (
 	Unresponsive        = "応答がありません。Q で終了できますが、次のものが残る場合があります:"
 	ProgressKeys        = "Esc 中止"
 	ForceQuitKey        = "Q 終了"
-	ResultKeys          = "Space 詳細   e 英語の詳細   Enter 閉じる"
+	ResultKeys          = "e 英語の詳細   Enter 閉じる"
+	EnglishTitle        = "英語の詳細（ログと同じ。e で閉じる）"
+	NoEnglish           = "この行にはエラーがありません"
 	NewerMark           = "新"
 	MetadataWarning     = "一部の属性を引き継げませんでした"
 )
@@ -317,6 +319,14 @@ func ResultTitle(op fsops.OpKind, status string, from, to string) string {
 
 // OutcomeCount は、結果の件数の 1 つ（「失敗 1」）。
 func OutcomeCount(o fsops.Outcome, n int) string { return Outcome(o) + " " + strconv.Itoa(n) }
+
+// InsideKey は、カーソル行のフォルダの中の結果を、Space で表示・隠す案内（結果の画面のキーの案内。filer §8.5）。
+func InsideKey(n int, shown bool) string {
+	if shown {
+		return "Space 中の " + strconv.Itoa(n) + " 件を隠す"
+	}
+	return "Space 中の " + strconv.Itoa(n) + " 件を表示"
+}
 
 // SkippedInside は、フォルダの中の選択によるスキップの件数（「（選択によるスキップ 1 件）」）。
 func SkippedInside(n int) string {

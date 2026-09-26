@@ -538,8 +538,11 @@ func TestResultRows(t *testing.T) {
 		t.Fatalf("expanded rows %+v", v.Rows)
 	}
 	h.do(ActEnglish)
-	if r := h.a.Result().Rows[1]; r.Reason != locked.Error() {
-		t.Errorf("English detail %q, want %q", r.Reason, locked.Error())
+	if v := h.a.Result(); !v.English || v.Rows[1].Reason != msg.Kind(fsops.KindLocked) || len(v.Rows[1].English) != 1 || v.Rows[1].English[0] != locked.Error() {
+		t.Errorf("English detail: shown %v, row %+v (want the Japanese reason kept and the English detail %q)", v.English, v.Rows[1], locked.Error())
+	}
+	if v := h.a.Result(); v.Rows[0].Details != 1 {
+		t.Errorf("Details = %d, want 1", v.Rows[0].Details)
 	}
 	if c := h.a.Result().Counts; len(c) != 3 || c[0].Outcome != fsops.OutcomePartial {
 		t.Errorf("counts %+v", c)

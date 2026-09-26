@@ -1,7 +1,9 @@
  移動の結果: 一部にエラーがあります   /Users/hiro/Documents -> /Users/hiro      |
  移動元を残した 1   失敗 1   スキップ 1   完了 1                                |
 ────────────────────────────────────────────────────────────────────────────────|
-> 移動元を残した 写真                 移動先は完成。移動元の一部を残しました    |
+  移動元を残した 写真                 移動先は完成。移動元の一部を残しました    |
+                 └ IMG_0012.jpg       コピーの後に変更されたため残しました      |
+>                └ IMG_0013.jpg       ほかのアプリが使用中です                  |
   失敗           old.txt              見つかりません                            |
   スキップ       メモ.txt             選択によりスキップ                        |
   完了           議事録               （選択によるスキップ 1 件）               |
@@ -11,22 +13,22 @@
                                                                                 |
                                                                                 |
                                                                                 |
-                                                                                |
-                                                                                |
-                                                                                |
-                                                                                |
-                                                                                |
-                                                                                |
-                                                                                |
-                                                                                |
-                                                                                |
 ────────────────────────────────────────────────────────────────────────────────|
- Space 中の 2 件を表示   e 英語の詳細   Enter 閉じる                            |
+ 英語の詳細（ログと同じ。e で閉じる）                                           |
+ fsops: remove /Users/hiro/Documents/写真/とても深い階層のフォルダ/とても深い階 |
+ 層のフォルダ/とても深い階層のフォルダ/とても深い階層のフォルダ/とても深い階層  |
+ のフォルダ/とても深い階層のフォルダ/とても深い階層のフォルダ/とても深い階層の  |
+ フォルダ/IMG_0013.jpg: KindLocked: The process cannot access the file because  |
+ it is being used by another process.                                           |
+────────────────────────────────────────────────────────────────────────────────|
+ e 英語の詳細   Enter 閉じる                                                    |
 -- styles --
 .aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa......
 ................................................................................
 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-ccddddddddddddddcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+..aaaaaaaaaaaaaa................................................................
+................................................................................
+cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 ..aaaa..........................................................................
 ................................................................................
 ................................................................................
@@ -36,10 +38,8 @@ ccddddddddddddddcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 ................................................................................
 ................................................................................
 ................................................................................
-................................................................................
-................................................................................
-................................................................................
-................................................................................
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+.dddddddddddddddddddddddddddddddddddd...........................................
 ................................................................................
 ................................................................................
 ................................................................................
@@ -50,6 +50,6 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 a = fg=red bg=default bold
 b = fg=default bg=default dim
 c = fg=default bg=default reverse
-d = fg=red bg=default bold,reverse
+d = fg=default bg=default bold
 -- cursor --
 0 0 false

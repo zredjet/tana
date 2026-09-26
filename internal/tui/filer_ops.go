@@ -382,7 +382,16 @@ func (f *Filer) drawResult(s *screen.Screen) {
 		}
 	}
 	nameW := min(24, cols/4)
-	listY, listH := 3, rows-5
+	// 英語の詳細（e）は、カーソル行のものを画面の下に折り返して出す（行の中に出すと、深い階層のパスで Kind が見えなくなる）。
+	var english []string
+	if v.English && v.Cursor < len(v.Rows) {
+		english = englishLines(v.Rows[v.Cursor].English, cols-2, max(rows/3, 3))
+	}
+	paneH := 0
+	if len(english) > 0 {
+		paneH = len(english) + 2 // 区切りと題名
+	}
+	listY, listH := 3, rows-5-paneH
 	f.app.SetResultRows(listH)
 	top := max(min(v.Cursor-listH/2, len(v.Rows)-listH), 0)
 	for i := 0; i < listH && top+i < len(v.Rows); i++ {
@@ -405,25 +414,49 @@ func (f *Filer) drawResult(s *screen.Screen) {
 		x += outW + 1
 		indent := ""
 		if r.Detail {
-			indent = "  "
+			indent = boxSingle.bl + " " // フォルダの中の結果（上の項目の中）
 		}
-		name := r.Name
-		if r.Expandable {
-			mark := "+"
-			if r.Expanded {
-				mark = "-"
-			}
-			name = mark + name
-		}
-		putName(s, screen.Region{X: x, Y: y, W: nameW, H: 1}, textfmt.TruncName(indent+name, nameW), st)
+		putName(s, screen.Region{X: x, Y: y, W: nameW, H: 1}, textfmt.TruncName(indent+r.Name, nameW), st)
 		s.Put(screen.Region{X: x + nameW + 1, Y: y, W: cols - x - nameW - 2, H: 1}, 0, 0, r.Reason, st)
 	}
+	if paneH > 0 {
+		py := rows - 2 - paneH
+		s.Put(full, 0, py, rule, styleDim)
+		s.Put(full, 1, py+1, msg.EnglishTitle, styleBold)
+		for i, l := range english {
+			s.Put(full, 1, py+2+i, l, screen.Style{})
+		}
+	}
 	s.Put(full, 0, rows-2, rule, styleDim)
-	s.Put(full, 1, rows-1, msg.ResultKeys, screen.Style{})
+	// Space で何が起きるかは、カーソル行に合わせて書く（中の結果がある行だけ）。
+	keysText := msg.ResultKeys
+	if v.Cursor < len(v.Rows) {
+		if r := v.Rows[v.Cursor]; r.Expandable {
+			keysText = msg.InsideKey(r.Details, r.Expanded) + "   " + keysText
+		}
+	}
+	s.Put(full, 1, rows-1, keysText, screen.Style{})
 }
 
 // withAttr は、見た目 st に属性 a を加える。
 func withAttr(st screen.Style, a screen.Attr) screen.Style {
 	st.Attr |= a
 	return st
+}
+
+// englishLines は、英語の詳細を幅 w で折り返し、最大 n 行にする。入らなければ、先頭と末尾を残して間を ... にする
+// （先頭に操作とパス、末尾に Kind と OS のエラーがある）。詳細がなければ、そのことを書く。
+func englishLines(details []string, w, n int) []string {
+	if len(details) == 0 {
+		return []string{msg.NoEnglish}
+	}
+	var lines []string
+	for _, d := range details {
+		lines = append(lines, textfmt.Wrap(d, w)...)
+	}
+	if len(lines) <= n {
+		return lines
+	}
+	head := (n - 1) / 2
+	return append(append(lines[:head:head], "..."), lines[len(lines)-(n-1-head):]...)
 }
