@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/zredjet/tana/internal/textwidth"
 )
@@ -46,6 +47,9 @@ type Terminal struct {
 	Width func(cluster string) int
 	// JoinLeft は、左のセルと結合する端末の模擬（VT7）。
 	JoinLeft bool
+	// SplitMarks は、結合文字（一般カテゴリ Mn・Me）を基底の文字とは別の桁に 1 つずつ描く端末（conhost）の模擬。
+	// 結合文字 r を幅 SplitMarks(r) の独立したセルとして描く。nil なら模擬しない（Width より優先する）。
+	SplitMarks func(r rune) int
 	// Synchronized は、同期出力の中（ESC[?2026h を受けて、ESC[?2026l をまだ受けていない）。
 	Synchronized bool
 }
@@ -202,6 +206,9 @@ func (t *Terminal) text(s string) {
 		if t.JoinLeft && t.joinLeft(c.Text) {
 			continue
 		}
+		if t.SplitMarks != nil && t.splitMarks(c) {
+			continue
+		}
 		w := c.Width
 		if t.Width != nil {
 			w = t.Width(c.Text)
@@ -229,6 +236,20 @@ func (t *Terminal) joinLeft(text string) bool {
 		return false
 	}
 	row[h].Text = left + text
+	return true
+}
+
+// splitMarks は、c が基底の文字の後に結合文字を含むなら、基底の文字と結合文字を別々のセルに書いて true を返す。
+func (t *Terminal) splitMarks(c textwidth.Cluster) bool {
+	i := strings.IndexFunc(c.Text, func(r rune) bool { return unicode.In(r, unicode.Mn, unicode.Me) })
+	if i <= 0 {
+		return false
+	}
+	base, _ := textwidth.Next(c.Text[:i])
+	t.put(c.Text[:i], base.Width)
+	for _, r := range c.Text[i:] {
+		t.put(string(r), t.SplitMarks(r))
+	}
 	return true
 }
 

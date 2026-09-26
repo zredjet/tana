@@ -16,7 +16,7 @@ import (
 // 幅が端末によって違いうる書記素クラスタの後、左のセルと結合しうる書記素クラスタの前と後ろ
 // （前で指定し直すと分かれて描く端末と、それでも左のセルにまとめて桁を進めない端末がある。tui §9 の VT7）。
 // 幅が違いうる書記素クラスタは、幅 2 以上なら先にその幅を空白で消してから書き（端末が狭く描いても前の内容が残らない）、
-// 後ろの 1 つを、変わっていなくても書き直す（端末が広く描いてはみ出した分を直す）。
+// そうしたクラスタのある行は、そのクラスタから行末までを、変わっていなくても書き直す（端末が広く描いてはみ出した分を直す）。
 // 左のセルと結合しうる書記素クラスタも、先にその幅を空白で消してから書く（左のセルにまとめる端末で、前の内容が残らない）。
 // 1 回の出力は、同期出力（mode 2026）の開始と終わりで囲む（対応しない端末は無視する。VT5）。
 func (s *Screen) Flush(w io.Writer) error {
@@ -133,9 +133,28 @@ func colorCode(c Color, base int) int {
 }
 
 // row は、y 行目の、変わったセルを書く（full ならすべて）。
+// 前回か今回の出力のその行に、幅が違いうる書記素クラスタがあれば、行が変わったときは、最初のそのクラスタから行末までを、
+// 変わっていなくても書く。端末が広く描いてはみ出した分（conhost は結合文字を別の桁に描く）は、格子の上では空白のままで、
+// 差分だけを書くと残るため（tui §6）。
 func (o *output) row(y int, full bool) {
 	s := o.s
-	force := false // 幅が違いうる書記素クラスタの後の 1 つは、変わっていなくても書く
+	rewrite := s.cols // この桁から後ろは、変わっていなくても書く
+	if !full {
+		changed, first := false, s.cols
+		for x := range s.cols {
+			i := y*s.cols + x
+			changed = changed || !s.back[i].same(s.front[i])
+			if first == s.cols && (s.back[i].varies || s.front[i].varies) {
+				first = x
+			}
+		}
+		if !changed {
+			return
+		}
+		if first < s.cols {
+			rewrite = s.headIndex(first, y)
+		}
+	}
 	for x := 0; x < s.cols; {
 		i := y*s.cols + x
 		c := s.back[i]
@@ -143,11 +162,10 @@ func (o *output) row(y int, full bool) {
 			x++ // 続きのセル（先頭のセルと一緒に書く）
 			continue
 		}
-		if !full && !force && c.same(s.front[i]) {
+		if !full && x < rewrite && c.same(s.front[i]) {
 			x += c.width
 			continue
 		}
-		force = false
 		// 左のセルと結合しうる書記素クラスタ（VT7）。左のセルにまとめて、自分のセルに書かない端末があるので、
 		// 前の内容が残って次の書記素クラスタと結合しないように、先に空白で消す（clearJoining）。
 		joinsLeft := x > 0 && joins(s.headText(x-1, y), c.text)
@@ -169,7 +187,7 @@ func (o *output) row(y int, full bool) {
 		o.b.WriteString(c.text)
 		o.x += c.width
 		if c.varies {
-			o.known, force = false, true
+			o.known = false
 		}
 		if joinsLeft {
 			o.known = false // 桁を進めない端末があるので、次の書記素クラスタの前で位置を指定し直す

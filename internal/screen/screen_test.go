@@ -252,10 +252,10 @@ func TestFlushPositioning(t *testing.T) {
 		t.Errorf("output\n got  %q\n want %q", out, want)
 	}
 	// 幅 2 以上の、違いうる文字は、先に空白で消してから書く（端末が狭く描いても前の内容が残らない）。
-	// 違いうる文字の後の 1 つは、変わっていなくても書き直す（端末が広く描いてはみ出した分を直す）。
+	// 違いうる文字のある行は、最初のその文字から行末までを、変わっていなくても書き直す（端末が広く描いてはみ出した分を直す）。
 	s.Put(full, 0, 0, "\U0001faf9", Style{})
 	out = flushTo(t, s, e)
-	if want := synced("\x1b[1;1H  \x1b[1;1H\U0001faf9\x1b[1;3Hc"); out != want {
+	if want := synced("\x1b[1;1H  \x1b[1;1H\U0001faf9\x1b[1;3Hcd\x1b[1;5H○\x1b[1;6He  "); out != want {
 		t.Errorf("new emoji\n got  %q\n want %q", out, want)
 	}
 }
