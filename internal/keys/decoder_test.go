@@ -56,6 +56,8 @@ func TestDecode(t *testing.T) {
 		{"alt multibyte", "\x1bあ", false, `Alt+'あ'`},
 		{"alt controls", "\x1b\x7f\x1b\x0d\x1b\x01", false, `Alt+Backspace | Alt+Enter | Ctrl+Alt+'a'`},
 		{"alt esc", "\x1b\x1b", false, `Alt+Esc`},
+		{"three escs", "\x1b\x1b\x1b", false, `Esc | Alt+Esc`},
+		{"esc before alt arrow", "\x1b\x1b\x1b[A", false, `Esc | Alt+Up`},
 		{"alt arrow", "\x1b\x1b[A", false, `Alt+Up`},
 		{"esc before an unknown sequence", "\x1b\x1b[?1;2c", false, `Esc | Unknown("\x1b[?1;2c")`},
 		{"esc before a paste", "\x1b\x1b[200~x\x1b[201~", false, `Esc | Paste("x")`},
@@ -86,6 +88,8 @@ func TestDecode(t *testing.T) {
 		{"bad modifier", "\x1b[1;0A\x1b[2;5A", false, `Unknown("\x1b[1;0A") | Unknown("\x1b[2;5A")`},
 		{"huge parameter", "\x1b[99999999999999999999~", false, `Unknown("\x1b[99999999999999999999~")`},
 		{"alt bracket on timeout", "\x1b[", false, `Alt+'['`},
+		{"alt bracket before a character", "\x1b[あ", false, `Alt+'[' | 'あ'`},
+		{"alt bracket before a control byte", "\x1b[\x0d", false, `Alt+'[' | Enter`},
 		{"alt O on timeout", "\x1bO", false, `Alt+'O'`},
 		{"incomplete csi on timeout", "\x1b[1;", false, `Unknown("\x1b[1;")`},
 		{"csi broken by esc", "\x1b[1\x1b[A", false, `Unknown("\x1b[1") | Up`},
@@ -160,6 +164,48 @@ func TestEscWait(t *testing.T) {
 	}
 	if ev := d.Tick(t0.Add(18 * time.Millisecond)); strings.Join(strs(ev), " | ") != `Unknown("\x1b[1")` {
 		t.Errorf("Tick = %v", strs(ev))
+	}
+}
+
+// TestHeldEsc は、Esc を押し続けた（キーリピートで ESC が待ち時間より短い間隔で届き続けた）ときも、
+// 届くたびに Esc が確定し、保留中の入力が増え続けないことを確かめる。
+func TestHeldEsc(t *testing.T) {
+	t.Parallel()
+	var d Decoder
+	var ev []Event
+	const n = 1000
+	for i := range n {
+		ev = append(ev, d.Feed([]byte("\x1b"), t0.Add(time.Duration(i)*30*time.Millisecond))...)
+		if len(d.buf) > 2 {
+			t.Fatalf("after %d ESCs, %d bytes pending", i+1, len(d.buf))
+		}
+	}
+	if len(ev) != n-2 {
+		t.Errorf("%d events while held, want %d", len(ev), n-2)
+	}
+	for _, e := range ev {
+		if e.String() != "Esc" {
+			t.Fatalf("event while held = %s, want Esc", e)
+		}
+	}
+	// 最後の 2 つは、ESC ESC（Alt＋Esc）と区別できない。
+	if got := strs(d.Tick(far)); strings.Join(got, " | ") != "Alt+Esc" {
+		t.Errorf("after release = %v, want Alt+Esc", got)
+	}
+}
+
+// TestLongCSI は、終わりのバイトが届かない長い CSI を、上限の長さで解釈できない入力にすることを確かめる（保留が増え続けないように）。
+func TestLongCSI(t *testing.T) {
+	t.Parallel()
+	in := "\x1b[" + strings.Repeat("1", 100)
+	var d Decoder
+	ev := d.Feed([]byte(in), t0)
+	if len(ev) == 0 || ev[0].Kind != UnknownEvent || len(ev[0].Raw) != maxCSI {
+		t.Fatalf("long CSI: %v", strs(ev))
+	}
+	ev = append(ev, d.Tick(far)...)
+	if raws(ev) != in {
+		t.Errorf("T3: raw %q, input %q", raws(ev), in)
 	}
 }
 

@@ -20,6 +20,10 @@ var (
 	pasteEnd   = []byte("\x1b[201~")
 )
 
+// maxCSI は、終わりのバイトを待つ CSI の長さの上限。xterm のシーケンスは長くても数十バイトなので、
+// これを超えたら解釈できない入力にする（壊れた入力で保留が増え続けないように）。
+const maxCSI = 64
+
 // Decoder は、端末からの入力（バイト列）をイベントに変える状態機械（tui §5）。ゼロ値で使える。
 // 時刻は呼び出し側が渡す。Decoder は時刻を読まず、goroutine も使わない。1 つの goroutine から使うこと。
 type Decoder struct {
@@ -221,6 +225,10 @@ func (d *Decoder) parseEsc(buf []byte, final bool) (Event, int, status) {
 		return parseSS3(buf, final)
 	case b1 == 0x1b:
 		// ESC に続くシーケンスを Alt 付きにする（Alt＋Esc、Alt＋上矢印など）。キーでなければ、Esc だけを確定する。
+		// Alt は 1 段だけ: ESC がさらに続くなら、先頭の ESC は Esc（押し続けた Esc を 1 つのイベントにまとめない）。
+		if len(buf) >= 3 && buf[2] == 0x1b {
+			return keyEvent(KeyEsc, 0, buf[:1]), 1, parsed
+		}
 		e, n, st := d.parseEsc(buf[1:], final)
 		switch {
 		case st == needMore:
@@ -271,6 +279,8 @@ func (d *Decoder) parseCSI(buf []byte, final bool) (Event, int, status) {
 	for i := 2; i < len(buf); i++ {
 		c := buf[i]
 		switch {
+		case i >= maxCSI:
+			return unknown(buf[:i]), i, parsed
 		case 0x20 <= c && c <= 0x3f:
 			continue
 		case 0x40 <= c && c <= 0x7e:
@@ -280,7 +290,10 @@ func (d *Decoder) parseCSI(buf []byte, final bool) (Event, int, status) {
 			}
 			return d.csiEvent(seq), i + 1, parsed
 		}
-		// 制御文字などで途切れた。そこまでを解釈できない入力にする。
+		// 制御文字などで途切れた。ESC [ の直後なら Alt＋[（待ち時間が過ぎた場合と同じ）、そうでなければ、そこまでを解釈できない入力にする。
+		if i == 2 {
+			return runeEvent('[', ModAlt, buf[:2]), 2, parsed
+		}
 		return unknown(buf[:i]), i, parsed
 	}
 	if !final {

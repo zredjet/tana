@@ -2,6 +2,7 @@ package keys
 
 import (
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -11,6 +12,8 @@ import (
 //   - T3: イベントの元の入力をつなぐと、受け取った入力と一致する。
 //   - 有限の回数の確定の処理（待ち時間より後の時刻での Tick 1 回）で、保留中の入力がなくなる。
 //   - 区切りに依存しない: 同じバイト列を任意の位置で分けて渡しても、分けた間隔が待ち時間を超えない限り、同じイベントの列になる。
+//   - 押したキーを 1 つのイベントにまとめすぎない: 貼り付けと解釈できない入力のほかは、元の入力が ESC を 3 つ以上続けて含まない
+//     （ESC ESC ESC は Esc と Alt＋Esc の 2 つ）。
 //
 // cuts の各バイトが、入力を分ける位置（入力の長さ＋1 で割った余り）を表す。
 func FuzzDecoder(f *testing.F) {
@@ -31,6 +34,11 @@ func FuzzDecoder(f *testing.F) {
 		}
 		if _, ok := whole.Deadline(); ok {
 			t.Fatalf("pending input remains after Tick(far) for %q", data)
+		}
+		for _, e := range w {
+			if e.Kind != PasteEvent && e.Kind != UnknownEvent && strings.Contains(e.Raw, "\x1b\x1b\x1b") {
+				t.Fatalf("event %s swallows a run of ESCs in %q", e, data)
+			}
 		}
 
 		var pos []int
