@@ -374,7 +374,7 @@ func TestKeyMap(t *testing.T) {
 		{key(keys.KeyPageUp), app.ActPageUp}, {key(keys.KeyPageDown), app.ActPageDown},
 		{key(keys.KeyHome), app.ActHome}, {key(keys.KeyEnd), app.ActEnd},
 		{key(keys.KeyEnter), app.ActEnter}, {key(keys.KeyBackspace), app.ActParent}, {key(keys.KeyTab), app.ActNextPane},
-		{key(keys.KeyLeft), app.ActFocusOrUp}, {key(keys.KeyRight), app.ActFocusOrUp},
+		{key(keys.KeyLeft), app.ActParent}, {key(keys.KeyRight), app.ActEnterDir},
 		{char(' '), app.ActMark}, {char('a'), app.ActMarkAll}, {char('.'), app.ActToggleHidden}, {ctrl('r'), app.ActReload},
 		{char('g'), app.ActGoPath}, {char('='), app.ActSyncOther}, {char('?'), app.ActHelp}, {char('q'), app.ActQuit},
 		{key(keys.KeyEsc), app.ActCancel}, {char('c'), app.ActNotYet}, {char('D'), app.ActNotYet},
@@ -388,9 +388,6 @@ func TestKeyMap(t *testing.T) {
 		if act, ok := sc.f.action(ev); ok {
 			t.Errorf("%v: %v, want no action", ev, act)
 		}
-	}
-	if act, _ := sc.f.action(key(keys.KeyRight)); act.Pane != 1 {
-		t.Errorf("Right: pane %d, want 1", act.Pane)
 	}
 }
 
@@ -614,8 +611,8 @@ func TestColumnsKeys(t *testing.T) {
 	if again := render(sc.draw(80, 24)); again != panes {
 		t.Error("switching the view twice changed the two-pane screen")
 	}
-	if act, _ := sc.f.action(key(keys.KeyLeft)); act.Kind != app.ActFocusOrUp {
-		t.Errorf("Left in panes: %v, want ActFocusOrUp", act.Kind)
+	if act, _ := sc.f.action(key(keys.KeyLeft)); act.Kind != app.ActParent {
+		t.Errorf("Left in panes: %v, want ActParent (the same as in columns)", act.Kind)
 	}
 	sc.keys(char('g'), char('v')) // 入力欄では v は文字
 	if got := sc.a.PathEditor().Text(); !strings.HasSuffix(got, "v") || sc.f.view != viewPanes {

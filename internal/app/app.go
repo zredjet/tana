@@ -151,7 +151,6 @@ const (
 	ActEnterDir     // フォルダに入る（ファイルでは何もしない。h・l の l）
 	ActParent       // 親のフォルダへ
 	ActNextPane     // 次のペインへ
-	ActFocusOrUp    // Action.Pane のペインへ。すでにそのペインなら親のフォルダへ
 	ActMark         // マークの切り替え
 	ActMarkAll      // すべてマークする・すべて外す
 	ActToggleHidden // 隠しファイルの表示の切り替え
@@ -179,7 +178,6 @@ const (
 // Action は、利用者の操作。
 type Action struct {
 	Kind ActionKind
-	Pane int    // ActFocusOrUp
 	Text string // ActInsert
 }
 
@@ -222,15 +220,6 @@ func (a *App) do(act Action) []Cmd {
 		return a.parent(a.active)
 	case ActNextPane:
 		a.active = (a.active + 1) % len(a.panes)
-	case ActFocusOrUp:
-		switch {
-		case act.Pane == a.active && p.load != nil:
-			// 親へ移るのは操作中のペインの操作なので、読み込み中は受け付けない（ActParent と同じ）。
-		case act.Pane == a.active:
-			return a.parent(a.active)
-		case act.Pane >= 0 && act.Pane < len(a.panes):
-			a.active = act.Pane
-		}
 	case ActMark:
 		if it, ok := p.current(); ok && !it.Parent {
 			p.toggleMark(it.Name)

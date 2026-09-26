@@ -545,13 +545,13 @@ func TestPanes(t *testing.T) {
 	if h.pane(1).Dir() != filepath.Join(root, "sub") || h.a.Active() != 0 {
 		t.Errorf("SyncOther: pane 1 at %q, active %d", h.pane(1).Dir(), h.a.Active())
 	}
-	h.act(Action{Kind: ActFocusOrUp, Pane: 1})
+	h.do(ActNextPane)
 	if h.a.Active() != 1 || h.pane(1).Dir() != filepath.Join(root, "sub") {
-		t.Errorf("FocusOrUp(1) from 0: active %d, dir %q", h.a.Active(), h.pane(1).Dir())
+		t.Errorf("NextPane from 0: active %d, dir %q", h.a.Active(), h.pane(1).Dir())
 	}
-	h.act(Action{Kind: ActFocusOrUp, Pane: 1})
-	if h.pane(1).Dir() != root {
-		t.Errorf("FocusOrUp(1) on 1: dir %q, want the parent", h.pane(1).Dir())
+	h.do(ActParent) // 操作中のペイン（1）だけが親へ
+	if h.pane(1).Dir() != root || h.pane(0).Dir() != filepath.Join(root, "sub") {
+		t.Errorf("Parent on pane 1: %q, %q", h.pane(0).Dir(), h.pane(1).Dir())
 	}
 	h.do(ActNextPane)
 	if h.a.Active() != 0 {
@@ -615,15 +615,16 @@ func TestNamesKept(t *testing.T) {
 	}
 }
 
-// TestFocusOrUpWhileLoading は、読み込み中のペインで ← → を押しても、読み込みを置き換えないことを確かめる（Backspace と同じ）。
-func TestFocusOrUpWhileLoading(t *testing.T) {
+// TestParentWhileLoading は、読み込み中のペインで親へ移る操作（Backspace・h・←）を受け付けず、読み込みを置き換えないことを確かめる。
+func TestParentWhileLoading(t *testing.T) {
 	t.Parallel()
 	root := tree(t)
 	h := newHarness(t, nil, root, root)
 	h.moveTo("sub")
 	h.hold = true
 	h.do(ActEnter)
-	h.act(Action{Kind: ActFocusOrUp, Pane: 0}) // すでに操作中のペイン（親へ）
+	h.do(ActParent)
+	h.do(ActEnterDir)
 	h.release()
 	if got := h.pane(0).Dir(); got != filepath.Join(root, "sub") {
 		t.Errorf("Dir = %q, want %q (the enter must not be replaced)", got, filepath.Join(root, "sub"))

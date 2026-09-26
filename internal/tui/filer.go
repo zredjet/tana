@@ -171,16 +171,10 @@ func (f *Filer) action(ev keys.Event) (app.Action, bool) {
 		return act(app.ActParent)
 	case keys.KeyTab:
 		return act(app.ActNextPane)
-	case keys.KeyLeft:
-		if f.view == viewColumns {
-			return act(app.ActParent)
-		}
-		return app.Action{Kind: app.ActFocusOrUp, Pane: 0}, true
-	case keys.KeyRight:
-		if f.view == viewColumns {
-			return act(app.ActEnterDir)
-		}
-		return app.Action{Kind: app.ActFocusOrUp, Pane: len(f.app.Panes()) - 1}, true
+	case keys.KeyLeft: // どちらの表示形式でも h と同じ（ペインの切り替えは Tab だけ。filer §7）
+		return act(app.ActParent)
+	case keys.KeyRight: // l と同じ
+		return act(app.ActEnterDir)
 	case keys.KeyEsc:
 		return act(app.ActCancel)
 	}
@@ -271,10 +265,8 @@ func (f *Filer) Draw(s *screen.Screen) {
 	a := f.app
 	panes := a.Panes()
 	paneH := rows - 3
-	guide := msg.KeyGuide
 	if f.view == viewColumns {
 		f.drawColumns(s, screen.Region{W: cols, H: paneH})
-		guide = msg.KeyGuideColumns
 	} else {
 		for i, p := range panes {
 			x0, x1 := cols*i/len(panes), cols*(i+1)/len(panes)
@@ -290,7 +282,7 @@ func (f *Filer) Draw(s *screen.Screen) {
 		}
 		s.Put(line(rows-2), 1, 0, text, st)
 	}
-	s.Put(line(rows-1), 1, 0, guide, screen.Style{Attr: screen.AttrDim})
+	s.Put(line(rows-1), 1, 0, msg.KeyGuide, screen.Style{Attr: screen.AttrDim})
 	switch a.Dialog() {
 	case app.DialogPath:
 		f.drawPathInput(s)

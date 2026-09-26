@@ -61,12 +61,8 @@ const (
 	LabelError    = "<ERR>" // 列挙はできたが調べられなかった項目
 )
 
-// KeyGuide・KeyGuideColumns は、画面の最下行のキーの案内（2 ペインと Yazi 風。filer §5.1・§5.3。キーの割り当ては仮。§15）。
-// 80 桁に収める（ほかのキーはヘルプで示す）。
-const (
-	KeyGuide        = "Enter 開く  BS 親へ  Tab 切替  Space マーク  v 表示  ? ヘルプ  q 終了"
-	KeyGuideColumns = "Enter 開く  h 親へ  l 入る  Tab 切替  Space マーク  v 表示  ? ヘルプ  q 終了"
-)
+// KeyGuide は、画面の最下行のキーの案内（2 ペインと Yazi 風で同じ。filer §5.1・§5.3・§7）。80 桁に収める（ほかのキーはヘルプで示す）。
+const KeyGuide = "Enter 開く  h 親へ  l 入る  Tab 切替  Space マーク  v 表示  ? ヘルプ  q 終了"
 
 // PaneIndicator は、Yazi 風の表示で、どちらのペインを表示しているかの印（[1/2]。filer §5.3）。
 func PaneIndicator(i, n int) string { return "[" + strconv.Itoa(i) + "/" + strconv.Itoa(n) + "]" }
@@ -83,10 +79,9 @@ var Help = [][2]string{
 	{"Up Down  j k", "カーソルの移動"},
 	{"PgUp PgDn Home End", "ページ単位の移動、先頭、末尾"},
 	{"Enter", "フォルダに入る。ファイルは関連付けで開く"},
-	{"Backspace  h", "親のフォルダへ"},
-	{"l", "フォルダに入る（ファイルでは何もしない）"},
+	{"h  Left  Backspace", "親のフォルダへ"},
+	{"l  Right", "フォルダに入る（ファイルでは何もしない）"},
 	{"Tab", "ペインの切り替え（Yazi 風では表示するペイン）"},
-	{"Left Right", "2 ペイン: 左・右のペインへ。Yazi 風: 親へ・入る"},
 	{"Space", "マークの切り替え"},
 	{"a", "すべてマークする・すべて外す"},
 	{"g", "パスを入力して移動（ドライブの切り替えも）"},
