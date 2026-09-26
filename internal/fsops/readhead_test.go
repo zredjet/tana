@@ -84,8 +84,14 @@ func TestReadHeadLinks(t *testing.T) {
 	}
 	_, err := ReadHead(filepath.Join(root, "dirlink"), 6)
 	wantOpErrorReadHead(t, err, KindUnsupportedType, filepath.Join(root, "dirlink"))
+	// フォルダを指すファイル用のリンク。Windows は、この種のリンクをファイルとしてもフォルダとしても開かせず、
+	// FILE_FLAG_BACKUP_SEMANTICS を付けても ERROR_ACCESS_DENIED を返す（2026-09-26 の CI）。
 	_, err = ReadHead(filepath.Join(root, "filelink-to-dir"), 6)
-	wantOpErrorReadHead(t, err, KindUnsupportedType, filepath.Join(root, "filelink-to-dir"))
+	want := KindUnsupportedType
+	if runtime.GOOS == "windows" {
+		want = KindPermission
+	}
+	wantOpErrorReadHead(t, err, want, filepath.Join(root, "filelink-to-dir"))
 	_, err = ReadHead(filepath.Join(root, "dangling"), 6)
 	wantOpErrorReadHead(t, err, KindNotFound, filepath.Join(root, "dangling"))
 }

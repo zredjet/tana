@@ -30,8 +30,7 @@ func readHeadSys(s string, max int) (Head, error) {
 	}
 	h, err := windows.CreateFile(s16, windows.GENERIC_READ,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil,
-		// BACKUP_SEMANTICS: フォルダを指すファイル用のリンクも開けるようにし、開いた後に通常のファイルでないことを調べる
-		windows.OPEN_EXISTING, windows.FILE_FLAG_SEQUENTIAL_SCAN|windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
+		windows.OPEN_EXISTING, windows.FILE_FLAG_SEQUENTIAL_SCAN, 0)
 	if err != nil {
 		return Head{}, &os.PathError{Op: "CreateFile", Path: s, Err: err}
 	}
