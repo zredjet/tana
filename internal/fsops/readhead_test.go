@@ -15,8 +15,8 @@ func TestReadHead(t *testing.T) {
 	t.Parallel()
 	root := testfs.TempDir(t)
 	testfs.Build(t, root, testfs.Tree{
-		"a.txt":  testfs.File("hello world"),
-		"empty":  testfs.File(""),
+		"a.txt":   testfs.File("hello world"),
+		"empty":   testfs.File(""),
 		"日本語.txt": testfs.File("中身"),
 	})
 	before := testfs.Take(t, root)

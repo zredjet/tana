@@ -61,13 +61,13 @@ func TestDecodeText(t *testing.T) {
 func TestExpandTabs(t *testing.T) {
 	t.Parallel()
 	for in, want := range map[string]string{
-		"a\tb":     "a   b",
-		"\tx":      "    x",
-		"abcd\te":  "abcd    e",
-		"日\tx":     "日  x", // 全角は 2 桁
-		"no tabs":  "no tabs",
-		"a\t\tb":   "a       b",
-		"が\t": "が  ",
+		"a\tb":    "a   b",
+		"\tx":     "    x",
+		"abcd\te": "abcd    e",
+		"日\tx":    "日  x", // 全角は 2 桁
+		"no tabs": "no tabs",
+		"a\t\tb":  "a       b",
+		"が\t":    "が  ",
 	} {
 		if got := ExpandTabs(in, 4); got != want {
 			t.Errorf("ExpandTabs(%q) = %q, want %q", in, got, want)
