@@ -24,7 +24,7 @@ func TestErrors(t *testing.T) {
 		{"unknown csi", "\x1b[2K", true},
 		{"bad cup", "\x1b[5H", true},
 		{"cup outside", "\x1b[3;1H", true},
-		{"bad sgr", "\x1b[1;xm", true},
+		{"bad sgr", "\x1b[1:2m", true},
 		{"unknown sgr", "\x1b[38;5;1m", true},
 		{"bidi control", "a\u202eb", true},
 		{"invisible", "a\u200bb", true},
