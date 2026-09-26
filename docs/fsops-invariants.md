@@ -109,6 +109,7 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 | Windows の `\\?\` 変換（`path_windows.go` `sysPath`・`userPath`） | TestSysPathWindows、TestUserPathWindows、TestRenameHelpersWin32UnsafeNames、TestReadDirWin32UnsafeNames、TestFileIDWin32UnsafeNames、TestLstatEntryWin32UnsafeNames | Windows |
 | フォルダの作成の名前（`mkdir.go` `Mkdir`。名前をそのまま使い、Rename と同じ検査で使えない名前を拒む。末尾が `.` の親の中に、同名の別フォルダと取り違えずに作る。フェーズ17） | TestMkdir（日本語・NFD）、TestMkdirInvalidName、TestMkdirPaths（長いパス・`foo.` の親・リンクの親） | 共通 |
 | 一覧のための調べ・列挙の名前とパス（`list.go`。列挙で得た名前をそのまま返し、`\\?\` を通す。フェーズ17） | TestListLongPathAndUnsafeNames、TestLstatErrors・TestReadDirEntersLinkedFolder（エラーのパスに `\\?\` が付かない） | 共通 |
+| プレビューのための先頭の読み取り（`readhead*.go` `ReadHead`。`\\?\` を通し、末尾が `.` の名前で同名の別ファイルを読まない。読むだけで変更しない。フェーズ18） | TestReadHeadPaths（長いパス・`foo.` と `foo`）、TestReadHead（読んだ後に木が変わらない）、TestReadHeadErrors（エラーのパスに `\\?\` が付かない） | 共通 |
 | 末尾が `.`・空白の名前、予約名を含むコピー・移動で、同名の別ファイル（`foo`）と取り違えない（`\\?\` 変換を通る `copy.go`・`move.go`・`remove.go` の各経路） | TestCopyWin32UnsafeNames、TestMoveWin32UnsafeNames、TestMoveCrossVolumeWin32UnsafeNames | 共通・CROSSVOL |
 | 260 文字を超えるパスのコピー・移動（上書き・自動リネーム・マージ・移動元の削除を含む） | TestCopyLongPath、TestMoveLongPath、TestMoveCrossVolumeLongPath | 共通・CROSSVOL |
 | 自動リネームの候補（`copy.go` `autoRenameName`。切り詰めない） | TestAutoRenameName、TestCopyAutoRenameTooLong | 共通 |

@@ -13,3 +13,6 @@ func statHidden(*unix.Stat_t) bool { return false }
 
 // statReadOnly は、上書き先が読み取り専用（§9.3。オーナーの書き込み権限がない）かを返す。
 func statReadOnly(st *unix.Stat_t) bool { return st.Mode&0o200 == 0 }
+
+// notLocalStat は、中身が手元にないファイルかを返す（§14.4）。Linux では区別しない。
+func notLocalStat(st *unix.Stat_t) bool { return false }

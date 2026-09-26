@@ -25,3 +25,6 @@ func statHidden(st *unix.Stat_t) bool { return st.Flags&unix.UF_HIDDEN != 0 }
 
 // statReadOnly は、上書き先が読み取り専用（§9.3。オーナーの書き込み権限がない、またはロック（UF_IMMUTABLE））かを返す。
 func statReadOnly(st *unix.Stat_t) bool { return st.Mode&0o200 == 0 || st.Flags&unix.UF_IMMUTABLE != 0 }
+
+// notLocalStat は、中身が手元にない（読むと取得が始まる。iCloud などの SF_DATALESS）ファイルかを返す（§14.4）。
+func notLocalStat(st *unix.Stat_t) bool { return st.Flags&unix.SF_DATALESS != 0 }
