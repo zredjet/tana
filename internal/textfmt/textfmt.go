@@ -32,6 +32,16 @@ func Size(n int64) string {
 	return strconv.FormatFloat(v, 'f', 0, 64) + unit
 }
 
+// SizeUnit は、確認画面・進捗画面のサイズ（6.1 GB、128 MB、3.1 KB。filer §9.4）。値は Size と同じく 1024 で割ったもの。
+// 1024 未満は数だけを返す（単位の「バイト」は、人向けの文言なので呼ぶ側で付ける）。
+func SizeUnit(n int64) string {
+	s := Size(n)
+	if n < 1024 {
+		return s
+	}
+	return s[:len(s)-1] + " " + s[len(s)-1:] + "B"
+}
+
 // Bytes は、バイト数を 3 桁ごとにコンマで区切る（状態行。filer §9.4）。
 func Bytes(n int64) string {
 	s := strconv.FormatInt(n, 10)

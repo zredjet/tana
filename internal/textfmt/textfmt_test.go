@@ -24,6 +24,18 @@ func TestSize(t *testing.T) {
 	}
 }
 
+func TestSizeUnit(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		n    int64
+		want string
+	}{{0, "0"}, {1023, "1023"}, {1024, "1.0 KB"}, {3174, "3.1 KB"}, {134217728, "128 MB"}, {1395864371, "1.3 GB"}, {1 << 40, "1.0 TB"}} {
+		if got := SizeUnit(tt.n); got != tt.want {
+			t.Errorf("SizeUnit(%d) = %q, want %q", tt.n, got, tt.want)
+		}
+	}
+}
+
 func TestBytes(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {

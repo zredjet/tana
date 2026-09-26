@@ -168,7 +168,7 @@ func (f *Filer) drawConfirm(s *screen.Screen) {
 	if v.Op != fsops.OpTrash { // ごみ箱では fsops が中身を数えないので、合計は出さない（filer §8.2）
 		size := ""
 		if v.Bytes > 0 {
-			size = textfmt.Size(v.Bytes)
+			size = sizeUnit(v.Bytes)
 		}
 		lines = append(lines, line{text: msg.Totals(v.Files, size)})
 	}
@@ -341,11 +341,11 @@ func (f *Filer) drawProgress(s *screen.Screen) {
 	bar := "[" + strings.Repeat("#", filled) + strings.Repeat("-", barW-filled) + "]  " + strconv.Itoa(percent) + "%"
 	totalSize, doneSize := "", ""
 	if p.TotalBytes > 0 {
-		totalSize, doneSize = textfmt.Size(p.TotalBytes), textfmt.Size(p.DoneBytes)
+		totalSize, doneSize = sizeUnit(p.TotalBytes), sizeUnit(p.DoneBytes)
 	}
 	speed, remaining := "", ""
 	if p.Speed > 0 {
-		speed = textfmt.Size(int64(p.Speed))
+		speed = sizeUnit(int64(p.Speed))
 	}
 	if p.Remaining >= 0 {
 		remaining = msg.Duration(int(p.Remaining.Seconds() + 0.5))
@@ -470,6 +470,14 @@ func (f *Filer) drawResult(s *screen.Screen) {
 	s.Put(full, 1, rows-1, keysText, screen.Style{})
 }
 
+// sizeUnit は、確認画面・進捗画面のサイズを単位付きで書く（6.1 GB、500 バイト。filer §9.4）。一覧の欄は 5 桁の textfmt.Size のまま。
+func sizeUnit(n int64) string {
+	if n < 1024 {
+		return textfmt.Bytes(n) + " " + msg.UnitBytes
+	}
+	return textfmt.SizeUnit(n)
+}
+
 // withAttr は、見た目 st に属性 a を加える。
 func withAttr(st screen.Style, a screen.Attr) screen.Style {
 	st.Attr |= a
@@ -521,7 +529,7 @@ func (f *Filer) drawDelete(s *screen.Screen) {
 			break
 		}
 		name := it.Name
-		info := textfmt.Size(it.Info.Size)
+		info := sizeUnit(it.Info.Size)
 		if it.Info.Type != fsops.TypeFile {
 			info = msg.Type(it.Info.Type)
 		}
@@ -534,7 +542,7 @@ func (f *Filer) drawDelete(s *screen.Screen) {
 	if v.Runnable > 0 {
 		size := ""
 		if v.Bytes > 0 {
-			size = textfmt.Size(v.Bytes)
+			size = sizeUnit(v.Bytes)
 		}
 		lines = append(lines, line{}, line{text: msg.Totals(v.Files, size)})
 	}

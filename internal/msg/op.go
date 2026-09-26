@@ -312,7 +312,7 @@ var ConflictKeys = [2]string{
 	"Enter 実行  Esc やめる  Space 展開・折りたたみ  u 未選択だけ表示",
 }
 
-// ProgressFiles は、進捗のファイル数とバイト数（「ファイル 26 / 58      597M / 1.3G」）。
+// ProgressFiles は、進捗のファイル数とバイト数（「ファイル 26 / 58      597 MB / 1.3 GB」）。
 func ProgressFiles(done, total int, doneSize, totalSize string) string {
 	s := "ファイル " + strconv.Itoa(done) + " / " + strconv.Itoa(total)
 	if totalSize != "" {
@@ -321,7 +321,7 @@ func ProgressFiles(done, total int, doneSize, totalSize string) string {
 	return s
 }
 
-// ProgressTimes は、速度・残り時間・経過時間（「毎秒 85M   残り 約 9 秒   経過 7 秒」）。空の値は出さない。
+// ProgressTimes は、速度・残り時間・経過時間（「毎秒 85 MB   残り 約 9 秒   経過 7 秒」）。空の値は出さない。
 func ProgressTimes(speed, remaining, elapsed string) string {
 	var parts []string
 	if speed != "" {
