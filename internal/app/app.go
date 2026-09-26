@@ -31,6 +31,7 @@ type Config struct {
 
 	ReadDir      func(dir string) ([]fsops.Entry, error)
 	Readlink     func(path string) (string, error)
+	ReadHead     func(path string, max int) (fsops.Head, error) // プレビュー（filer §6）
 	Open         func(path string) error
 	IsExecutable func(path string, isDir bool) bool
 	CanOpen      func(path string) bool
@@ -45,6 +46,7 @@ func DefaultConfig(dirs []string) Config {
 		DotFilesHidden: platform.DotFilesHidden,
 		ReadDir:        fsops.ReadDir,
 		Readlink:       fsops.Readlink,
+		ReadHead:       fsops.ReadHead,
 		Open:           platform.Open,
 		IsExecutable:   platform.IsExecutable,
 		CanOpen:        platform.CanOpen,
@@ -83,6 +85,10 @@ type App struct {
 	opening    int // 関連付けで開く前の確認をしている世代（0 ならしていない）
 	frames     int // 描いた回数（Drawn）
 	quit       bool
+
+	needs      Needs   // 表示形式が求めるもの（SetNeeds）
+	preview    Preview // 操作中のペインのカーソル行のプレビュー（読んでいる途中なら Kind が PreviewNone）
+	previewGen int     // プレビューの世代。カーソルが動いたら古い読み込みの結果を捨てる
 }
 
 // New は、App を作り、各ペインの最初の読み込みを返す。
@@ -142,6 +148,7 @@ const (
 	ActHome
 	ActEnd
 	ActEnter        // フォルダに入る、ファイルを開く
+	ActEnterDir     // フォルダに入る（ファイルでは何もしない。h・l の l）
 	ActParent       // 親のフォルダへ
 	ActNextPane     // 次のペインへ
 	ActFocusOrUp    // Action.Pane のペインへ。すでにそのペインなら親のフォルダへ
@@ -178,6 +185,10 @@ type Action struct {
 
 // Do は、利用者の操作を行う。キー入力のたびにメッセージ行を消す（filer §5.1）。
 func (a *App) Do(act Action) []Cmd {
+	return append(a.do(act), a.follow()...)
+}
+
+func (a *App) do(act Action) []Cmd {
 	if a.dialog.kind != DialogNone {
 		return a.doDialog(act)
 	}
@@ -205,6 +216,8 @@ func (a *App) Do(act Action) []Cmd {
 		p.move(len(p.visible))
 	case ActEnter:
 		return a.enter()
+	case ActEnterDir:
+		return a.enterDir()
 	case ActParent:
 		return a.parent(a.active)
 	case ActNextPane:
@@ -254,13 +267,13 @@ func (a *App) Do(act Action) []Cmd {
 	case ActNotYet:
 		a.setMessage(msg.NotYet, false)
 	}
-	return a.linkTarget(a.active)
+	return nil
 }
 
 // paneLocal は、操作中のペインの一覧を使う操作かを返す。
 func paneLocal(k ActionKind) bool {
 	switch k {
-	case ActUp, ActDown, ActPageUp, ActPageDown, ActHome, ActEnd, ActEnter, ActParent, ActMark, ActMarkAll, ActGoPath, ActSyncOther:
+	case ActUp, ActDown, ActPageUp, ActPageDown, ActHome, ActEnd, ActEnter, ActEnterDir, ActParent, ActMark, ActMarkAll, ActGoPath, ActSyncOther:
 		return true
 	}
 	return false
@@ -371,6 +384,7 @@ const (
 	loadReload                      // 再読み込み。フォルダが消えていれば、存在する祖先を表示する（filer §6）
 	loadGo                          // ほかのフォルダへ（入る、親へ、パスの入力）。開けなければ留まる
 	loadLink                        // リンクに入る。リンク先がフォルダでなければ、開く処理に移る
+	loadLinkDir                     // リンクに入る（l・→）。リンク先がフォルダでなければ何もしない
 )
 
 type loading struct {
@@ -410,7 +424,7 @@ func (a *App) load(i int, dir string, kind loadKind, focus string) []Cmd {
 			kindOf = oe.Kind
 		}
 		switch {
-		case kind == loadLink && kindOf == fsops.KindNotFound:
+		case (kind == loadLink || kind == loadLinkDir) && kindOf == fsops.KindNotFound:
 			res.notDir = true
 		case kind == loadInitial || kind == loadReload && kindOf == fsops.KindNotFound:
 			// 開ける祖先を探す（filer §6）。
@@ -431,6 +445,10 @@ func (a *App) load(i int, dir string, kind loadKind, focus string) []Cmd {
 
 // Update は、Cmd の結果を反映する。
 func (a *App) Update(m any) []Cmd {
+	return append(a.update(m), a.follow()...)
+}
+
+func (a *App) update(m any) []Cmd {
 	switch m := m.(type) {
 	case loaded:
 		return a.loaded(m)
@@ -446,6 +464,14 @@ func (a *App) Update(m any) []Cmd {
 		}
 	case checked:
 		return a.checked(m)
+	case parentRead:
+		a.parentRead(m)
+	case previewTick:
+		return a.previewTick(m)
+	case previewRead:
+		if m.gen == a.previewGen {
+			a.preview = m.preview
+		}
 	case opened:
 		if m.err != nil {
 			a.logErr(m.err)
@@ -465,6 +491,9 @@ func (a *App) loaded(m loaded) []Cmd {
 	ld := p.load
 	p.load = nil
 	if m.notDir {
+		if ld.kind == loadLinkDir {
+			return nil // l・→ はフォルダに入るだけ
+		}
 		// リンク先がフォルダでない。ファイルとして開く（filer §7）。
 		return a.startOpen(m.dir, filepath.Base(m.dir))
 	}
@@ -478,6 +507,9 @@ func (a *App) loaded(m loaded) []Cmd {
 	}
 	keep := ld.kind == loadReload && m.dir == p.dir && p.loaded
 	p.set(m.dir, m.items, a.showHidden, keep, ld.focus)
+	if m.pane == a.active {
+		a.preview = Preview{} // 読み直した一覧で、プレビューも読み直す
+	}
 	return a.linkTarget(m.pane)
 }
 
@@ -504,6 +536,25 @@ func (a *App) enter() []Cmd {
 		return nil
 	}
 	return a.startOpen(path, it.Name)
+}
+
+// enterDir は、カーソル行がフォルダ（リンク・ジャンクションのフォルダ、.. を含む）なら入る。ファイルでは何もしない（l・→）。
+func (a *App) enterDir() []Cmd {
+	p := a.panes[a.active]
+	it, ok := p.current()
+	if !ok || it.Err != nil {
+		return nil
+	}
+	path := filepath.Join(p.dir, it.Name) // 列挙で得た名前から作る（U4）
+	switch {
+	case it.Parent:
+		return a.parent(a.active)
+	case it.IsDir():
+		return a.load(a.active, path, loadGo, "")
+	case it.Info.Type == fsops.TypeSymlink:
+		return a.load(a.active, path, loadLinkDir, "")
+	}
+	return nil
 }
 
 // parent は、ペイン i を親のフォルダにし、カーソルを来たフォルダに置く。

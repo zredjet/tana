@@ -17,6 +17,7 @@ type Pane struct {
 	targets map[string]string   // リンク先（名前 → リンク先）
 	pending map[string]struct{} // 読み取り中のリンク先
 	listGen int                 // 一覧を置き換えた回数（古いリンク先の読み取りの結果を捨てる）
+	parent  *parentList         // 親フォルダの一覧（表示形式が求めたときだけ読む）
 }
 
 // Dir は、表示しているフォルダ（リンクに入ったときはリンクのパスのまま。filer §6）を返す。

@@ -697,3 +697,170 @@ func TestStaleLinkTarget(t *testing.T) {
 		t.Errorf("LinkTarget = %q, %v, want a.txt (the stale sub must be dropped)", target, ok)
 	}
 }
+
+// fire は、Delay のある Cmd（プレビューを読むまでの待ちなど）をすべて動かす。
+func (h *harness) fire() {
+	delayed := h.delayed
+	h.delayed = nil
+	for _, c := range delayed {
+		h.run(h.a.Update(c.Run())) // 待ちが終わった
+	}
+}
+
+// TestPreviewNotNeeded は、表示形式が求めなければ、親フォルダの一覧もプレビューも読まないことを確かめる（2 ペイン）。
+func TestPreviewNotNeeded(t *testing.T) {
+	t.Parallel()
+	root := tree(t)
+	h := newHarness(t, nil, root)
+	h.delayed = nil
+	h.moveTo("a.txt")
+	for _, c := range h.delayed {
+		if c.Delay == previewDelay {
+			t.Error("a preview was scheduled without SetNeeds")
+		}
+	}
+	if _, _, ok := h.pane(0).Parent(); ok || h.a.Preview().Kind != PreviewNone {
+		t.Error("read the parent or the preview without SetNeeds")
+	}
+}
+
+// TestPreview は、カーソル行のフォルダ・テキスト・バイナリのプレビューを確かめる（filer §6）。
+func TestPreview(t *testing.T) {
+	t.Parallel()
+	root := tree(t)
+	if err := os.WriteFile(filepath.Join(root, "memo.txt"), []byte("first\tline\r\nsecond\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "data.bin"), []byte("\x00\x01\x02binary"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sjis := []byte("\x93\xfa\x96\x7b\x8c\xea\n") // 「日本語」の Shift_JIS
+	if err := os.WriteFile(filepath.Join(root, "old.txt"), sjis, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := newHarness(t, nil, root)
+	h.run(h.a.SetNeeds(Needs{Preview: true}))
+	check := func(name string, kind PreviewKind) Preview {
+		t.Helper()
+		h.moveTo(name)
+		if pv := h.a.Preview(); pv.Kind != PreviewNone {
+			t.Errorf("%s: preview %v before the cursor rested", name, pv.Kind)
+		}
+		h.fire()
+		pv := h.a.Preview()
+		if pv.Kind != kind || pv.Path != filepath.Join(root, name) && name != ".." {
+			t.Fatalf("%s: preview %+v, want kind %v", name, pv, kind)
+		}
+		return pv
+	}
+	if pv := check("sub", PreviewDir); len(pv.Items) != 1 || pv.Items[0].Name != "inner.txt" {
+		t.Errorf("sub: items %+v, want inner.txt only (no ..)", pv.Items)
+	}
+	if pv := check("memo.txt", PreviewText); !slices.Equal(pv.Lines, []string{"first   line", "second"}) || pv.Encoding != "UTF-8" || pv.Size != 19 {
+		t.Errorf("memo.txt: %q %s %d", pv.Lines, pv.Encoding, pv.Size)
+	}
+	if pv := check("old.txt", PreviewText); !slices.Equal(pv.Lines, []string{"日本語"}) || pv.Encoding != "Shift_JIS" {
+		t.Errorf("old.txt: %q %s", pv.Lines, pv.Encoding)
+	}
+	if pv := check("data.bin", PreviewBinary); pv.Size != 9 {
+		t.Errorf("data.bin: size %d", pv.Size)
+	}
+	if pv := check("..", PreviewDir); pv.Path != filepath.Dir(root) {
+		t.Errorf("..: path %q, want the parent", pv.Path)
+	}
+	h.run(h.a.SetNeeds(Needs{}))
+	if h.a.Preview().Kind != PreviewNone {
+		t.Error("the preview is kept after SetNeeds without Preview")
+	}
+}
+
+// TestPreviewCursorMoved は、読む前にカーソルが動いたら、古い項目のプレビューを読まないことを確かめる（U5）。
+func TestPreviewCursorMoved(t *testing.T) {
+	t.Parallel()
+	root := tree(t)
+	h := newHarness(t, nil, root)
+	h.run(h.a.SetNeeds(Needs{Preview: true}))
+	h.moveTo("a.txt")
+	old := h.delayed
+	h.delayed = nil
+	h.moveTo("b.txt")
+	for _, c := range old {
+		h.run(h.a.Update(c.Run())) // a.txt の待ちが終わった
+	}
+	if pv := h.a.Preview(); pv.Kind != PreviewNone {
+		t.Errorf("read a stale preview: %+v", pv)
+	}
+	h.fire()
+	if pv := h.a.Preview(); pv.Kind != PreviewText || pv.Path != filepath.Join(root, "b.txt") {
+		t.Errorf("preview = %+v, want b.txt", pv)
+	}
+}
+
+// TestPreviewReload は、再読み込みでプレビューも読み直すことを確かめる。
+func TestPreviewReload(t *testing.T) {
+	t.Parallel()
+	root := tree(t)
+	h := newHarness(t, nil, root)
+	h.run(h.a.SetNeeds(Needs{Preview: true}))
+	h.moveTo("a.txt")
+	h.fire()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("changed"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.do(ActReload)
+	h.fire()
+	if pv := h.a.Preview(); !slices.Equal(pv.Lines, []string{"changed"}) {
+		t.Errorf("after reload: %q, want changed", pv.Lines)
+	}
+}
+
+// TestParentListing は、親フォルダの一覧と今のフォルダの名前を確かめる。ルートでは読まない。
+func TestParentListing(t *testing.T) {
+	t.Parallel()
+	root := tree(t)
+	h := newHarness(t, nil, filepath.Join(root, "sub"), root)
+	h.run(h.a.SetNeeds(Needs{Parent: true}))
+	items, current, ok := h.pane(0).Parent()
+	var names []string
+	for _, it := range items {
+		names = append(names, it.Name)
+	}
+	if !ok || current != "sub" || !slices.Equal(names, []string{"sub", ".hidden", "a.txt", "b.txt"}) {
+		t.Errorf("Parent = %q, %q, %v", names, current, ok)
+	}
+	h.do(ActNextPane) // もう一方のペイン（root）の親
+	if _, current, ok := h.pane(1).Parent(); !ok || current != filepath.Base(root) {
+		t.Errorf("pane 1 Parent: %q %v", current, ok)
+	}
+	h.do(ActNextPane)
+	h.do(ActParent) // ペイン 0 は root へ。親の一覧を読み直す
+	if _, current, ok := h.pane(0).Parent(); !ok || current != filepath.Base(root) {
+		t.Errorf("after Parent: %q %v", current, ok)
+	}
+}
+
+// TestEnterDir は、l・→（ActEnterDir）はフォルダに入るだけで、ファイルやリンク先のファイルを開かないことを確かめる。
+func TestEnterDir(t *testing.T) {
+	t.Parallel()
+	root := tree(t)
+	linked := os.Symlink("a.txt", filepath.Join(root, "filelink")) == nil
+	h := newHarness(t, nil, root)
+	h.moveTo("a.txt")
+	h.do(ActEnterDir)
+	if linked {
+		h.moveTo("filelink")
+		h.do(ActEnterDir)
+	}
+	if len(h.opened) != 0 || h.pane(0).Dir() != root || h.a.Dialog() != DialogNone {
+		t.Errorf("EnterDir on files: opened %q, Dir %q", h.opened, h.pane(0).Dir())
+	}
+	h.moveTo("sub")
+	h.do(ActEnterDir)
+	if h.pane(0).Dir() != filepath.Join(root, "sub") {
+		t.Errorf("EnterDir on sub: Dir %q", h.pane(0).Dir())
+	}
+	h.do(ActEnterDir) // .. で親へ
+	if h.pane(0).Dir() != root {
+		t.Errorf("EnterDir on ..: Dir %q", h.pane(0).Dir())
+	}
+}
