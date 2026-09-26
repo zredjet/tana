@@ -24,6 +24,8 @@ var directionRules = []struct {
 }{
 	// term は x/sys だけを使い、ほかの土台のパッケージとファイラーのパッケージを import しない（tui §3）。
 	{"internal/term", []string{"golang.org/x/sys"}},
+	// textwidth は標準ライブラリだけを使う（tui §3）。表を作る internal/ucdgen・internal/gen も同じ。
+	{"internal/textwidth", nil},
 }
 
 // within は、p が root そのものか、その配下のパッケージかを返す。
