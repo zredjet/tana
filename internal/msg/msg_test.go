@@ -82,3 +82,66 @@ func TestLabelsWidth(t *testing.T) {
 		}
 	}
 }
+
+// TestOpTextsComplete は、すべての操作・段階・結果・状態・決定・方式・種類に文言があることを確かめる（filer §8.8）。
+// 値の並びは、String() が "型(n)" の形を返すところで終わる。
+func TestOpTextsComplete(t *testing.T) {
+	check := func(name string, first, last int, str func(int) string, text func(int) string) {
+		t.Helper()
+		n := 0
+		for v := first; ; v++ {
+			if s := str(v); strings.Contains(s, "(") {
+				break
+			}
+			n++
+			if text(v) == "" {
+				t.Errorf("%s: no text for %s", name, str(v))
+			}
+		}
+		if n != last-first+1 {
+			t.Errorf("%s: %d values, want %d", name, n, last-first+1)
+		}
+	}
+	check("Op", int(fsops.OpCopy), int(fsops.OpDelete),
+		func(v int) string { return fsops.OpKind(v).String() }, func(v int) string { return Op(fsops.OpKind(v)) })
+	check("Stage", int(fsops.StageCopy), int(fsops.StageDelete),
+		func(v int) string { return fsops.Stage(v).String() }, func(v int) string { return Stage(fsops.Stage(v)) })
+	check("Outcome", int(fsops.OutcomeDone), int(fsops.OutcomeTrashUnconfirmed),
+		func(v int) string { return fsops.Outcome(v).String() }, func(v int) string { return Outcome(fsops.Outcome(v)) })
+	check("Status", int(fsops.StatusCompleted), int(fsops.StatusCanceled),
+		func(v int) string { return fsops.Status(v).String() }, func(v int) string { return Status(fsops.Status(v)) })
+	check("Decision", int(fsops.DecisionUnset), int(fsops.DecisionMerge),
+		func(v int) string { return fsops.Decision(v).String() }, func(v int) string { return Decision(fsops.Decision(v)) })
+	check("Method", int(fsops.MethodRename), int(fsops.MethodRemove),
+		func(v int) string { return fsops.Method(v).String() }, func(v int) string { return Method(fsops.Method(v)) })
+	check("EntryType", int(fsops.TypeFile), int(fsops.TypeSpecial),
+		func(v int) string { return fsops.EntryType(v).String() }, func(v int) string { return Type(fsops.EntryType(v)) })
+	for _, m := range []fsops.Method{fsops.MethodRename, fsops.MethodCopy, fsops.MethodCopyThenRemove, fsops.MethodRemove} {
+		if Partial(m, fsops.OutcomePartial) == "" {
+			t.Errorf("Partial(%v): no text", m)
+		}
+	}
+	if Partial(fsops.MethodCopy, fsops.OutcomeDone) != "" || Partial(fsops.MethodCopyThenRemove, fsops.OutcomeCopiedSourceKept) == "" {
+		t.Error("Partial for Done / CopiedSourceKept")
+	}
+}
+
+// TestResultError は、結果に固有の言い方と、衝突の決定によるスキップを確かめる（filer §8.5・§8.8）。
+func TestResultError(t *testing.T) {
+	for _, tt := range []struct {
+		o    fsops.Outcome
+		err  *fsops.OpError
+		want string
+	}{
+		{fsops.OutcomeSkipped, nil, SkippedByChoice},
+		{fsops.OutcomeSkipped, &fsops.OpError{Kind: fsops.KindExist}, "計画の後に同じ名前のものができたため、スキップしました"},
+		{fsops.OutcomeSkipped, &fsops.OpError{Kind: fsops.KindNoSpace}, "空き容量が足りないため、実行しませんでした"},
+		{fsops.OutcomeFailed, &fsops.OpError{Kind: fsops.KindNoSpace}, "空き容量が足りません"},
+		{fsops.OutcomeCopiedSourceKept, &fsops.OpError{Kind: fsops.KindSourceChanged}, "コピーの後に変更されたため残しました"},
+		{fsops.OutcomeFailed, &fsops.OpError{Kind: fsops.KindLocked, OnDest: true}, "コピー先・移動先で: ほかのアプリが使用中です"},
+	} {
+		if got := ResultError(tt.o, tt.err); got != tt.want {
+			t.Errorf("ResultError(%v, %v) = %q, want %q", tt.o, tt.err, got, tt.want)
+		}
+	}
+}

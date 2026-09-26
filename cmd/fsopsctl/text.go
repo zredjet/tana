@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/zredjet/tana/internal/fsops"
+	"github.com/zredjet/tana/internal/msg"
 )
 
 // 表示用の日本語。fsops はメッセージを作らないので（SPEC §17）、Kind などから CLI が作る。
@@ -23,180 +24,23 @@ func opName(op fsops.OpKind) string {
 	return "unknown"
 }
 
-func opText(op fsops.OpKind) string {
-	switch op {
-	case fsops.OpCopy:
-		return "コピー"
-	case fsops.OpMove:
-		return "移動"
-	case fsops.OpTrash:
-		return "ごみ箱へ"
-	case fsops.OpDelete:
-		return "完全削除"
-	}
-	return op.String()
-}
+// 利用者向けの文言は internal/msg にまとめてある（filer §8.8）。ここでは CLI に固有の組み立てだけを行う。
 
-func methodText(m fsops.Method) string {
-	switch m {
-	case fsops.MethodRename:
-		return "同じボリューム内の移動"
-	case fsops.MethodCopy:
-		return "コピー"
-	case fsops.MethodCopyThenRemove:
-		return "ボリュームをまたぐ移動"
-	case fsops.MethodTrash:
-		return "ごみ箱"
-	case fsops.MethodRemove:
-		return "完全削除"
-	}
-	return m.String()
-}
-
-func typeText(t fsops.EntryType) string {
-	switch t {
-	case fsops.TypeFile:
-		return "ファイル"
-	case fsops.TypeDir:
-		return "フォルダ"
-	case fsops.TypeSymlink:
-		return "シンボリックリンク"
-	case fsops.TypeJunction:
-		return "ジャンクション"
-	case fsops.TypeSpecial:
-		return "特殊なファイル"
-	}
-	return t.String()
-}
+func opText(op fsops.OpKind) string                      { return msg.Op(op) }
+func methodText(m fsops.Method) string                   { return msg.Method(m) }
+func typeText(t fsops.EntryType) string                  { return msg.Type(t) }
+func decisionText(d fsops.Decision) string               { return msg.Decision(d) }
+func stageText(s fsops.Stage) string                     { return msg.Stage(s) }
+func statusText(s fsops.Status) string                   { return msg.Status(s) }
+func outcomeText(o fsops.Outcome) string                 { return msg.Outcome(o) }
+func kindText(k fsops.Kind) string                       { return msg.Kind(k) }
+func partialText(m fsops.Method, o fsops.Outcome) string { return msg.Partial(m, o) }
 
 func conflictKindText(c fsops.Conflict) string {
 	if c.Self {
 		return "同じフォルダへのコピー"
 	}
-	return typeText(c.SrcInfo.Type) + " → 既存の" + typeText(c.DstInfo.Type)
-}
-
-func decisionText(d fsops.Decision) string {
-	switch d {
-	case fsops.DecisionUnset:
-		return "未設定（スキップ）"
-	case fsops.DecisionSkip:
-		return "スキップ"
-	case fsops.DecisionOverwrite:
-		return "上書き"
-	case fsops.DecisionAutoRename:
-		return "名前を変えて残す"
-	case fsops.DecisionMerge:
-		return "マージ"
-	}
-	return d.String()
-}
-
-func stageText(s fsops.Stage) string {
-	switch s {
-	case fsops.StageCopy:
-		return "コピー"
-	case fsops.StageMove:
-		return "移動"
-	case fsops.StageVerify:
-		return "検証"
-	case fsops.StageRemoveSource:
-		return "移動元の削除"
-	case fsops.StageTrash:
-		return "ごみ箱"
-	case fsops.StageDelete:
-		return "完全削除"
-	}
-	return s.String()
-}
-
-func statusText(s fsops.Status) string {
-	switch s {
-	case fsops.StatusCompleted:
-		return "完了"
-	case fsops.StatusCompletedWithErrors:
-		return "完了（一部にエラーあり）"
-	case fsops.StatusCanceled:
-		return "キャンセルしました"
-	}
-	return s.String()
-}
-
-func outcomeText(o fsops.Outcome) string {
-	switch o {
-	case fsops.OutcomeDone:
-		return "完了"
-	case fsops.OutcomeSkipped:
-		return "スキップ"
-	case fsops.OutcomeFailed:
-		return "失敗"
-	case fsops.OutcomePartial:
-		return "一部"
-	case fsops.OutcomeCopiedSourceKept:
-		return "移動元を残した"
-	case fsops.OutcomeTrashUnconfirmed:
-		return "ごみ箱に入ったことを確認できず、元の場所からも消えています（完全に削除された可能性があります）"
-	}
-	return o.String()
-}
-
-// kindText は、エラーの分類を利用者向けの文にする。
-func kindText(k fsops.Kind) string {
-	switch k {
-	case fsops.KindNotFound:
-		return "見つかりません"
-	case fsops.KindExist:
-		return "同じ名前のものが既にあります（上書きしませんでした）"
-	case fsops.KindPermission:
-		return "権限がありません"
-	case fsops.KindLocked:
-		return "ほかのプログラムが使用中です"
-	case fsops.KindReadOnly:
-		return "読み取り専用です"
-	case fsops.KindNoSpace:
-		return "空き容量が足りません"
-	case fsops.KindNotEmpty:
-		return "フォルダが空ではありません"
-	case fsops.KindCrossDevice:
-		return "別のボリュームです"
-	case fsops.KindLinkUnsupported:
-		return "リンクを作成・複製できません"
-	case fsops.KindUnsupportedType:
-		return "この種類のファイルは扱えません"
-	case fsops.KindTrashUnavailable:
-		return "ごみ箱に入れられません"
-	case fsops.KindDestInsideSource:
-		return "コピー先・移動先が、コピー元・移動元の中にあります"
-	case fsops.KindSameFile:
-		return "移動元と移動先が同じ場所です"
-	case fsops.KindSourceChanged:
-		return "処理中に元のファイル・フォルダが変更されました"
-	case fsops.KindInvalidName:
-		return "名前が使えないか、長すぎます"
-	case fsops.KindInvalidRequest:
-		return "指定が正しくありません"
-	case fsops.KindCanceled:
-		return "キャンセルしました"
-	case fsops.KindMetadata:
-		return "更新日時などの情報を保持できませんでした（データは無事です）"
-	case fsops.KindDestChanged:
-		return "処理中にコピー先・移動先のフォルダやファイルが変更されました"
-	case fsops.KindNameForm:
-		return "名前の文字の表現（NFC・NFD）の違いで、このボリュームでは扱えないファイルです"
-	case fsops.KindLinkSkipped:
-		return "リンクは設定によりコピーしませんでした"
-	case fsops.KindUnreachable:
-		return "場所に接続できません（ネットワークやドライブが応答しません）"
-	case fsops.KindVerifyFailed:
-		return "コピーした内容が元と一致しませんでした"
-	case fsops.KindSyncFailed:
-		return "ディスクへの書き込みを確定できませんでした（同期に失敗しました）"
-	case fsops.KindMountPoint:
-		return "別のボリュームがマウントされたフォルダです（中は削除しません）"
-	case fsops.KindFileTooLarge:
-		return "コピー先のファイルシステムには大きすぎるファイルです（FAT32 は 4 GB 未満まで）"
-	}
-	return "原因不明のエラーです"
+	return typeText(c.SrcInfo.Type) + " -> 既存の" + typeText(c.DstInfo.Type)
 }
 
 // errorText は、エラーを「分類の文（元のエラー）」の形にする。
@@ -230,23 +74,4 @@ func sizeText(n int64) string {
 		}
 	}
 	return fmt.Sprintf("%.1f %s", f, suffix)
-}
-
-// partialText は、Partial・CopiedSourceKept が表す状態を、実際に使った方式に合わせて説明する（SPEC §7.4）。それ以外は空。
-func partialText(m fsops.Method, o fsops.Outcome) string {
-	switch {
-	case o == fsops.OutcomeCopiedSourceKept:
-		return "移動先は完成しています。移動元の一部（下の一覧）が残っています"
-	case o != fsops.OutcomePartial:
-		return ""
-	case m == fsops.MethodCopy:
-		return "コピー先に途中までの結果があります。コピー元は変わっていません"
-	case m == fsops.MethodRename:
-		return "一部は移動先へ移り、下の一覧のものは移動元に残っています"
-	case m == fsops.MethodCopyThenRemove:
-		return "移動元はすべて残っています。移動先に途中までコピーしたものがあります"
-	case m == fsops.MethodRemove:
-		return "一部は削除され、下の一覧のものは残っています"
-	}
-	return ""
 }

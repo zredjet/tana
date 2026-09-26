@@ -61,7 +61,7 @@ func TestPlanDoesNotChange(t *testing.T) {
 	if code != exitOK {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
-	for _, want := range []string{"計画: コピー 1 項目", "衝突 1 件", "使える決定: スキップ・上書き・名前を変えて残す"} {
+	for _, want := range []string{"計画: コピー 1 項目", "衝突 1 件", "使える決定: スキップ・上書き・自動リネーム"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
