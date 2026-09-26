@@ -149,10 +149,14 @@ func (o *output) row(y int, full bool) {
 		}
 		force = false
 		// 左のセルと結合しうる書記素クラスタ（VT7）。左のセルにまとめて、自分のセルに書かない端末があるので、
-		// 前の内容が残って次の書記素クラスタと結合しないように、先に空白で消す。
+		// 前の内容が残って次の書記素クラスタと結合しないように、先に空白で消す（clearJoining）。
 		joinsLeft := x > 0 && joins(s.headText(x-1, y), c.text)
 		move := !o.known || o.x != x || o.y != y || c.anchor
-		if c.varies && c.width >= 2 || joinsLeft {
+		switch {
+		case joinsLeft:
+			o.clearJoining(x, y, c)
+			move = true
+		case c.varies && c.width >= 2:
 			o.cup(x, y)
 			o.sgr(c.style)
 			o.b.WriteString(strings.Repeat(" ", c.width))
@@ -174,14 +178,42 @@ func (o *output) row(y int, full bool) {
 	}
 }
 
-// headText は、行 y の x のセルを含む書記素クラスタ（格子の内容）の文字を返す。
-func (s *Screen) headText(x, y int) string {
+// clearJoining は、左のセルと結合しうる書記素クラスタ c（行 y の x）のセルを、書く前に空白で消す。
+// 空白も、プリペンドで終わる書記素クラスタには結合する（GB9b）。そのため、左に向かって、空白と結合しうる書記素クラスタを消す範囲に含め、
+// 消した後で、それらを格子の内容で書き直す。こうして、左のセルにまとめる端末でも、c のセルに前の内容が残らない。
+func (o *output) clearJoining(x, y int, c cell) {
+	s := o.s
+	start := x
+	for start > 0 {
+		h := s.headIndex(start-1, y)
+		if !joins(s.back[y*s.cols+h].text, " ") {
+			break
+		}
+		start = h
+	}
+	o.cup(start, y)
+	o.sgr(c.style)
+	o.b.WriteString(strings.Repeat(" ", x+c.width-start))
+	for i := start; i < x; {
+		l := s.back[y*s.cols+i]
+		o.cup(i, y)
+		o.sgr(l.style)
+		o.b.WriteString(l.text)
+		i += max(l.width, 1)
+	}
+}
+
+// headIndex は、行 y の x のセルを含む書記素クラスタの先頭のセルの桁を返す。
+func (s *Screen) headIndex(x, y int) int {
 	row := s.back[y*s.cols : (y+1)*s.cols]
 	for x > 0 && row[x].width == 0 {
 		x--
 	}
-	return row[x].text
+	return x
 }
+
+// headText は、行 y の x のセルを含む書記素クラスタ（格子の内容）の文字を返す。
+func (s *Screen) headText(x, y int) string { return s.back[y*s.cols+s.headIndex(x, y)].text }
 
 // joins は、a の後に b を続けて書くと、端末が 1 つの書記素クラスタにまとめうるかを返す
 // （ハングルの字母、プリペンド、ヴィラーマ、ZWJ など。欄の境目で起きうる）。

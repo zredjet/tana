@@ -336,6 +336,27 @@ func TestFlushJoinLeavesNoJoinableRemains(t *testing.T) {
 	}
 }
 
+// TestFlushJoinAfterPrepend は、左の書記素クラスタがプリペンドで終わる場合も、結合しうる書記素クラスタのセルに前の内容を残さないことを確かめる。
+// 消すための空白もプリペンドに結合するので、左のプリペンドごと消してから書き直す（VT7。FuzzJoinLeft が見つけた）。
+func TestFlushJoinAfterPrepend(t *testing.T) {
+	t.Parallel()
+	s := New(8, 1)
+	e := emu.New(8, 1)
+	e.JoinLeft = true
+	s.Put(Region{X: 2, Y: 0, W: 6, H: 1}, 0, 0, "😀\u200d", Style{}) // 前のフレーム: ZWJ で終わる絵文字
+	flushTo(t, s, e)
+	s.Put(Region{X: 1, Y: 0, W: 1, H: 1}, 0, 0, "\u0600", Style{}) // プリペンド
+	s.Put(Region{X: 2, Y: 0, W: 1, H: 1}, 0, 0, "\u093f", Style{}) // 母音記号（プリペンドと結合する）
+	s.Put(Region{X: 3, Y: 0, W: 5, H: 1}, 0, 0, "😀", Style{})      // 母音記号とは結合しない絵文字
+	flushTo(t, s, e)
+	for x := 3; x < 8; x++ {
+		c := s.Cell(x, 0)
+		if got := e.Cells[x]; got.Text != c.Text || got.Width != c.Width {
+			t.Errorf("cell %d: terminal %+v, grid %+v (row %q)", x, got, c, e.Row(0))
+		}
+	}
+}
+
 func TestFlushStylesAndNoColor(t *testing.T) {
 	t.Parallel()
 	for _, noColor := range []bool{false, true} {
