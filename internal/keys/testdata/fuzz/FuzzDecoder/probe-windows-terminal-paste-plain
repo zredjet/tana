@@ -1,0 +1,4 @@
+go test fuzz v1
+[]byte("tana 貼り付け\r2行目\tタブ🍣")
+[]byte("\x01\x02\x03")
+bool(false)

@@ -28,6 +28,8 @@ var directionRules = []directionRule{
 	{"internal/term", []string{"golang.org/x/sys"}},
 	// textwidth は標準ライブラリだけを使う（tui §3）。表を作る internal/ucdgen・internal/gen も同じ。
 	{"internal/textwidth", nil},
+	// keys は標準ライブラリだけを使う（tui §3）。
+	{"internal/keys", nil},
 }
 
 // within は、p が root そのものか、その配下のパッケージかを返す。
