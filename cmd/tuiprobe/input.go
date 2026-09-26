@@ -50,8 +50,13 @@ func (b *inbox) next(d time.Duration) (term.Input, error) {
 	}
 }
 
+// vkMenu は Alt キーの仮想キーコード（VK_MENU）。
+const vkMenu = 0x12
+
 // inputBytes は、入力をバイト列にする。Unix のバイト列はそのまま。
 // Windows のレコードは、キーを押したレコードの文字（UTF-16）を UTF-8 にする（VT の入力モードとカーソル位置の報告のため）。
+// Alt キーを離したレコードの文字も含める。conhost は、BMP の外の文字（絵文字など）を貼り付けると、
+// Alt＋テンキーの並びの最後の、Alt を離したレコードに文字（サロゲートの半分）を載せて届ける。
 // 対にならないサロゲートは U+FFFD になる。
 func inputBytes(x term.Input) []byte {
 	if x.Records == nil {
@@ -59,10 +64,16 @@ func inputBytes(x term.Input) []byte {
 	}
 	var u []uint16
 	for _, r := range x.Records {
-		if r.Kind == term.KeyRecord && r.KeyDown && r.Char != 0 {
+		if r.Kind != term.KeyRecord || r.Char == 0 {
+			continue
+		}
+		switch {
+		case r.KeyDown:
 			for range max(r.RepeatCount, 1) {
 				u = append(u, r.Char)
 			}
+		case r.VirtualKey == vkMenu:
+			u = append(u, r.Char)
 		}
 	}
 	return []byte(string(utf16.Decode(u)))

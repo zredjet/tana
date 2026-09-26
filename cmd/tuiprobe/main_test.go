@@ -187,8 +187,15 @@ func TestInputBytes(t *testing.T) {
 		key(true, 1, 0),    // 文字のないキー（Shift など）
 		{Kind: term.WindowSizeRecord, Width: 80, Height: 24},
 		key(true, 1, 0xd800), // 対にならないサロゲート
+		// conhost の貼り付け: Alt＋テンキーの並びの後の、Alt を離したレコードに文字が載る（docs/probe-results の conhost）。
+		{Kind: term.KeyRecord, KeyDown: true, RepeatCount: 1, VirtualKey: vkMenu, ControlKeys: 0x2},
+		{Kind: term.KeyRecord, KeyDown: true, RepeatCount: 1, VirtualKey: 0x66, ControlKeys: 0x2},
+		{Kind: term.KeyRecord, KeyDown: false, RepeatCount: 1, VirtualKey: 0x66, ControlKeys: 0x2},
+		{Kind: term.KeyRecord, KeyDown: false, RepeatCount: 1, VirtualKey: vkMenu, Char: 0xd83c},
+		{Kind: term.KeyRecord, KeyDown: true, RepeatCount: 1, VirtualKey: vkMenu, ControlKeys: 0x2},
+		{Kind: term.KeyRecord, KeyDown: false, RepeatCount: 1, VirtualKey: vkMenu, Char: 0xdf63},
 	}
-	if got, want := string(inputBytes(term.Input{Records: recs})), "🍣aaa�"; got != want {
+	if got, want := string(inputBytes(term.Input{Records: recs})), "🍣aaa\ufffd🍣"; got != want {
 		t.Errorf("inputBytes = %q, want %q", got, want)
 	}
 	if got := inputBytes(term.Input{Bytes: []byte("\x1b[A")}); string(got) != "\x1b[A" {
