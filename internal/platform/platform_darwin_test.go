@@ -24,6 +24,10 @@ func TestIsExecutableDarwin(t *testing.T) {
 	plain := write("plain.txt", 0o644)
 	command := write("run.command", 0o644)
 	tool := write("x.TOOL", 0o644)
+	var others []string // 開くとコマンドやプログラムが動きうるもの（filer §7）
+	for _, n := range []string{"a.terminal", "b.jar", "c.workflow", "d.action", "e.fileloc"} {
+		others = append(others, write(n, 0o644))
+	}
 	link := filepath.Join(dir, "link")
 	if err := os.Symlink(script, link); err != nil {
 		t.Fatal(err)
@@ -35,6 +39,11 @@ func TestIsExecutableDarwin(t *testing.T) {
 	for p, want := range map[string]bool{script: true, plain: false, command: true, tool: true, link: true} {
 		if got := IsExecutable(p, false); got != want {
 			t.Errorf("IsExecutable(%s) = %v, want %v", filepath.Base(p), got, want)
+		}
+	}
+	for _, p := range others {
+		if !IsExecutable(p, false) {
+			t.Errorf("IsExecutable(%s) = false", filepath.Base(p))
 		}
 	}
 	if !IsExecutable(app, true) {

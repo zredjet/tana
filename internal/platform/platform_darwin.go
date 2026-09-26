@@ -6,20 +6,25 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
 // DotFilesHidden は、名前が . で始まるものを隠しファイルとして扱うか（filer §6）。
 const DotFilesHidden = true
 
+// executableExts は、開くとコマンドやプログラムが動きうる拡張子（filer §7）。
+// .terminal（Terminal の設定。コマンドを含められる）、.jar（Java）、.workflow・.action（Automator）、.fileloc（ファイル・アプリの場所）。
+var executableExts = []string{".command", ".tool", ".terminal", ".jar", ".workflow", ".action", ".fileloc"}
+
 // IsExecutable は、開くと実行されるものか（開く前に確認を出す。filer §7）を返す。
-// .app（フォルダ）、.command・.tool と、実行属性の付いたファイル（リンクは辿る）。
+// .app（フォルダ）、executableExts の拡張子と、実行属性の付いたファイル（リンクは辿る）。
 func IsExecutable(path string, isDir bool) bool {
 	ext := strings.ToLower(filepath.Ext(path))
 	if isDir {
-		return ext == ".app"
+		return ext == ".app" || ext == ".workflow" || ext == ".action" // Automator のものはフォルダ（バンドル）のこともある
 	}
-	if ext == ".command" || ext == ".tool" {
+	if slices.Contains(executableExts, ext) {
 		return true
 	}
 	fi, err := os.Stat(path)

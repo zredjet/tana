@@ -147,11 +147,15 @@ func TruncPath(path string, width int) string {
 
 // Escape は、状態行のための表記を返す（filer §9.3）。一覧で ? や簡略な形に置き換える書記素クラスタを、
 // 符号位置（\x1b、\u202e、\u{1f468}）と不正なバイト（\xff）の形にする。ほかの書記素クラスタはそのまま。
+// 置き換えるものがあるときは、もとの \ を \\ にする（\u202e という文字列と、置き換えた U+202E を区別するため）。
 func Escape(name string) string {
+	if !HasReplaced(name) {
+		return name
+	}
 	var b strings.Builder
 	for c := range textwidth.All(name) {
 		if c.Class == textwidth.Normal {
-			b.WriteString(c.Text)
+			b.WriteString(strings.ReplaceAll(c.Text, `\`, `\\`))
 			continue
 		}
 		for i := 0; i < len(c.Text); {

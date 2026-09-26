@@ -137,6 +137,10 @@ func TestEscape(t *testing.T) {
 		{"👨\u200d👩\u200d👧.jpg", `\u{1f468}\u200d\u{1f469}\u200d\u{1f467}.jpg`, true},
 		{"\U0001f1ef\U0001f1f5", `\u{1f1ef}\u{1f1f5}`, true},
 		{"😀", "😀", false},
+		// 置き換える文字があるときは、もとの \ を \\ にして、置き換えた表記と区別する（filer §9.3）
+		{`a\u202eb`, `a\u202eb`, false}, // 置き換える文字がなければそのまま
+		{"a\\u202e\u202e", `a\\u202e\u202e`, true},
+		{`C:\x\y` + "\x1b", `C:\\x\\y\x1b`, true},
 	} {
 		if got := Escape(tt.name); got != tt.want {
 			t.Errorf("Escape(%q) = %q, want %q", tt.name, got, tt.want)
