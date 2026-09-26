@@ -78,6 +78,8 @@ jobs:
         run: |
           go test -count=1 -v ./internal/fsops/internal/probe/
           go test -count=1 -v -run 'FileTooLarge|FileSizeLimit|TestLstatEntryWOF|OtherVolumes|ShortName|Junction|ReadOnly|TrashPrecheck|NoSpace|MoveMethod|TestDelete|TestRemoveRecorded|TestCopy|TestMove|TestTrash|Win32UnsafeNames|LongPath|AppleDouble' ./internal/fsops/
+          # VT3: 疑似コンソールの中の term のテスト（CreatePseudoConsole が使えなければ Skip する。tui §9）。
+          go test -count=1 -v -run 'TestPseudoConsole$' ./internal/term/
 
   # V24: FAT32 のファイルの大きさの上限（4 GiB − 1 バイト）まで実際に書くプローブ（SPEC §19、§20）。
   # 数 GB を書くので時間がかかり、windows ジョブと並行させるために分ける。
@@ -147,6 +149,8 @@ jobs:
         run: |
           go test -count=1 -v ./internal/fsops/internal/probe/
           go test -count=1 -v -run 'FileTooLarge|FileSizeLimit|OtherVolumes|ReadOnly|NoSpace|MoveMethod|Warnings|TestDelete|TestRemoveRecorded|TestCopy|TestMove|TestTrash|NFCOnExFAT|AppleDouble' ./internal/fsops/
+          # VT3: 疑似端末（/dev/ptmx）の中の term のテスト（開けなければ Skip する。tui §9）。
+          go test -count=1 -v -run 'TestRawModeAndRestore|TestInput|TestResize|TestSignals' ./internal/term/
       - run: CGO_ENABLED=0 go vet ./...
       # cgo なしのビルドでは、ごみ箱が使えないこと（KindTrashUnavailable）を確かめる（§18.4 の I5、§19）。
       - run: CGO_ENABLED=0 go test -count=1 -v -run 'TestTrashUnavailable|TestNewPlanTrashPrecheck' ./internal/fsops/
@@ -199,5 +203,7 @@ jobs:
         run: |
           go test -count=1 -v ./internal/fsops/internal/probe/
           go test -count=1 -v -run 'FileTooLarge|FileSizeLimit|OtherVolumes|ReadOnly|NoSpace|MoveMethod|Warnings|TestDelete|TestRemoveRecorded|TestCopy|TestMove|TestTrash|Win32UnsafeNames|LongPath|AppleDouble' ./internal/fsops/
+          # VT3: 疑似端末（/dev/ptmx）の中の term のテスト（開けなければ Skip する。tui §9）。
+          go test -count=1 -v -run 'TestRawModeAndRestore|TestInput|TestResize|TestSignals' ./internal/term/
       # 動作確認用 CLI（fsopsctl）のテスト。ごみ箱が使えない環境で完全削除に切り替えないことも確かめる。
       - run: go test -count=1 -v ./cmd/...

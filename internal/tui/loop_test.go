@@ -160,6 +160,9 @@ func TestRunResize(t *testing.T) {
 	r := &recorder{onEvent: quitOn}
 	r.onEvent = func(l *Loop, ev Event) bool {
 		if ev.Kind == KindResize {
+			if c, rw := l.Size(); c != 30 || rw != 8 {
+				t.Errorf("Size in the resize event = %dx%d, want 30x8", c, rw)
+			}
 			f.send("q")
 		}
 		return quitOn(l, ev)

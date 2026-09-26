@@ -1,7 +1,9 @@
-// tuiprobe は、端末の文字幅とキー入力を実測するプログラム（docs/SPEC-filer.md §12.1、docs/SPEC-tui.md §9）。
+// tuiprobe は、端末の文字幅とキー入力を実測し、TUI の土台を手で確かめるプログラム（docs/SPEC-filer.md §12.1、docs/SPEC-tui.md §9）。
 //
-//	tuiprobe width [-terminal 名前] [-o ファイル] [-hold 秒] [-output 方法] [-vtinput=true|false]
-//	tuiprobe keys  [-terminal 名前] [-o ファイル] [-vtinput] [-output 方法] [-steps ID,...]
+//	tuiprobe width  [-terminal 名前] [-o ファイル] [-hold 秒] [-output 方法] [-vtinput=true|false]
+//	tuiprobe keys   [-terminal 名前] [-o ファイル] [-vtinput] [-output 方法] [-steps ID,...]
+//	tuiprobe modes  [-terminal 名前] [-o ファイル] [-hold 秒] [-decrqm=true|false]
+//	tuiprobe screen [-terminal 名前] [-o ファイル]
 //
 // 結果は JSON のファイル（既定は <端末>-<日付>.json）に書く。ファイルがあれば、その回の節（width・keys など）だけを置き換える。
 // -output（writeconsole・utf8cp・writefile）と -vtinput は Windows だけで意味を持つ（VT1・VT2）。
@@ -21,6 +23,7 @@ import (
 	"time"
 
 	"github.com/zredjet/tana/internal/term"
+	"github.com/zredjet/tana/internal/tui"
 )
 
 const usageText = `使い方:
@@ -29,6 +32,12 @@ const usageText = `使い方:
   tuiprobe keys [-terminal 名前] [-o ファイル] [-vtinput] [-output 方法] [-steps ID,...]
       案内に従って押したキーを、届いたまま（Unix はバイト列、Windows は入力のレコード）記録する。
       -steps を付けると、その手順だけを記録し、ファイルにある同じ節の同じ手順を置き換える（撮り直し）。
+  tuiprobe modes [-terminal 名前] [-o ファイル] [-hold 秒] [-decrqm=true|false]
+      制御シーケンス（同期出力・自動改行・カーソル・bracketed paste）が使えるか（VT5）と、
+      位置の指定で書記素クラスタの結合が切れるか（VT7）を、カーソル位置の問い合わせで測る。
+      -decrqm は DECRQM の問い合わせを送るか（既定は Terminal.app 以外で送る）。
+  tuiprobe screen [-terminal 名前] [-o ファイル]
+      確認用の画面（2 つのペインの 10 万行の一覧、入力欄、進捗、panic の試験）。キー・大きさの変更・終わり方を記録する（VU1・VU4・VT4）。
 
 共通の引数:
   -terminal 名前         端末の名前（例: Terminal.app、iTerm2、Windows Terminal、conhost）。省略すると環境変数から推測する
@@ -37,7 +46,7 @@ const usageText = `使い方:
   -note 文               メモ
   -o ファイル            結果のファイル（既定は <端末>-<日付>.json）
   -output 方法           Windows の出力の方法: writeconsole（既定）、utf8cp、writefile
-  -vtinput               Windows で VT の入力モードを使う（width の既定は true、keys の既定は false）
+  -vtinput               Windows で VT の入力モードを使う（keys の既定は false、ほかは true）
 `
 
 func main() {
@@ -48,7 +57,7 @@ func main() {
 type options struct {
 	terminal, terminalVersion, font, note, out, steps string
 	output                                            term.OutputMethod
-	vtInput                                           bool
+	vtInput, decrqm                                   bool
 	hold                                              time.Duration
 }
 
@@ -58,7 +67,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	cmd := args[0]
-	if cmd != "width" && cmd != "keys" {
+	if cmd != "width" && cmd != "keys" && cmd != "modes" && cmd != "screen" {
 		fmt.Fprint(stderr, usageText)
 		return 2
 	}
@@ -72,7 +81,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&o.note, "note", "", "")
 	fs.StringVar(&o.out, "o", "", "")
 	fs.StringVar(&output, "output", term.OutputWriteConsoleW.String(), "")
-	fs.BoolVar(&o.vtInput, "vtinput", cmd == "width", "")
+	fs.BoolVar(&o.vtInput, "vtinput", cmd != "keys", "")
+	fs.BoolVar(&o.decrqm, "decrqm", os.Getenv("TERM_PROGRAM") != "Apple_Terminal", "")
 	fs.DurationVar(&o.hold, "hold", 0, "")
 	fs.StringVar(&o.steps, "steps", "", "")
 	fs.Usage = func() { fmt.Fprint(stderr, usageText) }
@@ -101,9 +111,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 	defer stop()
 
 	opts := term.Options{AltScreen: true, HideCursor: true, NoAutoWrap: true, VTInput: o.vtInput, Output: o.output}
-	if cmd == "keys" {
+	switch cmd {
+	case "keys":
 		opts.HideCursor = false
 		opts.BracketedPaste = true
+	case "screen":
+		// tana と同じ設定（tui §8）。シグナルは入力のチャネルに届き、tui.Loop が端末を戻して終わる。
+		opts.BracketedPaste = true
+		opts.Signals = true
 	}
 	t, err := term.Open(opts)
 	if err != nil {
@@ -148,6 +163,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 				result = mergeKeys(&old, res)
 			}
 		}
+	case "modes":
+		name = "modes"
+		result, runErr = runModes(t, box, sec, o.decrqm, o.hold, cprTimeout)
+	case "screen":
+		name = "screen"
+		result, runErr = runScreen(t, sec)
 	}
 	restoreErr := t.Restore()
 
@@ -167,8 +188,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "端末を戻せませんでした: %v\n", restoreErr)
 	}
 	if runErr != nil {
+		// panic は、端末を戻した後で、値とスタックを出す（tui T1）。
+		if pe, ok := errors.AsType[*tui.PanicError](runErr); ok {
+			fmt.Fprintf(stderr, "panic で終わりました（端末は戻しました）:\n%v\n", pe)
+			return 2
+		}
 		fmt.Fprintf(stderr, "途中で終わりました: %v\n", runErr)
-		if errors.Is(runErr, context.Canceled) {
+		if _, ok := errors.AsType[*tui.SignalError](runErr); ok || errors.Is(runErr, context.Canceled) {
 			return 130
 		}
 		return 1

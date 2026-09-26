@@ -343,13 +343,18 @@ func showDrift(c console, r *cprReader, hold time.Duration) error {
 	if _, err := c.Write([]byte(b.String())); err != nil {
 		return err
 	}
+	return holdUntilKey(r.box, hold)
+}
+
+// holdUntilKey は、キーが押されるか hold が過ぎるまで待つ（hold が 0 ならキーを押すまで）。撮影のための画面を出しておくのに使う。
+// フォーカス・大きさの変更・キーを離したレコードでは終わらない（撮影のためにウィンドウを触っても消えない）。
+func holdUntilKey(box *inbox, hold time.Duration) error {
 	if hold <= 0 {
 		hold = 24 * time.Hour
 	}
-	// キーの入力で終わる。フォーカス・大きさの変更・キーを離したレコードでは終わらない（撮影のためにウィンドウを触っても消えない）。
 	deadline := time.Now().Add(hold)
 	for left := hold; left > 0; left = time.Until(deadline) {
-		x, err := r.box.next(left)
+		x, err := box.next(left)
 		if errors.Is(err, errTimeout) {
 			return nil
 		}

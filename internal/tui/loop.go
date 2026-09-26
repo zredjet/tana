@@ -106,6 +106,9 @@ func (l *Loop) SetNoColor(on bool) { l.scr.NoColor = on }
 // Stats は、最後のフレームの統計を返す。イベントループの goroutine（Handle・Draw の中）から呼ぶ。
 func (l *Loop) Stats() Stats { return l.stats }
 
+// Size は、画面の大きさを返す。イベントループの goroutine（Handle・Draw の中）から呼ぶ。
+func (l *Loop) Size() (cols, rows int) { return l.scr.Size() }
+
 // Post は、msg をイベントループに送る（KindMessage）。どの goroutine から呼んでもよく、待たない。送った順に届く。
 // Run が終わった後に送ったものは捨てる。
 func (l *Loop) Post(msg any) {
