@@ -11,5 +11,11 @@ func readOnlySys(p string) func() bool {
 	}
 }
 
+// dirLockedSys は、フォルダ p がロック（UF_IMMUTABLE）されているかを返す関数を返す（Mkdir の EPERM の分類。§11.4）。
+func dirLockedSys(p string) func() bool { return readOnlySys(p) }
+
+// statHidden は、UF_HIDDEN（Finder で隠す印）が付いているかを返す（§14.3）。
+func statHidden(st *unix.Stat_t) bool { return st.Flags&unix.UF_HIDDEN != 0 }
+
 // statReadOnly は、上書き先が読み取り専用（§9.3。オーナーの書き込み権限がない、またはロック（UF_IMMUTABLE））かを返す。
 func statReadOnly(st *unix.Stat_t) bool { return st.Mode&0o200 == 0 || st.Flags&unix.UF_IMMUTABLE != 0 }

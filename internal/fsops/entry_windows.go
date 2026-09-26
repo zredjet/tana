@@ -76,6 +76,13 @@ func reparseEntry(p string) (EntryInfo, error) {
 	return info, nil
 }
 
+// attrFlags は、ファイル属性から一覧のための属性（§14.3）を求める。
+// 読み取り専用属性は、フォルダでは保護を意味しない（エクスプローラーがカスタマイズの印に使う）ので、フォルダでないものだけに使う。
+func attrFlags(attrs uint32) (hidden, readOnly bool) {
+	return attrs&windows.FILE_ATTRIBUTE_HIDDEN != 0,
+		attrs&windows.FILE_ATTRIBUTE_READONLY != 0 && attrs&windows.FILE_ATTRIBUTE_DIRECTORY == 0
+}
+
 // entryTypeFromAttrs はファイル属性とリパースタグから種類を判定する（SPEC §14.1）。
 // tag は attrs に FILE_ATTRIBUTE_REPARSE_POINT があるときだけ意味を持つ。
 func entryTypeFromAttrs(attrs, tag uint32) EntryType {

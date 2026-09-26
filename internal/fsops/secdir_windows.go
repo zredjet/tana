@@ -256,7 +256,8 @@ func statEntrySys(s string) (dirEntry, error) {
 	if t == TypeFile {
 		info.Size = int64(bi.FileSizeHigh)<<32 | int64(bi.FileSizeLow)
 	}
-	return dirEntry{info: info, id: st.id, dirAttr: bi.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0}, nil
+	hidden, readOnly := attrFlags(bi.FileAttributes)
+	return dirEntry{info: info, id: st.id, dirAttr: bi.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0, hidden: hidden, readOnly: readOnly}, nil
 }
 
 // removeSys は、\\?\ 形式のパス s にあるエントリ e を削除する（§13.2）。s を削除のアクセス権でリンクを辿らずに開き、

@@ -15,3 +15,6 @@ func readOnlySys(p string) func() bool {
 		return err == nil && a&windows.FILE_ATTRIBUTE_READONLY != 0 && a&windows.FILE_ATTRIBUTE_DIRECTORY == 0
 	}
 }
+
+// dirLockedSys は、Windows では nil。フォルダの読み取り専用属性は保護を意味しないので、Mkdir の分類に使わない（§11.4）。
+func dirLockedSys(string) func() bool { return nil }

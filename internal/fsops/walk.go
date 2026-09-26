@@ -8,6 +8,9 @@ type dirEntry struct {
 	// dirAttr は、OS がフォルダとして扱うエントリか（削除の方法を決める。§13.2）。
 	// Unix では TypeDir と同じ。Windows では FILE_ATTRIBUTE_DIRECTORY（フォルダ用のリンク・ジャンクションを含む）。
 	dirAttr bool
+	// hidden・readOnly は、一覧のための属性（§14.3）。hidden は Windows の FILE_ATTRIBUTE_HIDDEN と macOS の UF_HIDDEN。
+	// readOnly は、Windows ではファイルの読み取り専用属性（フォルダの属性は見ない）、Unix ではオーナーの書き込み権限がないこと（macOS はロックも）。
+	hidden, readOnly bool
 	// statErr は、列挙はできたが調べられなかった（Unix の fstatat の失敗）ことを表す。info・id・dirAttr は使えない。
 	// 使う側は、そのエントリだけを失敗として報告し、ほかのエントリは続ける（1 件のために、フォルダ全体を失敗にしない）。
 	statErr error

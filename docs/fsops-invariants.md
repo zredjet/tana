@@ -20,6 +20,7 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 | 未設定の決定を Skip として扱う（`copy.go` `copyTop`・`copyEntry`、`move.go` `moveItem`・`mergeEntry`） | TestCopyUnsetDecisionSkips、TestCopyMerge、TestMoveConflicts、TestMoveMerge | 共通 |
 | 排他リネーム（`rename.go` `renameExclusiveSysSame`、`rename_windows.go`・`rename_darwin.go`・`rename_linux.go` `renameExclusiveSys`・`renameAtExclusiveSys`。`rename.go` の `renameExclusive`・`renameReplace` はテストからだけ使う） | TestRenameExclusive、TestRenameExclusiveHardLink（同じファイルへのハードリンクを上書きしない）、TestRenameExclusiveSameFile | 共通 |
 | 排他リネームの代わりの手段（`rename_unix.go` `reserveThenRename`・`reserveThenRenameAt`） | TestReserveThenRename、TestRenameExclusiveOtherVolumes、TestCopyOtherVolumes、TestMoveMergeOtherVolumes | 共通・EXFAT/FAT32 |
+| フォルダの作成（`mkdir.go` `Mkdir`。OS の不可分な作成で、同じ名前があれば失敗する。フェーズ17） | TestMkdirExisting（ファイル・フォルダ・リンク・切れたリンクを変えずに KindExist）、TestMkdirFoldedNames（大文字小文字・正規化だけが違う名前） | 共通 |
 | `Rename`（`rename.go` `Rename`・`renameWith`。大文字小文字だけの変更の 2 段階の変更を含む） | TestRename、TestRenameExclusive、TestRenameTwoStepSecondFails・TestRenameTwoStepRollbackFails（2 回目の失敗と元に戻す段） | 共通 |
 | コピーの最終名への排他リネーム・フォルダの作成・計画後に現れた衝突（`copy.go` `finalize`・`createResult`・`copyDir`） | TestCopyConflictAfterPlan、TestCopyConflictBeforeFinalRename、TestCopyMergeNewEntryAfterPlan、TestCopyTempReplacedBeforeFinalRename、TestCopySkipIgnoresSourceChange、TestCopyOtherVolumes | 共通・CROSSVOL・EXFAT/FAT32 |
 | 上書き・マージの直前の照合（`copy.go` `checkTarget`・`checkOverwrite`・`overwriteOnce`。移動でも使う） | TestCopyOverwriteTargetReplaced、TestMoveOverwriteTargetReplaced、TestOverwriteTargetReplacedSameSize（同じ大きさ・更新日時の別のファイル。fileID の照合）、TestCopyMergeTargetReplacedByLink、TestMergeTargetReplacedByDir（別の実フォルダ）、TestCopyTargetGone、TestMoveOverwriteTargetGone | 共通 |
@@ -52,6 +53,7 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 | 経路 | 防いでいるテスト | 条件 |
 |---|---|---|
 | 一時名で書いてからリネームする（`copy.go` `writeTemp`・`createTemp`・`finalize`） | TestCopyTree、TestCopyWriteFailure | 共通 |
+| フォルダの作成（`mkdir.go` `Mkdir`）は OS の不可分な作成 1 回で、途中の状態を作らない。失敗したら何も作らない | TestMkdirInvalidName（何も作らない）、TestMkdirParent | 共通 |
 | キャンセルで一時ファイルを消す（`copy.go` `writeTemp` のバッファごとの確認、`finalize`） | TestCopyCancelMidFile、TestCopyCancelInFolder、TestMoveCrossVolumeCancel | 共通・CROSSVOL |
 | 書き込みの失敗・容量不足で一時ファイルを消す（`copy.go` `writeTemp`、`lockRetrier.removeTemp`） | TestCopyWriteFailure、TestCopyNoSpaceInjected、TestCopyNoSpaceCrossVolume | 共通・CROSSVOL |
 | 検証の失敗で一時ファイルを消す。fileID を記録した後は、一時ファイルのままの場合だけ消す（`copy.go` `verify`、`writeTemp` の `recorded`、§10.1 の手順 8） | TestCopySourceChangedDuringCopy、TestCopyVerifyHash、TestTempReplacedBeforeVerify（置き換えたものを消さない） | 共通 |
@@ -68,6 +70,7 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 |---|---|---|
 | 種類の判定（`entry*.go` `lstatEntry`、`entryTypeFromAttrs`） | TestLstatEntryLinks、TestLstatEntryJunction、TestEntryTypeFromAttrs | 共通・Windows |
 | リンクを辿らない列挙（`walk*.go` `readDir`） | TestReadDirNotADir、TestReadDirJunction | 共通・Windows |
+| 一覧のための調べ・列挙（`list.go` `Lstat`・`ReadDir`・`Readlink`、`walk*.go` `readDirFollowSys`。フェーズ17）。渡されたフォルダ自体のリンクだけを辿り（利用者が入った場合）、中のエントリは辿らない。fsops の中の走査の `readDir` は今までどおり入らない | TestReadDirEntersLinkedFolder（中のリンクは TypeSymlink、内部の readDir はリンクに入らない）、TestReadDirPublic、TestListJunction | 共通・Windows |
 | 完全削除の走査で、開いたハンドルで確かめてから入る（`secdir_*.go` `openSecDir`、`remove.go` `enter`・`deleteContents`） | TestDeleteKeepsLinkTargets、TestDeleteDirReplacedByLinkBeforeEnter、TestDeleteTopLevelLinks、TestDeleteDirReplacedByFileBeforeRemove | 共通・Windows |
 | 移動元の削除の走査（`remove.go` `removeRecorded`） | TestRemoveRecordedDirReplacedByLink、TestMoveCrossVolumeLinks | 共通・CROSSVOL |
 | ハンドルを閉じた後のフォルダの削除（Windows: `secdir_windows.go` `removeVerified` の確かめたハンドルでの削除、Unix: `rmdir`・`unlinkat(AT_REMOVEDIR)`） | TestDeleteDirReplacedByLinkBeforeRemove、TestRemoveRecordedDirReplacedByLinkBeforeRemove、TestMoveMergeDirReplacedByLinkBeforeRemove | 共通 |
@@ -104,6 +107,8 @@ SPEC §2 の不変条件 I1〜I7 のそれぞれについて、それを破り�
 | 移動先の名前は移動元の名前をそのまま使う（同一ボリュームの `move.go` `rename`・`mergeEntry`、ボリュームをまたぐ `copyThenRemove` のコピーと記録した名前での削除。日本語・絵文字・NFD の名前を、トップレベルの項目・フォルダの中身・マージ先の中身に置く） | TestMoveNamesSameVolume、TestMoveNamesCrossVolume | 共通・CROSSVOL |
 | macOS の exFAT で、列挙が NFD の名前を返す NFC の名前のファイル（名前を変換して探し直さず、失敗として報告する。§8.5、V17） | TestNFCOnExFATCopy、TestNFCOnExFATDelete、TestNFCOnExFATMove | macOS・EXFAT |
 | Windows の `\\?\` 変換（`path_windows.go` `sysPath`・`userPath`） | TestSysPathWindows、TestUserPathWindows、TestRenameHelpersWin32UnsafeNames、TestReadDirWin32UnsafeNames、TestFileIDWin32UnsafeNames、TestLstatEntryWin32UnsafeNames | Windows |
+| フォルダの作成の名前（`mkdir.go` `Mkdir`。名前をそのまま使い、Rename と同じ検査で使えない名前を拒む。末尾が `.` の親の中に、同名の別フォルダと取り違えずに作る。フェーズ17） | TestMkdir（日本語・NFD）、TestMkdirInvalidName、TestMkdirPaths（長いパス・`foo.` の親・リンクの親） | 共通 |
+| 一覧のための調べ・列挙の名前とパス（`list.go`。列挙で得た名前をそのまま返し、`\\?\` を通す。フェーズ17） | TestListLongPathAndUnsafeNames、TestLstatErrors・TestReadDirEntersLinkedFolder（エラーのパスに `\\?\` が付かない） | 共通 |
 | 末尾が `.`・空白の名前、予約名を含むコピー・移動で、同名の別ファイル（`foo`）と取り違えない（`\\?\` 変換を通る `copy.go`・`move.go`・`remove.go` の各経路） | TestCopyWin32UnsafeNames、TestMoveWin32UnsafeNames、TestMoveCrossVolumeWin32UnsafeNames | 共通・CROSSVOL |
 | 260 文字を超えるパスのコピー・移動（上書き・自動リネーム・マージ・移動元の削除を含む） | TestCopyLongPath、TestMoveLongPath、TestMoveCrossVolumeLongPath | 共通・CROSSVOL |
 | 自動リネームの候補（`copy.go` `autoRenameName`。切り詰めない） | TestAutoRenameName、TestCopyAutoRenameTooLong | 共通 |

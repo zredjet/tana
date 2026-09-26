@@ -24,6 +24,18 @@ func readDirSys(s string) ([]dirEntry, error) {
 	return listFD(fd, s)
 }
 
+// readDirFollowSys は、フォルダを最後の要素のリンクを辿って開き（利用者がリンクのフォルダに入った場合。§14.3）、中身をリンクを辿らずに列挙する。
+func readDirFollowSys(s string) ([]dirEntry, error) {
+	fd, err := ignoringEINTR2(func() (int, error) {
+		return unix.Open(s, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	})
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: s, Err: err}
+	}
+	defer unix.Close(fd)
+	return listFD(fd, s)
+}
+
 // listFD は、開いたフォルダ fd の中身を名前のバイト順で列挙する。fd は閉じない。s はエラーに使うパス。
 func listFD(fd int, s string) ([]dirEntry, error) { return listFDWith(fd, s, statAt) }
 
@@ -73,7 +85,7 @@ func statAt(fd int, name string) (dirEntry, error) {
 	if t == TypeFile {
 		info.Size = st.Size
 	}
-	return dirEntry{name: name, info: info, id: idStatFromStat(&st).id, dirAttr: t == TypeDir}, nil
+	return dirEntry{name: name, info: info, id: idStatFromStat(&st).id, dirAttr: t == TypeDir, hidden: statHidden(&st), readOnly: statReadOnly(&st)}, nil
 }
 
 // fileModeFromStat は Stat_t の Mode の種類の部分を fs.FileMode にする（entryTypeFromMode で使う分だけ）。

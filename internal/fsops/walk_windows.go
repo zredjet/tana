@@ -47,6 +47,30 @@ func readDirSys(s string) ([]dirEntry, error) {
 	return listHandle(h, s)
 }
 
+// readDirFollowSys は、フォルダをリパースポイントを辿って開き（利用者がリンク・ジャンクションのフォルダに入った場合。§14.3）、
+// 中身をリンクを辿らずに列挙する。開いたものがフォルダでなければ（リンク先がファイルの場合を含む）、ERROR_DIRECTORY を返す。
+func readDirFollowSys(s string) ([]dirEntry, error) {
+	s16, err := windows.UTF16PtrFromString(s)
+	if err != nil {
+		return nil, err
+	}
+	h, err := windows.CreateFile(s16, windows.FILE_LIST_DIRECTORY|windows.FILE_READ_ATTRIBUTES,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING,
+		windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
+	if err != nil {
+		return nil, &os.PathError{Op: "CreateFile", Path: s, Err: err}
+	}
+	defer windows.CloseHandle(h)
+	var bi windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(h, &bi); err != nil {
+		return nil, &os.PathError{Op: "GetFileInformationByHandle", Path: s, Err: err}
+	}
+	if bi.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY == 0 {
+		return nil, &os.PathError{Op: "readdir", Path: s, Err: windows.ERROR_DIRECTORY}
+	}
+	return listHandle(h, s)
+}
+
 // listHandle は、開いたフォルダのハンドル h の中身を名前のバイト順で列挙する。s はエラーに使うパス。
 func listHandle(h windows.Handle, s string) ([]dirEntry, error) {
 	var bi windows.ByHandleFileInformation
@@ -112,7 +136,8 @@ func enumerateDir(h windows.Handle, restartClass, class uint32, extd bool, vol u
 				if t == TypeFile {
 					info.Size = size
 				}
-				entries = append(entries, dirEntry{name: name, info: info, id: id, dirAttr: attrs&windows.FILE_ATTRIBUTE_DIRECTORY != 0})
+				hidden, readOnly := attrFlags(attrs)
+				entries = append(entries, dirEntry{name: name, info: info, id: id, dirAttr: attrs&windows.FILE_ATTRIBUTE_DIRECTORY != 0, hidden: hidden, readOnly: readOnly})
 			}
 			if next == 0 {
 				break
