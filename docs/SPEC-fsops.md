@@ -1172,6 +1172,7 @@ const (
 	KindLinkSkipped      // LinkSkip の方針でリンクを複製しなかった（エラーではない。§14.2）
 	KindNameForm         // 名前の文字の表現（NFC・NFD）の違いで扱えない（macOS の exFAT。§8.5、V17）
 	KindDestChanged      // コピー先・移動先のフォルダやファイル（DestDir、作ったフォルダ、一時ファイル）が処理中に変更・置き換えられた
+	KindUnreachable      // ネットワークの場所が応答しない・見つからない、ドライブの準備ができていない（フェーズ18で加えた。filer VU7）
 )
 
 type OpError struct {
@@ -1211,6 +1212,7 @@ type OpError struct {
 | LinkUnsupported | `ERROR_PRIVILEGE_NOT_HELD`、`ERROR_INVALID_FUNCTION`（リンク作成時） | `EPERM`（リンク作成時。読み取り専用でない場合） |
 | InvalidName | `ERROR_INVALID_NAME`、`ERROR_FILENAME_EXCED_RANGE` | `ENAMETOOLONG`、`EILSEQ` |
 | SourceChanged | — | `ELOOP`（`O_NOFOLLOW` でリンクに当たった場合） |
+| Unreachable | `ERROR_BAD_NETPATH`、`ERROR_NETNAME_DELETED`、`ERROR_BAD_NET_NAME`、`ERROR_REM_NOT_LIST`、`ERROR_UNEXP_NET_ERR`、`ERROR_BAD_NET_RESP`、`ERROR_NETWORK_BUSY`、`ERROR_DEV_NOT_EXIST`、`ERROR_SEM_TIMEOUT`、`ERROR_NETWORK_UNREACHABLE`、`ERROR_HOST_UNREACHABLE`、`ERROR_CONNECTION_REFUSED`、`ERROR_NO_NET_OR_BAD_PATH`、`ERROR_NOT_CONNECTED`、`ERROR_NOT_READY` | `ENETDOWN`、`ENETUNREACH`、`ENETRESET`、`ECONNABORTED`、`ECONNRESET`、`ENOTCONN`、`ETIMEDOUT`、`EHOSTDOWN`、`EHOSTUNREACH` |
 
 - 可能な場合は `errors.Is(err, fs.ErrNotExist)` なども使う。ただしエラー番号の対応を先に調べる（Unix では `ENOTEMPTY` も `fs.ErrExist` に当たるため）。
 - 条件付きの対応は、呼び出し側が条件を指定したときだけ適用する。条件を満たさない場合は次のとおり。

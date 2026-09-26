@@ -28,6 +28,16 @@ func TestClassifyErrnoUnix(t *testing.T) {
 		{unix.EXDEV, KindCrossDevice},
 		{unix.ENAMETOOLONG, KindInvalidName},
 		{unix.EILSEQ, KindInvalidName},
+		// 応答しないネットワークの場所（filer VU7）
+		{unix.ENETDOWN, KindUnreachable},
+		{unix.ENETUNREACH, KindUnreachable},
+		{unix.ENETRESET, KindUnreachable},
+		{unix.ECONNABORTED, KindUnreachable},
+		{unix.ECONNRESET, KindUnreachable},
+		{unix.ENOTCONN, KindUnreachable},
+		{unix.ETIMEDOUT, KindUnreachable},
+		{unix.EHOSTDOWN, KindUnreachable},
+		{unix.EHOSTUNREACH, KindUnreachable},
 		// O_NOFOLLOW 以外の ELOOP（リンクの循環など）は対応表にない（SPEC §17）
 		{unix.ELOOP, KindUnknown},
 		// 表にない番号

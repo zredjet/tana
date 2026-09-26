@@ -50,6 +50,9 @@ func classifyErrno(err error, o classifyOpts) (k Kind, ok bool) {
 		return KindCrossDevice, true
 	case unix.ENAMETOOLONG, unix.EILSEQ:
 		return KindInvalidName, true
+	case unix.ENETDOWN, unix.ENETUNREACH, unix.ENETRESET, unix.ECONNABORTED, unix.ECONNRESET, unix.ENOTCONN,
+		unix.ETIMEDOUT, unix.EHOSTDOWN, unix.EHOSTUNREACH:
+		return KindUnreachable, true
 	case unix.ELOOP:
 		// SPEC §17 では、O_NOFOLLOW でリンクに当たった場合だけ SourceChanged とする。
 		// それ以外（リンクの循環など）は対応表にないので ok を false にする。

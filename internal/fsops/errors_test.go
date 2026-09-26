@@ -40,10 +40,10 @@ func checkStrings[T interface {
 func TestStrings(t *testing.T) {
 	t.Parallel()
 	var kinds []Kind
-	for k := KindUnknown; k <= KindDestChanged; k++ {
+	for k := KindUnknown; k <= KindUnreachable; k++ {
 		kinds = append(kinds, k)
 	}
-	checkStrings(t, "Kind", "Kind", kinds, KindDestChanged+1)
+	checkStrings(t, "Kind", "Kind", kinds, KindUnreachable+1)
 	checkStrings(t, "Outcome", "Outcome",
 		[]Outcome{OutcomeDone, OutcomeSkipped, OutcomeFailed, OutcomePartial, OutcomeCopiedSourceKept, OutcomeTrashUnconfirmed}, 0)
 	checkStrings(t, "Status", "Status",

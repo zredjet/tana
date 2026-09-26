@@ -57,6 +57,8 @@ func Kind(k fsops.Kind) string {
 		return "ディスクへの書き込みを確定できませんでした"
 	case fsops.KindLinkSkipped:
 		return "リンクは設定によりコピーしませんでした"
+	case fsops.KindUnreachable:
+		return "場所に接続できません（ネットワークやドライブが応答しません）"
 	}
 	// KindUnknown と、結果に現れない KindCrossDevice（filer §8.8）。
 	return "予期しないエラーです"

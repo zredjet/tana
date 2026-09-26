@@ -628,6 +628,7 @@ fsops はメッセージを作らない（fsops §17）。UI が `Kind` から�
 | `KindVerifyFailed` | コピーした内容が元と一致しませんでした | fsops §10.4 |
 | `KindSyncFailed` | ディスクへの書き込みを確定できませんでした | fsops §10.5 |
 | `KindLinkSkipped` | リンクは設定によりコピーしませんでした | エラーではない（fsops §14.2）。v0.1 では現れない（§8.1） |
+| `KindUnreachable` | 場所に接続できません（ネットワークやドライブが応答しません） | 応答しないネットワークの場所、準備のできていないドライブ（VU7 の結果からフェーズ18で加えた。fsops §17） |
 | `KindCrossDevice` | — | 結果には現れない（fsops §17）。現れたら `KindUnknown` と同じに扱う |
 | `KindUnknown` | 予期しないエラーです | `e` で英語の詳細を見られることを案内する |
 
@@ -958,7 +959,8 @@ Windows は §12.5 と同じ VM（Windows 11 ARM 版 10.0.26200）。Mac は App
 | `\\tana-no-such-host\share`（ない名前） | 0.21 秒 | 0.05 秒 | 1.4 秒 | 同上 |
 
 - UI は固まらず、Esc で中止できた（U5）。Esc から中止までの 0.05 秒は、Esc の待ち時間（tui §5）。作業用の goroutine は、OS の呼び出しが戻るまで残った。
-- エラーは `KindUnknown` に分類され、「このフォルダを開けません: 予期しないエラーです」と出る。ネットワークのエラーの分類は、fsops の変更の案として報告した（フェーズ18）。
+- 当時はエラーが `KindUnknown` に分類され、「このフォルダを開けません: 予期しないエラーです」と出た。
+  そのため、ネットワークのエラーと準備のできていないドライブを `KindUnreachable`（「場所に接続できません」）に分類するようにした（フェーズ18。fsops §17）。
 - スリープ中の外付けディスクは、手元に無いので確かめていない。Mac のネットワークドライブも確かめていない。
 
 **VU8**（10 万件）: `internal/listing` の `TestVU8`（`TANA_VU8=1`）と、ベンチマーク `BenchmarkBuild100k`・`BenchmarkDraw100k`（`internal/tui`）。

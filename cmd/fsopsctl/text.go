@@ -185,6 +185,8 @@ func kindText(k fsops.Kind) string {
 		return "名前の文字の表現（NFC・NFD）の違いで、このボリュームでは扱えないファイルです"
 	case fsops.KindLinkSkipped:
 		return "リンクは設定によりコピーしませんでした"
+	case fsops.KindUnreachable:
+		return "場所に接続できません（ネットワークやドライブが応答しません）"
 	case fsops.KindVerifyFailed:
 		return "コピーした内容が元と一致しませんでした"
 	case fsops.KindSyncFailed:

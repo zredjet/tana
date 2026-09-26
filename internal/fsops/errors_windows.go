@@ -54,6 +54,11 @@ func classifyErrno(err error, o classifyOpts) (k Kind, ok bool) {
 		}
 	case windows.ERROR_INVALID_NAME, windows.ERROR_FILENAME_EXCED_RANGE:
 		return KindInvalidName, true
+	case windows.ERROR_BAD_NETPATH, windows.ERROR_NETNAME_DELETED, windows.ERROR_BAD_NET_NAME, windows.ERROR_REM_NOT_LIST,
+		windows.ERROR_UNEXP_NET_ERR, windows.ERROR_BAD_NET_RESP, windows.ERROR_NETWORK_BUSY, windows.ERROR_DEV_NOT_EXIST,
+		windows.ERROR_SEM_TIMEOUT, windows.ERROR_NETWORK_UNREACHABLE, windows.ERROR_HOST_UNREACHABLE, windows.ERROR_CONNECTION_REFUSED,
+		windows.ERROR_NO_NET_OR_BAD_PATH, windows.ERROR_NOT_CONNECTED, windows.ERROR_NOT_READY:
+		return KindUnreachable, true
 	}
 	return KindUnknown, false
 }

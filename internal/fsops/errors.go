@@ -37,6 +37,7 @@ const (
 	KindLinkSkipped  // LinkSkip の方針でリンクを複製しなかった（エラーではない。§14.2）
 	KindNameForm     // 名前の文字の表現（NFC・NFD）の違いで扱えない（macOS の exFAT。§8.5、V17）
 	KindDestChanged  // コピー先・移動先のフォルダやファイル（DestDir、作ったフォルダ、一時ファイル）が処理中に変更・置き換えられた
+	KindUnreachable  // ネットワークの場所が応答しない・見つからない、ドライブの準備ができていない（§17）
 )
 
 func (k Kind) String() string {
@@ -93,6 +94,8 @@ func (k Kind) String() string {
 		return "KindNameForm"
 	case KindDestChanged:
 		return "KindDestChanged"
+	case KindUnreachable:
+		return "KindUnreachable"
 	}
 	return "Kind(" + strconv.Itoa(int(k)) + ")"
 }
