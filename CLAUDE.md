@@ -63,13 +63,13 @@ TUI のライブラリは使わず、端末の入出力から自作する。
 
 ## UI の実装ルール
 
-対象: `internal/` の term・textwidth・keys・screen・lineedit・listing・textfmt・msg・app・tui と、`cmd/tana`・`cmd/tuiprobe`。
+対象: `internal/` の term・textwidth・keys・screen・lineedit・listing・textfmt・msg・app・tui・platform と、`cmd/tana`・`cmd/tuiprobe`。
 
 - import してよいのは標準ライブラリ、`golang.org/x/sys`、`golang.org/x/text` だけ（fsops と同じ）。ほかが必要なら理由を添えて私に確認する。
   TUI のライブラリは使わない（filer §12.3）。
 - パッケージの境界と依存の向きは filer §4 と tui §3 に従い、`deps_test.go` で確かめる。
 - 土台のパッケージ（term・textwidth・keys・screen・lineedit）の API に、ファイラー固有の概念（ペイン、ファイル）を入れない（tui §1）。
-- OS ごとのコードは `term` に閉じる。ビルドタグの規則は fsops と同じ。
+- OS ごとのコードは `term`（端末の入出力）と `platform`（関連付けで開く、実行ファイルの判定、隠しファイルの名前の規則）に閉じる。ビルドタグの規則は fsops と同じ。
 - 画面の状態を変えるのは、イベントループの goroutine だけ。作業用の goroutine は panic を回収して、イベントループに渡す（filer §10）。
 - fsops に渡すパスを、表示用に加工した文字列（置き換え・切り詰め・正規化をしたもの）から作らない（U4）。
 - 書記素クラスタの区切りと幅は、`textwidth` だけで判断する（T4）。
