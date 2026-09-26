@@ -257,6 +257,25 @@ func golden(t *testing.T, name string, s *screen.Screen) {
 	}
 }
 
+// TestGoldenFilesLF は、ゴールデンファイルの改行が LF のままであることを確かめる。
+// Windows のチェックアウト（core.autocrlf）で CRLF に変わると、すべての比較が 1 行目で食い違う（.gitattributes で防ぐ）。
+func TestGoldenFilesLF(t *testing.T) {
+	t.Parallel()
+	files, err := filepath.Glob(filepath.Join("testdata", "filer", "*.golden"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no golden files: %v", err)
+	}
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(b), "\r") {
+			t.Errorf("%s has CR (checked out with CRLF; see .gitattributes)", f)
+		}
+	}
+}
+
 // TestGoldenMain は、メイン画面を 80×24 と 120×40 で描く（filer §5.1 のモックが出発点）。
 func TestGoldenMain(t *testing.T) {
 	t.Parallel()
