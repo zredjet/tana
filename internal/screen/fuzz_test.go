@@ -223,3 +223,82 @@ func FuzzWidthMismatch(f *testing.F) {
 		}
 	})
 }
+
+// joinPool は、左のセルと結合しうる書記素クラスタを多く含む部品（ハングルの字母、ZWJ で終わる絵文字、ヴィラーマ、母音記号、プリペンド）。
+var joinPool = []string{
+	"\u1100", "가", "😀\u200d", "😀", "\u0600", "a", "क\u094d", "ष", "ि", " ", "あ", "\u1100\u1100", "b",
+}
+
+// joinPairs は、格子の中で、左のセルと結合しうる書記素クラスタ（とその左のセル）が占めるセルを taint に加える。
+func joinPairs(s *Screen, taint map[[2]int]bool) {
+	cols, rows := s.Size()
+	for y := range rows {
+		for x := 1; x < cols; x++ {
+			c := s.Cell(x, y)
+			if c.Width == 0 {
+				continue
+			}
+			h := x - 1
+			for h > 0 && s.Cell(h, y).Width == 0 {
+				h--
+			}
+			if !joins(s.Cell(h, y).Text, c.Text) {
+				continue
+			}
+			for i := h; i < x+c.Width; i++ {
+				taint[[2]int{i, y}] = true
+			}
+		}
+	}
+}
+
+// FuzzJoinLeft は、左のセルと結合する端末（Windows Terminal・iTerm2。tui §9 の VT7）でも、ずれが、左のセルと結合しうる書記素クラスタと
+// その左のセルの中で止まり、ほかのセルに広がらないことを確かめる（T6）。
+// 結合しうる組は、全体を描き直してから出力のたびに数える（前のフレームで組だったセルには、端末が前の内容を残しうる）。
+func FuzzJoinLeft(f *testing.F) {
+	f.Add([]byte{0, 1, 1, 13, 2, 0, 0, 0, 0, 0, 0, 0, 1, 3, 13, 2, 0, 0, 1, 0, 0, 0, 3, 1})
+	f.Add([]byte{0, 1, 1, 13, 2, 0, 0, 2, 2, 0, 0, 0, 5, 1, 13, 2, 0, 0, 1, 3, 0, 0, 0, 3, 1, 0, 1, 1, 13, 2, 0, 0, 1, 12, 0, 0, 0, 3, 1})
+	f.Fuzz(func(t *testing.T, ops []byte) {
+		const cols, rows = 12, 2
+		r := &opReader{b: ops}
+		s := New(cols, rows)
+		newTerm := func() *emu.Terminal {
+			e := emu.New(cols, rows)
+			e.JoinLeft = true
+			return e
+		}
+		e := newTerm()
+		taint := map[[2]int]bool{}
+		for !r.done() {
+			switch r.next() % 4 {
+			case 0, 1:
+				reg := r.region(cols, rows)
+				s.Put(reg, r.in(cols), r.in(rows), r.text(joinPool), r.style())
+			case 2:
+				s.Fill(r.region(cols, rows), r.style())
+			case 3:
+				if r.next()%4 == 0 {
+					// 全体を描き直す（別の端末に出す）。前のフレームの名残はなくなる。
+					s.Invalidate()
+					e = newTerm()
+					taint = map[[2]int]bool{}
+				}
+				flushTo(t, s, e)
+				joinPairs(s, taint)
+				for y := range rows {
+					for x := range cols {
+						if taint[[2]int{x, y}] {
+							continue
+						}
+						c := s.Cell(x, y)
+						want := emu.Cell{Text: c.Text, Width: c.Width, Style: emuStyle(c.Style, false)}
+						if got := e.Cells[y*cols+x]; got != want {
+							t.Fatalf("(%d,%d) outside joining pairs: terminal %+v, grid %+v; rows %q %q / %q %q",
+								x, y, got, want, s.Row(0), s.Row(1), e.Row(0), e.Row(1))
+						}
+					}
+				}
+			}
+		}
+	})
+}

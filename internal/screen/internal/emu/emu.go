@@ -1,12 +1,14 @@
 // Package emu は、screen のテストのための小さな端末エミュレータ（docs/SPEC-tui.md §6）。
 //
 // 解釈するのは、screen が出力するシーケンスだけ: カーソルの位置（ESC[行;桁H）、SGR（ESC[…m）、
-// 画面の消去（ESC[2J）、カーソルの表示・非表示（ESC[?25h・ESC[?25l）と、文字。
+// 画面の消去（ESC[2J）、カーソルの表示・非表示（ESC[?25h・ESC[?25l）、同期出力（ESC[?2026h・ESC[?2026l）と、文字。
 // それ以外の制御文字・シーケンスと、端末に出してはいけない文字は Errors に記録する（T2 の確認）。
 // 自動改行はない（DECAWM を切った状態）。幅は textwidth で数える。Width を設定すると、幅の計算が合わない端末を模擬できる。
 //
 // 文字は、制御シーケンスで区切られた並びごとに書記素クラスタに分ける。
-// 並びの中で隣り合う文字は結合しうるが、カーソルの位置の指定をはさめば結合しない、と仮定する。
+// 既定では、並びの中で隣り合う文字は結合しうるが、カーソルの位置の指定をはさめば結合しない（Terminal.app・conhost。docs/SPEC-tui.md §9 の VT7）。
+// JoinLeft を設定すると、位置を指定し直しても、左のセルと 1 つの書記素クラスタになる文字を左のセルにまとめて、桁を進めない端末を模擬できる
+// （Windows Terminal・iTerm2。VT7）。
 package emu
 
 import (
@@ -42,6 +44,10 @@ type Terminal struct {
 	Errors        []string
 	// Width は書記素クラスタの幅（nil なら textwidth の表示幅）。幅の計算が合わない端末の模擬に使う。
 	Width func(cluster string) int
+	// JoinLeft は、左のセルと結合する端末の模擬（VT7）。
+	JoinLeft bool
+	// Synchronized は、同期出力の中（ESC[?2026h を受けて、ESC[?2026l をまだ受けていない）。
+	Synchronized bool
 }
 
 // New は、空白で埋めた端末を作る。カーソルは表示している。
@@ -129,6 +135,10 @@ func (t *Terminal) escape(s string) int {
 		t.CursorVisible = true
 	case final == 'l' && params == "?25":
 		t.CursorVisible = false
+	case final == 'h' && params == "?2026":
+		t.Synchronized = true
+	case final == 'l' && params == "?2026":
+		t.Synchronized = false
 	default:
 		t.error("unknown CSI %q", seq)
 	}
@@ -189,12 +199,37 @@ func (t *Terminal) text(s string) {
 			// screen は表示する形（通常の文字だけ）を出力する。それ以外が届いたら T2 を破っている。
 			t.error("%v cluster %q written", c.Class, c.Text)
 		}
+		if t.JoinLeft && t.joinLeft(c.Text) {
+			continue
+		}
 		w := c.Width
 		if t.Width != nil {
 			w = t.Width(c.Text)
 		}
 		t.put(c.Text, w)
 	}
+}
+
+// joinLeft は、カーソルの左のセルの書記素クラスタに text が続いて 1 つになるなら、左のセルにまとめて true を返す（桁は進めない）。
+func (t *Terminal) joinLeft(text string) bool {
+	if t.Y < 0 || t.Y >= t.Rows || t.X <= 0 || t.X > t.Cols {
+		return false
+	}
+	row := t.Cells[t.Y*t.Cols : (t.Y+1)*t.Cols]
+	h := t.X - 1
+	for h > 0 && row[h].Width == 0 {
+		h--
+	}
+	left := row[h].Text
+	if left == "" {
+		return false
+	}
+	c, _ := textwidth.Next(left + text)
+	if len(c.Text) == len(left) {
+		return false
+	}
+	row[h].Text = left + text
+	return true
 }
 
 // put は、カーソルの位置に幅 w のクラスタを置き、カーソルを進める。右端を越える部分は捨てる（自動改行なし）。

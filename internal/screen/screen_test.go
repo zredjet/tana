@@ -61,6 +61,7 @@ func diff(s *Screen, e *emu.Terminal, cols func(x int) bool) []string {
 }
 
 // flushTo は、s を e に出力し、エミュレータが記録した誤り（T2）があれば失敗にする。
+// 同期出力の終わりを書き忘れていないこと（端末が表示を止めたままにならないこと）も確かめる。
 func flushTo(t *testing.T, s *Screen, e *emu.Terminal) string {
 	t.Helper()
 	var b bytes.Buffer
@@ -71,8 +72,14 @@ func flushTo(t *testing.T, s *Screen, e *emu.Terminal) string {
 	if len(e.Errors) > 0 {
 		t.Fatalf("terminal errors (T2): %q in %q", e.Errors, b.String())
 	}
+	if e.Synchronized {
+		t.Fatalf("synchronized output left open in %q", b.String())
+	}
 	return b.String()
 }
+
+// synced は、1 回の出力を同期出力で囲んだもの（tui §6）。
+func synced(s string) string { return "\x1b[?2026h" + s + "\x1b[?2026l" }
 
 func TestPutClipsToRegion(t *testing.T) {
 	t.Parallel()
@@ -222,7 +229,7 @@ func TestFlushDiff(t *testing.T) {
 		t.Errorf("Flush without changes wrote %q", out)
 	}
 	s.Put(full, 1, 1, "x", Style{Attr: AttrBold})
-	if out := flushTo(t, s, e); out != "\x1b[2;2H\x1b[0;1mx" {
+	if out := flushTo(t, s, e); out != synced("\x1b[2;2H\x1b[0;1mx") {
 		t.Errorf("one change: %q", out)
 	}
 	if d := diff(s, e, nil); len(d) > 0 {
@@ -240,7 +247,7 @@ func TestFlushPositioning(t *testing.T) {
 	s.Put(full, 4, 0, "○e", Style{}) // 幅が端末によって違いうる文字の後
 	s.SetCursor(0, 0, false)
 	out := flushTo(t, s, e)
-	want := "\x1b[0m\x1b[?25l" + "\x1b[1;1Hab" + "\x1b[1;3Hcd" + "\x1b[1;5H○" + "\x1b[1;6He  "
+	want := synced("\x1b[0m\x1b[?25l" + "\x1b[1;1Hab" + "\x1b[1;3Hcd" + "\x1b[1;5H○" + "\x1b[1;6He  ")
 	if out != want {
 		t.Errorf("output\n got  %q\n want %q", out, want)
 	}
@@ -248,12 +255,13 @@ func TestFlushPositioning(t *testing.T) {
 	// 違いうる文字の後の 1 つは、変わっていなくても書き直す（端末が広く描いてはみ出した分を直す）。
 	s.Put(full, 0, 0, "\U0001faf9", Style{})
 	out = flushTo(t, s, e)
-	if want := "\x1b[1;1H  \x1b[1;1H\U0001faf9\x1b[1;3Hc"; out != want {
+	if want := synced("\x1b[1;1H  \x1b[1;1H\U0001faf9\x1b[1;3Hc"); out != want {
 		t.Errorf("new emoji\n got  %q\n want %q", out, want)
 	}
 }
 
-// TestFlushSeparatesJoiningClusters は、隣の欄の文字と結合しうるとき、位置を指定し直して分けることを確かめる。
+// TestFlushSeparatesJoiningClusters は、隣の欄の文字と結合しうるとき、先にそのセルを空白で消し、位置を指定し直して分けることを確かめる
+// （位置の指定で分かれて描く端末: Terminal.app・conhost。VT7）。後ろでも位置を指定し直す。
 func TestFlushSeparatesJoiningClusters(t *testing.T) {
 	t.Parallel()
 	s := New(6, 1)
@@ -262,11 +270,69 @@ func TestFlushSeparatesJoiningClusters(t *testing.T) {
 	s.Put(Region{X: 2, Y: 0, W: 4, H: 1}, 0, 0, "가", Style{})
 	s.cell(2, 0).anchor = false // 欄の始めでなくても分ける
 	out := flushTo(t, s, e)
-	if !strings.Contains(out, "\u1100\x1b[1;3H가") {
+	if !strings.Contains(out, "\u1100\x1b[1;3H  \x1b[1;3H가\x1b[1;5H") {
 		t.Errorf("L jamo and LV syllable not separated: %q", out)
 	}
 	if d := diff(s, e, nil); len(d) > 0 {
 		t.Errorf("%q", d)
+	}
+}
+
+// TestFlushSyncOutput は、1 回の出力を同期出力の開始と終わりで囲むことを確かめる（tui §6。VT5）。
+func TestFlushSyncOutput(t *testing.T) {
+	t.Parallel()
+	s := New(4, 1)
+	e := emu.New(4, 1)
+	s.Put(full, 0, 0, "ab", Style{})
+	out := flushTo(t, s, e)
+	if !strings.HasPrefix(out, "\x1b[?2026h") || !strings.HasSuffix(out, "\x1b[?2026l") || strings.Count(out, "2026") != 2 {
+		t.Errorf("output not wrapped once: %q", out)
+	}
+	if out := flushTo(t, s, e); out != "" {
+		t.Errorf("no change wrote %q", out)
+	}
+}
+
+// TestFlushRepositionsAfterJoin は、左のセルと結合しうる書記素クラスタを書いた後で、位置を指定し直すことを確かめる（tui §6。VT7）。
+// 左のセルにまとめて桁を進めない端末（Windows Terminal・iTerm2）でも、ずれがその 2 つのセルの中で止まる。
+func TestFlushRepositionsAfterJoin(t *testing.T) {
+	t.Parallel()
+	s := New(8, 1)
+	s.Put(full, 0, 0, "\u1100", Style{})                            // 左の欄: ハングルの字母 L
+	s.Put(Region{X: 2, Y: 0, W: 6, H: 1}, 0, 0, "\u1100x", Style{}) // 右の欄: L と x
+	e := emu.New(8, 1)
+	e.JoinLeft = true
+	out := flushTo(t, s, e)
+	if !strings.Contains(out, "\u1100\x1b[1;5Hx") {
+		t.Errorf("no re-positioning after the joining cluster: %q", out)
+	}
+	for x := 4; x < 8; x++ {
+		c := s.Cell(x, 0)
+		if got := e.Cells[x]; got.Text != c.Text || got.Width != c.Width {
+			t.Errorf("cell %d beyond the joined pair: terminal %+v, grid %+v", x, got, c)
+		}
+	}
+}
+
+// TestFlushJoinLeavesNoJoinableRemains は、左のセルにまとめる端末で、まとめられた書記素クラスタのセルに前の内容が残り、
+// それが次の書記素クラスタと結合して、ずれが広がることがないことを確かめる（VT7）。
+// 結合しうる書記素クラスタは、先にそのセルを空白で消してから書く（tui §6）。
+func TestFlushJoinLeavesNoJoinableRemains(t *testing.T) {
+	t.Parallel()
+	s := New(8, 1)
+	e := emu.New(8, 1)
+	e.JoinLeft = true
+	s.Put(Region{X: 2, Y: 0, W: 6, H: 1}, 0, 0, "😀\u200d", Style{}) // 前のフレーム: ZWJ で終わる絵文字
+	flushTo(t, s, e)
+	s.Put(Region{X: 0, Y: 0, W: 2, H: 1}, 0, 0, "\u1100", Style{}) // L
+	s.Put(Region{X: 2, Y: 0, W: 2, H: 1}, 0, 0, "\u1100", Style{}) // L（左の L にまとめられる）
+	s.Put(Region{X: 4, Y: 0, W: 4, H: 1}, 0, 0, "😀", Style{})      // L とは結合しない絵文字
+	flushTo(t, s, e)
+	for x := 4; x < 8; x++ {
+		c := s.Cell(x, 0)
+		if got := e.Cells[x]; got.Text != c.Text || got.Width != c.Width {
+			t.Errorf("cell %d: terminal %+v, grid %+v (row %q)", x, got, c, e.Row(0))
+		}
 	}
 }
 
@@ -315,14 +381,14 @@ func TestFlushCursor(t *testing.T) {
 	e := emu.New(4, 2)
 	s.SetCursor(3, 1, true)
 	out := flushTo(t, s, e)
-	if !strings.HasSuffix(out, "\x1b[2;4H\x1b[?25h") {
+	if !strings.HasSuffix(out, "\x1b[2;4H\x1b[?25h\x1b[?2026l") {
 		t.Errorf("visible cursor: %q", out)
 	}
 	if out := flushTo(t, s, e); out != "" {
 		t.Errorf("unchanged cursor: %q", out)
 	}
 	s.SetCursor(0, 0, false)
-	if out := flushTo(t, s, e); out != "\x1b[?25l" {
+	if out := flushTo(t, s, e); out != synced("\x1b[?25l") {
 		t.Errorf("hide cursor: %q", out)
 	}
 	// 画面の外のカーソルは、画面の中に収める。

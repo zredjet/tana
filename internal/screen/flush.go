@@ -13,9 +13,12 @@ import (
 // 何も変わっていなければ、何も書かない。書き込みに失敗したら、次の Flush で全体を書く。
 //
 // 次の位置では、カーソルの位置を指定し直す（T6）: 行の始め、欄の始め（Put で置き始めた位置と Fill の左端）、
-// 幅が端末によって違いうる書記素クラスタの後、前のセルと結合しうる書記素クラスタの前（端末が 1 つの文字にまとめないように）。
+// 幅が端末によって違いうる書記素クラスタの後、左のセルと結合しうる書記素クラスタの前と後ろ
+// （前で指定し直すと分かれて描く端末と、それでも左のセルにまとめて桁を進めない端末がある。tui §9 の VT7）。
 // 幅が違いうる書記素クラスタは、幅 2 以上なら先にその幅を空白で消してから書き（端末が狭く描いても前の内容が残らない）、
 // 後ろの 1 つを、変わっていなくても書き直す（端末が広く描いてはみ出した分を直す）。
+// 左のセルと結合しうる書記素クラスタも、先にその幅を空白で消してから書く（左のセルにまとめる端末で、前の内容が残らない）。
+// 1 回の出力は、同期出力（mode 2026）の開始と終わりで囲む（対応しない端末は無視する。VT5）。
 func (s *Screen) Flush(w io.Writer) error {
 	full := !s.frontValid
 	changed := full
@@ -60,12 +63,20 @@ func (s *Screen) Flush(w io.Writer) error {
 
 	copy(s.front, s.back)
 	s.frontValid = true
-	if _, err := w.Write(o.b.Bytes()); err != nil {
+	out := make([]byte, 0, len(syncStart)+o.b.Len()+len(syncEnd))
+	out = append(append(append(out, syncStart...), o.b.Bytes()...), syncEnd...)
+	if _, err := w.Write(out); err != nil {
 		s.Invalidate()
 		return err
 	}
 	return nil
 }
+
+// 同期出力（mode 2026）の開始と終わり。対応する端末は、終わりを受けてからまとめて表示する（tui §6。VT5）。
+const (
+	syncStart = "\x1b[?2026h"
+	syncEnd   = "\x1b[?2026l"
+)
 
 // output は、1 回の Flush の出力と、端末の状態（カーソルの位置、SGR）の見込み。
 type output struct {
@@ -125,7 +136,6 @@ func colorCode(c Color, base int) int {
 func (o *output) row(y int, full bool) {
 	s := o.s
 	force := false // 幅が違いうる書記素クラスタの後の 1 つは、変わっていなくても書く
-	prev := ""     // 直前に書いたセルの文字（続けて書いたときだけ）
 	for x := 0; x < s.cols; {
 		i := y*s.cols + x
 		c := s.back[i]
@@ -135,12 +145,14 @@ func (o *output) row(y int, full bool) {
 		}
 		if !full && !force && c.same(s.front[i]) {
 			x += c.width
-			prev = ""
 			continue
 		}
 		force = false
-		move := !o.known || o.x != x || o.y != y || c.anchor || joins(prev, c.text)
-		if c.varies && c.width >= 2 {
+		// 左のセルと結合しうる書記素クラスタ（VT7）。左のセルにまとめて、自分のセルに書かない端末があるので、
+		// 前の内容が残って次の書記素クラスタと結合しないように、先に空白で消す。
+		joinsLeft := x > 0 && joins(s.headText(x-1, y), c.text)
+		move := !o.known || o.x != x || o.y != y || c.anchor
+		if c.varies && c.width >= 2 || joinsLeft {
 			o.cup(x, y)
 			o.sgr(c.style)
 			o.b.WriteString(strings.Repeat(" ", c.width))
@@ -155,9 +167,20 @@ func (o *output) row(y int, full bool) {
 		if c.varies {
 			o.known, force = false, true
 		}
-		prev = c.text
+		if joinsLeft {
+			o.known = false // 桁を進めない端末があるので、次の書記素クラスタの前で位置を指定し直す
+		}
 		x += c.width
 	}
+}
+
+// headText は、行 y の x のセルを含む書記素クラスタ（格子の内容）の文字を返す。
+func (s *Screen) headText(x, y int) string {
+	row := s.back[y*s.cols : (y+1)*s.cols]
+	for x > 0 && row[x].width == 0 {
+		x--
+	}
+	return row[x].text
 }
 
 // joins は、a の後に b を続けて書くと、端末が 1 つの書記素クラスタにまとめうるかを返す
