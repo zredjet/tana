@@ -10,7 +10,8 @@ import (
 // TestIsExecutableWindows は、拡張子で実行ファイルを判定することを確かめる（filer §7）。大文字小文字は区別しない。
 func TestIsExecutableWindows(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"a.exe", "A.EXE", "b.com", "c.bat", "d.cmd", "e.ps1", "f.vbs", "g.js", "h.msi", "i.scr", "j.lnk", "k.hta", "l.url"} {
+	for _, name := range []string{"a.exe", "A.EXE", "b.com", "c.bat", "d.cmd", "e.ps1", "f.vbs", "g.js", "h.msi", "i.scr", "j.lnk", "k.hta", "l.url",
+		"m.chm", "n.settingcontent-ms", "o.msix", "p.appinstaller", "q.wsc", "r.scf"} {
 		if !IsExecutable(`C:\x\`+name, false) {
 			t.Errorf("IsExecutable(%s) = false", name)
 		}

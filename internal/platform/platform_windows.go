@@ -14,11 +14,13 @@ import (
 // DotFilesHidden は、名前が . で始まるものを隠しファイルとして扱うか（filer §6）。Windows はエクスプローラーと同じく隠さない。
 const DotFilesHidden = false
 
-// executableExts は、開くと実行される拡張子（filer §7）。
+// executableExts は、開くとプログラムやスクリプトが動きうる拡張子（filer §7 の「など」）。
+// インストーラー・パッケージ（.msix など）、ヘルプ（.chm）、シェルのショートカット（.settingcontent-ms・.scf）も含める。
 var executableExts = []string{
-	".exe", ".com", ".bat", ".cmd", ".ps1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh",
-	".msi", ".msp", ".msc", ".scr", ".lnk", ".pif", ".cpl", ".hta", ".reg", ".jar", ".url",
-	".appref-ms", ".application",
+	".exe", ".com", ".bat", ".cmd", ".ps1", ".psc1", ".vb", ".vbs", ".vbe", ".js", ".jse", ".ws", ".wsf", ".wsc", ".wsh",
+	".msi", ".msp", ".msc", ".scr", ".lnk", ".pif", ".cpl", ".hta", ".reg", ".jar", ".jnlp", ".url",
+	".appref-ms", ".application", ".appx", ".appxbundle", ".msix", ".msixbundle", ".appinstaller",
+	".chm", ".settingcontent-ms", ".scf", ".diagcab", ".gadget", ".inf",
 }
 
 // IsExecutable は、開くと実行されるものか（開く前に確認を出す。filer §7）を、拡張子で返す。大文字小文字は区別しない。
@@ -32,8 +34,9 @@ var reservedNames = []string{"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$",
 	"LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9", "LPT¹", "LPT²", "LPT³"}
 
 // CanOpen は、ShellExecute に渡してよいパスかを返す（filer §7）。
-// VU10 を確かめるまでは、Win32 の正規化で別のものを指しうるパス（末尾が . や空白の要素、予約名）と、
-// 260 文字（UTF-16）以上のパスを開かない。SHFileOperation では、foo. が隣の foo を指した（fsops の V4）。
+// Win32 の正規化で別のものを指しうるパス（末尾が . や空白の要素、予約名）と、260 文字（UTF-16）以上のパスを開かない。
+// VU10 で、foo.cmd. を渡すと \\?\ を付けても隣の foo.cmd が動き、長いパスは失敗した（filer §12.7）。
+// 予約名は Windows 11 では正しいファイルが開いたが、Windows 10 では確かめていないので開かない。
 func CanOpen(path string) bool {
 	if len(utf16.Encode([]rune(path))) >= windows.MAX_PATH {
 		return false
