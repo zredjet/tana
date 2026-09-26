@@ -2,6 +2,7 @@ package msg
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/zredjet/tana/internal/fsops"
 )
@@ -169,3 +170,166 @@ const SkippedByChoice = "選択によりスキップ"
 
 // Count は、件数の後に「件」を付ける。
 func Count(n int) string { return strconv.Itoa(n) + " 件" }
+
+// コピー・移動の流れの文言（filer §8.1〜§8.5）。
+const (
+	Planning            = "計画を作成中...（Esc で中止）"
+	NothingToYank       = "覚える項目がありません"
+	NothingYanked       = "覚えた項目がありません（y で覚えます）"
+	DestNotFound        = "コピー先のフォルダが見つかりません"
+	SpaceWarning        = "空き容量が足りない見込みです"
+	NothingRunnable     = "実行できる項目がありません"
+	ConfirmKeys         = "Enter 実行   Esc やめる"
+	ConfirmKeysConflict = "Enter 衝突の確認へ   Esc やめる"
+	ConfirmKeysNone     = "Esc 閉じる"
+	UnsetIsSkip         = "未選択はスキップします"
+	InnerHidden         = "マージを選ぶと表示します"
+	InnerCollapsed      = "Space で表示します"
+	CancelTitle         = "中止の確認"
+	CancelQuestion      = "中止しますか？"
+	CancelNoPartial     = "書きかけのファイルは残りません。"
+	CancelDoneKept      = "完了した項目はそのまま残ります。"
+	CancelChoices       = "y 中止する   n 続ける"
+	Canceling           = "中止しています..."
+	Unresponsive        = "応答がありません。Q で終了できますが、次のものが残る場合があります:"
+	ProgressKeys        = "Esc 中止"
+	ResultKeys          = "Space 詳細   e 英語の詳細   Enter 閉じる"
+	NewerMark           = "新"
+	MetadataWarning     = "一部の属性を引き継げませんでした"
+)
+
+// UnresponsiveLeftovers は、応答がなくなったまま終了したときに残りうるもの（fsops の doc.go の「保証すること」）。
+var UnresponsiveLeftovers = []string{
+	"・移動元と移動先の両方に同じものがある、または一部だけ移動されている",
+	"・.fsops-<16 進>.tmp という一時ファイル",
+}
+
+// Yanked は、y で覚えたときの文言。
+func Yanked(n int) string {
+	return strconv.Itoa(n) + " 項目を覚えました（p でコピー、P で移動）"
+}
+
+// CannotPlan は、計画を作れなかったとき（リクエスト全体の問題。filer §8.1）の文言。
+func CannotPlan(reason string) string { return "計画を作れません: " + reason }
+
+// CannotExecute は、実行できなかったときの文言。
+func CannotExecute(reason string) string { return "実行できません: " + reason }
+
+// ConfirmSummary は、確認画面の 1 行目（「3 項目を D:\backup へコピーします」）。
+func ConfirmSummary(op fsops.OpKind, n int, dest string) string {
+	return strconv.Itoa(n) + " 項目を " + dest + " へ" + Op(op) + "します"
+}
+
+// Totals は、合計のファイル数とバイト数（バイト数が 0 なら出さない。filer §8.2）。size はサイズの書式にしたもの。
+func Totals(files int, size string) string {
+	s := "合計 " + strconv.Itoa(files) + " ファイル"
+	if size != "" {
+		s += "、" + size
+	}
+	return s
+}
+
+// NotRunnable は、実行されない項目の数。
+func NotRunnable(n int) string { return strconv.Itoa(n) + " 項目は実行しません" }
+
+// Conflicts は、衝突の件数（「衝突 125 件（トップレベル 3 件）」）。
+func Conflicts(all, top int) string {
+	return "衝突 " + strconv.Itoa(all) + " 件（トップレベル " + strconv.Itoa(top) + " 件）"
+}
+
+// Unset は、未選択の件数（「未選択 122 件（未選択はスキップします）」。U1）。
+func Unset(n int) string { return "未選択 " + strconv.Itoa(n) + " 件（" + UnsetIsSkip + "）" }
+
+// Inner は、折りたたんだ内側の衝突の行（「（内側の衝突 120 件。マージを選ぶと表示します）」）。
+func Inner(n int, how string) string {
+	return "（内側の衝突 " + strconv.Itoa(n) + " 件。" + how + "）"
+}
+
+// NotChanged は、まとめての決定で、種類が合わずに変えなかった件数。
+func NotChanged(n int) string {
+	return strconv.Itoa(n) + " 件は種類が合わないため変更しませんでした"
+}
+
+// DecisionNotAllowed は、その衝突で使えない決定を選んだときの理由（filer §8.3）。
+func DecisionNotAllowed(d fsops.Decision) string {
+	switch d {
+	case fsops.DecisionOverwrite:
+		return "上書きは、ファイル同士の衝突でだけ使えます"
+	case fsops.DecisionMerge:
+		return "マージは、フォルダ同士の衝突でだけ使えます"
+	}
+	return "この決定はこの衝突には使えません"
+}
+
+// ConflictHeader は、衝突の画面の 1 行目（「衝突の確認   コピー  C:\x -> D:\y」）。
+func ConflictHeader(op fsops.OpKind, from, to string) string {
+	return "衝突の確認   " + Op(op) + "  " + from + " -> " + to
+}
+
+// ConflictColumns は、衝突の一覧の見出し。
+var ConflictColumns = [4]string{"名前", "コピー元", "コピー先", "決定"}
+
+// ConflictKeys は、衝突の画面のキーの案内（3 行）。
+var ConflictKeys = [3]string{
+	"この行: s スキップ  o 上書き  r 自動リネーム  m マージ",
+	"すべて: S スキップ  O 上書き  N 新しいときだけ上書き  R 自動リネーム  M マージ",
+	"Enter 実行  Esc やめる  Space 展開・折りたたみ  u 未選択だけ表示",
+}
+
+// ProgressFiles は、進捗のファイル数とバイト数（「ファイル 26 / 58      597M / 1.3G」）。
+func ProgressFiles(done, total int, doneSize, totalSize string) string {
+	s := "ファイル " + strconv.Itoa(done) + " / " + strconv.Itoa(total)
+	if totalSize != "" {
+		s += "      " + doneSize + " / " + totalSize
+	}
+	return s
+}
+
+// ProgressTimes は、速度・残り時間・経過時間（「毎秒 85M   残り 約 9 秒   経過 7 秒」）。空の値は出さない。
+func ProgressTimes(speed, remaining, elapsed string) string {
+	var parts []string
+	if speed != "" {
+		parts = append(parts, "毎秒 "+speed)
+	}
+	if remaining != "" {
+		parts = append(parts, "残り 約 "+remaining)
+	}
+	parts = append(parts, "経過 "+elapsed)
+	return strings.Join(parts, "   ")
+}
+
+// Duration は、時間を「9 秒」「2 分 5 秒」「1 時間 3 分」の形にする。
+func Duration(sec int) string {
+	switch {
+	case sec < 60:
+		return strconv.Itoa(sec) + " 秒"
+	case sec < 3600:
+		return strconv.Itoa(sec/60) + " 分 " + strconv.Itoa(sec%60) + " 秒"
+	}
+	return strconv.Itoa(sec/3600) + " 時間 " + strconv.Itoa(sec%3600/60) + " 分"
+}
+
+// ResultTitle は、結果の画面の 1 行目（「移動の結果: 一部にエラーがあります   C:\x -> D:\y」）。
+func ResultTitle(op fsops.OpKind, status string, from, to string) string {
+	return Op(op) + "の結果: " + status + "   " + from + " -> " + to
+}
+
+// OutcomeCount は、結果の件数の 1 つ（「失敗 1」）。
+func OutcomeCount(o fsops.Outcome, n int) string { return Outcome(o) + " " + strconv.Itoa(n) }
+
+// SkippedInside は、フォルダの中の選択によるスキップの件数（「（選択によるスキップ 1 件）」）。
+func SkippedInside(n int) string {
+	return "（選択によるスキップ " + strconv.Itoa(n) + " 件）"
+}
+
+// Done は、結果の画面を出さないときのメッセージ（「3 項目をコピーしました」「（選択によるスキップ 1 件）」「一部の属性を…（L で詳細）」）。
+func Done(op fsops.OpKind, done, skipped int, warned bool) string {
+	s := strconv.Itoa(done) + " 項目を" + Op(op) + "しました"
+	if skipped > 0 {
+		s += SkippedInside(skipped)
+	}
+	if warned {
+		s += "。" + MetadataWarning + "（L で詳細）"
+	}
+	return s
+}

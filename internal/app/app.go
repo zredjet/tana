@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -32,6 +33,8 @@ type Config struct {
 	ReadDir      func(dir string) ([]fsops.Entry, error)
 	Readlink     func(path string) (string, error)
 	ReadHead     func(path string, max int) (fsops.Head, error) // プレビュー（filer §6）
+	NewPlan      func(ctx context.Context, req fsops.Request) (Plan, error)
+	Wake         func() // 実行中の進捗が届いたことをイベントループに知らせる（tui が設定する）。nil なら知らせない
 	Open         func(path string) error
 	IsExecutable func(path string, isDir bool) bool
 	CanOpen      func(path string) bool
@@ -47,6 +50,7 @@ func DefaultConfig(dirs []string) Config {
 		ReadDir:        fsops.ReadDir,
 		Readlink:       fsops.Readlink,
 		ReadHead:       fsops.ReadHead,
+		NewPlan:        newFsopsPlan,
 		Open:           platform.Open,
 		IsExecutable:   platform.IsExecutable,
 		CanOpen:        platform.CanOpen,
@@ -86,10 +90,13 @@ type App struct {
 	frames     int // 描いた回数（Drawn）
 	quit       bool
 
-	needs        Needs   // 表示形式が求めるもの（SetNeeds）
-	preview      Preview // 操作中のペインのカーソル行のプレビュー（読んでいる途中なら Kind が PreviewNone）
-	previewGen   int     // プレビューの世代。カーソルが動いたら古い読み込みの結果を捨てる
-	previewStale bool    // 一覧を読み直したので、同じ項目でもプレビューを読み直す
+	needs        Needs        // 表示形式が求めるもの（SetNeeds）
+	yanked       []string     // 覚えた項目のパス（y。filer §7）
+	op           *operation   // 進めているファイル操作（計画から結果まで。filer §8）
+	result       *resultState // 直前の操作の結果（L でもう一度出す）
+	preview      Preview      // 操作中のペインのカーソル行のプレビュー（読んでいる途中なら Kind が PreviewNone）
+	previewGen   int          // プレビューの世代。カーソルが動いたら古い読み込みの結果を捨てる
+	previewStale bool         // 一覧を読み直したので、同じ項目でもプレビューを読み直す
 }
 
 // New は、App を作り、各ペインの最初の読み込みを返す。
@@ -174,12 +181,26 @@ const (
 	ActLineHome
 	ActLineEnd
 	ActSubmit
+
+	// ファイル操作（filer §7・§8）。
+	ActYank       // 対象を覚える
+	ActPasteCopy  // 覚えた項目をコピーする
+	ActPasteMove  // 覚えた項目を移動する
+	ActDecide     // カーソル行の衝突に Action.Decision を設定する
+	ActDecideAll  // すべての衝突に Action.Decision を設定する（使えるものだけ）
+	ActNewerOnly  // 新しいときだけ上書き
+	ActToggle     // 展開・折りたたみ（衝突の内側、結果の詳細）
+	ActUnsetOnly  // 未選択の衝突だけを表示する
+	ActEnglish    // 結果の英語の詳細
+	ActLastResult // 直前の操作の結果をもう一度出す（L）
+	ActForceQuit  // 中止しても応答がないときの終了（Q。filer §8.4）
 )
 
 // Action は、利用者の操作。
 type Action struct {
-	Kind ActionKind
-	Text string // ActInsert
+	Kind     ActionKind
+	Text     string         // ActInsert
+	Decision fsops.Decision // ActDecide・ActDecideAll
 }
 
 // Do は、利用者の操作を行う。キー入力のたびにメッセージ行を消す（filer §5.1）。
@@ -188,6 +209,27 @@ func (a *App) Do(act Action) []Cmd {
 }
 
 func (a *App) do(act Action) []Cmd {
+	switch {
+	case a.op != nil && a.op.planning:
+		// 計画を作っている間に届いたキーは捨てる（filer U2）。Esc だけは中止にする。
+		if act.Kind == ActCancel {
+			a.discard()
+			a.setMessage(msg.Kind(fsops.KindCanceled), false)
+		}
+		return nil
+	case a.op != nil:
+		switch a.op.screen {
+		case ScreenConfirm:
+			return a.doConfirm(act)
+		case ScreenConflicts:
+			return a.doConflicts(act)
+		case ScreenProgress:
+			return a.doProgress(act) // 実行中はほかの操作を受け付けない（filer §7）
+		}
+		return nil
+	case a.result != nil && a.result.open:
+		return a.doResult(act)
+	}
 	if a.dialog.kind != DialogNone {
 		return a.doDialog(act)
 	}
@@ -256,6 +298,16 @@ func (a *App) do(act Action) []Cmd {
 		a.quit = true
 	case ActNotYet:
 		a.setMessage(msg.NotYet, false)
+	case ActYank:
+		a.yank()
+	case ActPasteCopy:
+		return a.paste(fsops.OpCopy)
+	case ActPasteMove:
+		return a.paste(fsops.OpMove)
+	case ActLastResult:
+		if a.result != nil {
+			a.result.open, a.result.frame = true, a.frames
+		}
 	}
 	return nil
 }
@@ -263,7 +315,8 @@ func (a *App) do(act Action) []Cmd {
 // paneLocal は、操作中のペインの一覧を使う操作かを返す。
 func paneLocal(k ActionKind) bool {
 	switch k {
-	case ActUp, ActDown, ActPageUp, ActPageDown, ActHome, ActEnd, ActEnter, ActEnterDir, ActParent, ActMark, ActMarkAll, ActGoPath, ActSyncOther:
+	case ActUp, ActDown, ActPageUp, ActPageDown, ActHome, ActEnd, ActEnter, ActEnterDir, ActParent, ActMark, ActMarkAll, ActGoPath, ActSyncOther,
+		ActYank, ActPasteCopy, ActPasteMove:
 		return true
 	}
 	return false
@@ -462,6 +515,16 @@ func (a *App) update(m any) []Cmd {
 		if m.gen == a.previewGen {
 			a.preview = m.preview
 		}
+	case planned:
+		a.planned(m)
+	case planSlow:
+		if a.op != nil && a.op.gen == m.gen && a.op.planning {
+			a.op.slow = true
+		}
+	case executed:
+		return a.executed(m)
+	case opTick:
+		return a.opTick(m)
 	case opened:
 		if m.err != nil {
 			a.logErr(m.err)
