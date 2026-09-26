@@ -76,7 +76,10 @@ type joinResult struct {
 	ColDirect   int    `json:"col_direct"`   // a と b を続けて書いた後の桁（比較用）
 	ExpectedCol int    `json:"expected_col"` // 分かれて描かれたときの桁（1＋幅 a＋幅 b）
 	Separated   bool   `json:"separated"`    // 位置を指定し直すと、端末が進めた桁が 2 つの幅の和になった
-	Error       string `json:"error,omitempty"`
+	// ColRTL は、右から書いた後の桁: a の場所を空白にしてから b を書き、その後で a を書く（端末が左のセルとだけ結合するなら、分かれて描かれる）。
+	// 期待する桁は、a の後ろ（列の始め＋幅 a）。分かれて描かれたかは、撮影で確かめる。
+	ColRTL int    `json:"col_rtl"`
+	Error  string `json:"error,omitempty"`
 }
 
 type modesSection struct {
@@ -203,8 +206,9 @@ func runModeQueries(c console, r *cprReader, timeout time.Duration) ([]queryResu
 	return out, r.drain(300 * time.Millisecond)
 }
 
-// measureJoins は、joinCases を 2 行ずつ描いて測る。1 行目は a の後で位置を指定し直して b を書き、2 行目は続けて書く。
-// どちらの行も、分かれて描かれたときの b の後ろの桁に | を描く（撮影で、ずれを見る）。
+// measureJoins は、joinCases を 3 行ずつ描いて測る。1 行目は a の後で位置を指定し直して b を書き、2 行目は続けて書き、
+// 3 行目は右から書く（a の場所を空白にして b を書き、その後で a を書く）。
+// どの行も、分かれて描かれたときの b の後ろの桁に | を描く（撮影で、ずれを見る）。
 func measureJoins(c console, r *cprReader, firstRow int, timeout time.Duration) ([]joinResult, error) {
 	var out []joinResult
 	row := firstRow
@@ -219,6 +223,10 @@ func measureJoins(c console, r *cprReader, firstRow int, timeout time.Duration) 
 			res.ColCUP = colCUP
 			_, res.ColDirect, err = cursorAfter(c, r, fmt.Sprintf("\x1b[%d;1H\x1b[2K%-22s\x1b[%d;%dH%s%s", row+1, "  (続けて書く)", row+1, col0, jc.a, jc.b), timeout)
 		}
+		if err == nil {
+			_, res.ColRTL, err = cursorAfter(c, r, fmt.Sprintf("\x1b[%d;1H\x1b[2K%-22s\x1b[%d;%dH%s\x1b[%d;%dH%s\x1b[%d;%dH%s",
+				row+2, "  (右から書く)", row+2, col0, strings.Repeat(" ", wa), row+2, col0+wa, jc.b, row+2, col0, jc.a), timeout)
+		}
 		switch {
 		case errors.Is(err, errTimeout):
 			res.Error = errString(err)
@@ -228,9 +236,9 @@ func measureJoins(c console, r *cprReader, firstRow int, timeout time.Duration) 
 			res.Separated = res.ColCUP == res.ExpectedCol
 		}
 		// 撮影用に、分かれて描かれたときの b の後ろに | を描く。
-		fmt.Fprintf(c, "\x1b[%d;%dH|\x1b[%d;%dH|", row, res.ExpectedCol, row+1, res.ExpectedCol)
+		fmt.Fprintf(c, "\x1b[%d;%dH|\x1b[%d;%dH|\x1b[%d;%dH|", row, res.ExpectedCol, row+1, res.ExpectedCol, row+2, res.ExpectedCol)
 		out = append(out, res)
-		row += 2
+		row += 3
 	}
 	return out, nil
 }
@@ -238,11 +246,11 @@ func measureJoins(c console, r *cprReader, firstRow int, timeout time.Duration) 
 // holdJoins は、測った結果の表を画面の下に書き足し、撮影のために hold の間（0 ならキーを押すまで）出しておく。
 func holdJoins(c console, r *cprReader, res *modesSection, hold time.Duration) error {
 	var b strings.Builder
-	row := res.JoinRow + 2*len(res.Joins) + 1
+	row := res.JoinRow + 3*len(res.Joins) + 1
 	fmt.Fprintf(&b, "\x1b[1;1H\x1b[2Ktuiprobe modes: 各行の | の手前で b が終わっていれば、a と b は分かれて描かれている")
-	fmt.Fprintf(&b, "\x1b[2;1H\x1b[2K位置を指定し直した行（上）と、続けて書いた行（下）の組。右の数字は、端末が進めた桁（期待する桁）")
+	fmt.Fprintf(&b, "\x1b[2;1H\x1b[2K位置を指定し直した行・続けて書いた行・右から書いた行の組。右の数字は、端末が進めた桁（期待する桁）")
 	for i, j := range res.Joins {
-		fmt.Fprintf(&b, "\x1b[%d;60H%d(%d) / %d", res.JoinRow+2*i, j.ColCUP, j.ExpectedCol, j.ColDirect)
+		fmt.Fprintf(&b, "\x1b[%d;60H%d(%d) / %d / %d(%d)", res.JoinRow+3*i, j.ColCUP, j.ExpectedCol, j.ColDirect, j.ColRTL, j.ExpectedCol-j.WidthB)
 	}
 	if hold > 0 {
 		fmt.Fprintf(&b, "\x1b[%d;1H撮影のため %s 表示します。キーを押すと終わります。", row, hold)

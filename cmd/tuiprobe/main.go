@@ -3,7 +3,7 @@
 //	tuiprobe width  [-terminal 名前] [-o ファイル] [-hold 秒] [-output 方法] [-vtinput=true|false]
 //	tuiprobe keys   [-terminal 名前] [-o ファイル] [-vtinput] [-output 方法] [-steps ID,...]
 //	tuiprobe modes  [-terminal 名前] [-o ファイル] [-hold 秒] [-decrqm=true|false]
-//	tuiprobe screen [-terminal 名前] [-o ファイル]
+//	tuiprobe screen [-terminal 名前] [-o ファイル] [-selftest panic|worker-panic|signal] [-selftest-after 秒]
 //
 // 結果は JSON のファイル（既定は <端末>-<日付>.json）に書く。ファイルがあれば、その回の節（width・keys など）だけを置き換える。
 // -output（writeconsole・utf8cp・writefile）と -vtinput は Windows だけで意味を持つ（VT1・VT2）。
@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -36,8 +37,9 @@ const usageText = `使い方:
       制御シーケンス（同期出力・自動改行・カーソル・bracketed paste）が使えるか（VT5）と、
       位置の指定で書記素クラスタの結合が切れるか（VT7）を、カーソル位置の問い合わせで測る。
       -decrqm は DECRQM の問い合わせを送るか（既定は Terminal.app 以外で送る）。
-  tuiprobe screen [-terminal 名前] [-o ファイル]
+  tuiprobe screen [-terminal 名前] [-o ファイル] [-selftest panic|worker-panic|signal] [-selftest-after 秒]
       確認用の画面（2 つのペインの 10 万行の一覧、入力欄、進捗、panic の試験）。キー・大きさの変更・終わり方を記録する（VU1・VU4・VT4）。
+      -selftest を付けると、-selftest-after（既定 3 秒）の後に、キーを押さずにその終わり方を試す（signal は Unix だけ）。
 
 共通の引数:
   -terminal 名前         端末の名前（例: Terminal.app、iTerm2、Windows Terminal、conhost）。省略すると環境変数から推測する
@@ -59,6 +61,7 @@ type options struct {
 	output                                            term.OutputMethod
 	vtInput, decrqm                                   bool
 	hold                                              time.Duration
+	selfTest                                          selfTest
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
@@ -85,6 +88,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.BoolVar(&o.decrqm, "decrqm", os.Getenv("TERM_PROGRAM") != "Apple_Terminal", "")
 	fs.DurationVar(&o.hold, "hold", 0, "")
 	fs.StringVar(&o.steps, "steps", "", "")
+	fs.StringVar(&o.selfTest.kind, "selftest", "", "")
+	fs.DurationVar(&o.selfTest.after, "selftest-after", 3*time.Second, "")
 	fs.Usage = func() { fmt.Fprint(stderr, usageText) }
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
@@ -97,6 +102,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	steps, err := selectSteps(o.steps)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	if o.selfTest.kind != "" && !slices.Contains(selfTestKinds, o.selfTest.kind) {
+		fmt.Fprintf(stderr, "unknown -selftest %q\n", o.selfTest.kind)
 		return 2
 	}
 	if o.terminal == "" {
@@ -168,7 +177,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		result, runErr = runModes(t, box, sec, o.decrqm, o.hold, cprTimeout)
 	case "screen":
 		name = "screen"
-		result, runErr = runScreen(t, sec)
+		if o.selfTest.kind != "" {
+			name += "_selftest_" + strings.ReplaceAll(o.selfTest.kind, "-", "_") // 手で確かめた記録（screen）を上書きしない
+		}
+		result, runErr = runScreen(t, sec, o.selfTest)
 	}
 	restoreErr := t.Restore()
 

@@ -108,7 +108,7 @@ func TestScreenPanics(t *testing.T) {
 	for _, key := range []string{"!", "@"} {
 		f := newScreenTerm(80, 24)
 		f.send(key)
-		res, err := runScreen(f, newScreenSection().sectionHeader)
+		res, err := runScreen(f, newScreenSection().sectionHeader, selfTest{})
 		var pe *tui.PanicError
 		if !errors.As(err, &pe) || res.Exit != "panic" || !strings.Contains(res.Error, "(test)") {
 			t.Errorf("%s: err = %v, result exit %q error %q", key, err, res.Exit, res.Error)
@@ -124,7 +124,7 @@ func TestScreenSignal(t *testing.T) {
 	t.Parallel()
 	f := newScreenTerm(80, 24)
 	f.in <- term.Input{Time: time.Now(), Signal: syscall.SIGTERM}
-	res, err := runScreen(f, newScreenSection().sectionHeader)
+	res, err := runScreen(f, newScreenSection().sectionHeader, selfTest{})
 	var se *tui.SignalError
 	if !errors.As(err, &se) || res.Exit != "signal" || f.restored != 1 {
 		t.Errorf("err = %v, exit %q, restored %d", err, res.Exit, f.restored)
@@ -188,5 +188,21 @@ func TestScreenProgressAndSmall(t *testing.T) {
 	}
 	if !strings.Contains(f.out.String(), "端末が小さすぎます") {
 		t.Error("small terminal message not drawn")
+	}
+}
+
+// TestScreenSelfTest は、-selftest の panic と作業用の goroutine の panic が、キーを押さずに起き、端末を戻して記録されることを確かめる。
+func TestScreenSelfTest(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{"panic", "worker-panic"} {
+		f := newScreenTerm(80, 24)
+		res, err := runScreen(f, newScreenSection().sectionHeader, selfTest{kind: kind, after: time.Millisecond})
+		var pe *tui.PanicError
+		if !errors.As(err, &pe) || res.Exit != "panic" || res.SelfTest != kind || !strings.Contains(res.Error, "self-test") {
+			t.Errorf("%s: err = %v, result %+v", kind, err, res)
+		}
+		if f.restored != 1 {
+			t.Errorf("%s: Restore called %d times", kind, f.restored)
+		}
 	}
 }

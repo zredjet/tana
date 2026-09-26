@@ -77,7 +77,7 @@ func TestRunModes(t *testing.T) {
 	}
 	for _, j := range res.Joins {
 		want := j.ID != "jamo-l+syllable"
-		if j.Separated != want || j.ExpectedCol != 24+j.WidthA+j.WidthB {
+		if j.Separated != want || j.ExpectedCol != 24+j.WidthA+j.WidthB || j.ColRTL != 24+j.WidthA {
 			t.Errorf("join %s = %+v, want separated %v", j.ID, j, want)
 		}
 	}

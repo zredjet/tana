@@ -651,6 +651,280 @@
     ],
     "completed": true
   },
+  "modes": {
+    "started": "2026-09-26T15:25:34+09:00",
+    "probe_revision": "9c27bcb26988+dirty",
+    "goos": "darwin",
+    "goarch": "arm64",
+    "cols": 120,
+    "rows": 30,
+    "output_method": "writeconsole",
+    "vt_input": true,
+    "env": {
+      "COLORTERM": "truecolor",
+      "LANG": "ja_JP.UTF-8",
+      "TERM": "xterm-256color",
+      "TERM_PROGRAM": "Apple_Terminal",
+      "TERM_PROGRAM_VERSION": "470.2"
+    },
+    "info": {
+      "os_build": "25F80",
+      "os_version": "macOS 26.5.1",
+      "termios_orig": "iflag=0x6b02 oflag=0x3 cflag=0x4b00 lflag=0x200005cb"
+    },
+    "set_reset": [
+      {
+        "id": "2026-sync-output",
+        "seq": "\"\\x1b[?2026h\\x1b[?2026l\"",
+        "col": 1,
+        "printed": false
+      },
+      {
+        "id": "7-autowrap",
+        "seq": "\"\\x1b[?7h\\x1b[?7l\"",
+        "col": 1,
+        "printed": false
+      },
+      {
+        "id": "25-cursor",
+        "seq": "\"\\x1b[?25l\\x1b[?25h\\x1b[?25l\"",
+        "col": 1,
+        "printed": false
+      },
+      {
+        "id": "2004-bracketed-paste",
+        "seq": "\"\\x1b[?2004h\\x1b[?2004l\"",
+        "col": 1,
+        "printed": false
+      }
+    ],
+    "autowrap": {
+      "cols": 120,
+      "off_row": 3,
+      "off_col": 120,
+      "on_row": 4,
+      "on_col": 4,
+      "wraps_when_on": true,
+      "stays_when_off": true
+    },
+    "joins": [
+      {
+        "id": "jamo-l+syllable",
+        "a": "ᄀ",
+        "b": "가",
+        "codepoints": "U+1100 + U+AC00",
+        "note": "ハングル字母 L の後の音節",
+        "width_a": 2,
+        "width_b": 2,
+        "row": 4,
+        "col_cup": 28,
+        "col_direct": 28,
+        "expected_col": 28,
+        "separated": true,
+        "col_rtl": 26
+      },
+      {
+        "id": "jamo-l+jamo-l",
+        "a": "ᄀ",
+        "b": "ᄀ",
+        "codepoints": "U+1100 + U+1100",
+        "note": "ハングル字母 L＋L",
+        "width_a": 2,
+        "width_b": 2,
+        "row": 7,
+        "col_cup": 28,
+        "col_direct": 28,
+        "expected_col": 28,
+        "separated": true,
+        "col_rtl": 26
+      },
+      {
+        "id": "virama+consonant",
+        "a": "क्",
+        "b": "ष",
+        "codepoints": "U+0915 U+094D + U+0937",
+        "note": "デーヴァナーガリーのヴィラーマの後の子音（GB9c）",
+        "width_a": 1,
+        "width_b": 1,
+        "row": 10,
+        "col_cup": 26,
+        "col_direct": 26,
+        "expected_col": 26,
+        "separated": true,
+        "col_rtl": 25
+      },
+      {
+        "id": "consonant+spacing-mark",
+        "a": "क",
+        "b": "ि",
+        "codepoints": "U+0915 + U+093F",
+        "note": "子音の後の母音記号（GB9a。単独でも幅 1 の通常の文字）",
+        "width_a": 1,
+        "width_b": 1,
+        "row": 13,
+        "col_cup": 26,
+        "col_direct": 26,
+        "expected_col": 26,
+        "separated": true,
+        "col_rtl": 25
+      },
+      {
+        "id": "zwj+emoji",
+        "a": "😀‍",
+        "b": "😀",
+        "codepoints": "U+1F600 U+200D + U+1F600",
+        "note": "ZWJ で終わる絵文字の後の絵文字（GB11）",
+        "width_a": 2,
+        "width_b": 2,
+        "row": 16,
+        "col_cup": 28,
+        "col_direct": 29,
+        "expected_col": 28,
+        "separated": true,
+        "col_rtl": 27
+      },
+      {
+        "id": "prepend+letter",
+        "a": "؀",
+        "b": "a",
+        "codepoints": "U+0600 + U+0061",
+        "note": "プリペンドの後の文字（GB9b）",
+        "width_a": 1,
+        "width_b": 1,
+        "row": 19,
+        "col_cup": 26,
+        "col_direct": 26,
+        "expected_col": 26,
+        "separated": true,
+        "col_rtl": 25
+      },
+      {
+        "id": "ascii+ascii",
+        "a": "a",
+        "b": "b",
+        "codepoints": "U+0061 + U+0062",
+        "note": "比較用（結合しない）",
+        "width_a": 1,
+        "width_b": 1,
+        "row": 22,
+        "col_cup": 26,
+        "col_direct": 26,
+        "expected_col": 26,
+        "separated": true,
+        "col_rtl": 25
+      }
+    ],
+    "join_row": 4,
+    "completed": true
+  },
+  "screen_selftest_panic": {
+    "started": "2026-09-26T15:30:02+09:00",
+    "probe_revision": "9c27bcb26988+dirty",
+    "goos": "darwin",
+    "goarch": "arm64",
+    "cols": 120,
+    "rows": 30,
+    "output_method": "writeconsole",
+    "vt_input": true,
+    "env": {
+      "COLORTERM": "truecolor",
+      "LANG": "ja_JP.UTF-8",
+      "TERM": "xterm-256color",
+      "TERM_PROGRAM": "Apple_Terminal",
+      "TERM_PROGRAM_VERSION": "470.2"
+    },
+    "info": {
+      "os_build": "25F80",
+      "os_version": "macOS 26.5.1",
+      "termios_orig": "iflag=0x6b02 oflag=0x3 cflag=0x4b00 lflag=0x200005cb"
+    },
+    "pid": 96374,
+    "selftest": "panic",
+    "keys": [],
+    "inputs": [],
+    "resizes": [],
+    "frames": {
+      "count": 1,
+      "max_draw_ms": 0.293,
+      "max_flush_ms": 0.472,
+      "max_bytes": 5654,
+      "max_coalesced": 0
+    },
+    "exit": "panic",
+    "error": "tuiprobe: self-test panic in the event loop"
+  },
+  "screen_selftest_signal": {
+    "started": "2026-09-26T15:31:03+09:00",
+    "probe_revision": "9c27bcb26988+dirty",
+    "goos": "darwin",
+    "goarch": "arm64",
+    "cols": 120,
+    "rows": 30,
+    "output_method": "writeconsole",
+    "vt_input": true,
+    "env": {
+      "COLORTERM": "truecolor",
+      "LANG": "ja_JP.UTF-8",
+      "TERM": "xterm-256color",
+      "TERM_PROGRAM": "Apple_Terminal",
+      "TERM_PROGRAM_VERSION": "470.2"
+    },
+    "info": {
+      "os_build": "25F80",
+      "os_version": "macOS 26.5.1",
+      "termios_orig": "iflag=0x6b02 oflag=0x3 cflag=0x4b00 lflag=0x200005cb"
+    },
+    "pid": 96980,
+    "selftest": "signal",
+    "keys": [],
+    "inputs": [],
+    "resizes": [],
+    "frames": {
+      "count": 2,
+      "max_draw_ms": 0.576,
+      "max_flush_ms": 0.291,
+      "max_bytes": 5654,
+      "max_coalesced": 0
+    },
+    "exit": "signal",
+    "error": "terminated"
+  },
+  "screen_selftest_worker_panic": {
+    "started": "2026-09-26T15:30:31+09:00",
+    "probe_revision": "9c27bcb26988+dirty",
+    "goos": "darwin",
+    "goarch": "arm64",
+    "cols": 120,
+    "rows": 30,
+    "output_method": "writeconsole",
+    "vt_input": true,
+    "env": {
+      "COLORTERM": "truecolor",
+      "LANG": "ja_JP.UTF-8",
+      "TERM": "xterm-256color",
+      "TERM_PROGRAM": "Apple_Terminal",
+      "TERM_PROGRAM_VERSION": "470.2"
+    },
+    "info": {
+      "os_build": "25F80",
+      "os_version": "macOS 26.5.1",
+      "termios_orig": "iflag=0x6b02 oflag=0x3 cflag=0x4b00 lflag=0x200005cb"
+    },
+    "pid": 96694,
+    "selftest": "worker-panic",
+    "keys": [],
+    "inputs": [],
+    "resizes": [],
+    "frames": {
+      "count": 1,
+      "max_draw_ms": 0.352,
+      "max_flush_ms": 0.239,
+      "max_bytes": 5654,
+      "max_coalesced": 0
+    },
+    "exit": "panic",
+    "error": "tuiprobe: self-test panic in a worker goroutine"
+  },
   "terminal": "Terminal.app",
   "terminal_version": "2.15",
   "width": {

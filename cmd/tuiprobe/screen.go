@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/zredjet/tana/internal/keys"
@@ -75,6 +76,7 @@ type frameStats struct {
 type screenSection struct {
 	sectionHeader
 	PID         int           `json:"pid"`
+	SelfTest    string        `json:"selftest,omitempty"` // -selftest で試した終わり方
 	Keys        []keyLogEntry `json:"keys"`
 	KeysDropped int           `json:"keys_dropped,omitempty"`
 	Inputs      []inputEntry  `json:"inputs"`
@@ -96,6 +98,17 @@ type polledSize struct {
 }
 
 type progressDone struct{}
+
+// selfTest は、キーを押さずに終わり方を試すもの（-selftest。T1 の確認を、撮影だけで行えるように）。
+type selfTest struct {
+	kind  string        // panic（イベントループの panic）・worker-panic（作業用の goroutine の panic）・signal（自分に SIGTERM を送る。Unix だけ）
+	after time.Duration // 始めてから試すまでの時間
+}
+
+var selfTestKinds = []string{"panic", "worker-panic", "signal"}
+
+// selfTestMsg は、selfTest の時間が来たことの知らせ。
+type selfTestMsg struct{ kind string }
 
 // probeScreen は、確認用の画面の状態と描画（tui.Handler）。
 type probeScreen struct {
@@ -148,6 +161,8 @@ func (p *probeScreen) Handle(l *tui.Loop, ev tui.Event) bool {
 			p.res.Resizes = append(p.res.Resizes, resizeEntry{TMs: p.ms(m.at), Source: "poll", Cols: m.cols, Rows: m.rows})
 		case progressDone:
 			p.running = false
+		case selfTestMsg:
+			return p.runSelfTest(l, m.kind)
 		}
 	case tui.KindSignal:
 		p.res.Exit = "signal"
@@ -212,6 +227,27 @@ func (p *probeScreen) listKey(l *tui.Loop, k keys.Event) bool {
 		}
 	}
 	pn.cursor = min(max(pn.cursor, 0), screenRows-1)
+	return true
+}
+
+// runSelfTest は、-selftest の終わり方を試す。false を返すと終わる。
+func (p *probeScreen) runSelfTest(l *tui.Loop, kind string) bool {
+	switch kind {
+	case "panic":
+		panic("tuiprobe: self-test panic in the event loop")
+	case "worker-panic":
+		l.Go(func() { panic("tuiprobe: self-test panic in a worker goroutine") })
+	case "signal":
+		// SIGTERM は入力のチャネルに届き、tui.Loop が端末を戻して終わる。Windows では送れない（コンソールを閉じて試す）。
+		proc, err := os.FindProcess(os.Getpid())
+		if err == nil {
+			err = proc.Signal(syscall.SIGTERM)
+		}
+		if err != nil {
+			p.res.Exit, p.res.Error = "error", "self-test signal: "+err.Error()
+			return false
+		}
+	}
 	return true
 }
 
@@ -362,13 +398,22 @@ func (p *probeScreen) drawEdit(s *screen.Screen, cols, rows int) {
 
 // runScreen は、確認用の画面を動かす。どの終わり方でも端末を戻してから（tui.Loop.Run が戻す）、記録を返す。
 // panic は、記録に書いた後で呼び出し側が表示する。
-func runScreen(t tui.Terminal, sec sectionHeader) (*screenSection, error) {
-	res := &screenSection{sectionHeader: sec, PID: os.Getpid(), Keys: []keyLogEntry{}, Inputs: []inputEntry{}, Resizes: []resizeEntry{}}
+func runScreen(t tui.Terminal, sec sectionHeader, st selfTest) (*screenSection, error) {
+	res := &screenSection{sectionHeader: sec, PID: os.Getpid(), SelfTest: st.kind, Keys: []keyLogEntry{}, Inputs: []inputEntry{}, Resizes: []resizeEntry{}}
 	l := tui.New(t)
 	l.SetNoColor(os.Getenv("NO_COLOR") != "")
 	h := newProbeScreen(res, l)
 	stop := make(chan struct{})
 	pollSize(l, t, sec.Cols, sec.Rows, 250*time.Millisecond, stop)
+	if st.kind != "" {
+		l.Go(func() {
+			select {
+			case <-time.After(st.after):
+				l.Post(selfTestMsg{kind: st.kind})
+			case <-stop:
+			}
+		})
+	}
 	err := l.Run(h)
 	close(stop)
 	var pe *tui.PanicError

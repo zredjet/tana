@@ -5281,6 +5281,254 @@
     ],
     "completed": true
   },
+  "modes": {
+    "started": "2026-09-26T15:28:11+09:00",
+    "probe_revision": "9c27bcb26988+dirty",
+    "goos": "windows",
+    "goarch": "arm64",
+    "cols": 120,
+    "rows": 30,
+    "output_method": "writeconsole",
+    "vt_input": true,
+    "env": {},
+    "info": {
+      "console_in_orig": "0x1f7",
+      "console_in_set": "0x3a8",
+      "console_input_cp": "932",
+      "console_out_orig": "0x3",
+      "console_out_set": "0xf",
+      "console_output_cp": "932",
+      "keyboard_layout": "00000411",
+      "os_version": "Windows 10.0 build 26200",
+      "output_cp_orig": "932",
+      "output_method": "writeconsole"
+    },
+    "set_reset": [
+      {
+        "id": "2026-sync-output",
+        "seq": "\"\\x1b[?2026h\\x1b[?2026l\"",
+        "col": 1,
+        "printed": false
+      },
+      {
+        "id": "7-autowrap",
+        "seq": "\"\\x1b[?7h\\x1b[?7l\"",
+        "col": 1,
+        "printed": false
+      },
+      {
+        "id": "25-cursor",
+        "seq": "\"\\x1b[?25l\\x1b[?25h\\x1b[?25l\"",
+        "col": 1,
+        "printed": false
+      },
+      {
+        "id": "2004-bracketed-paste",
+        "seq": "\"\\x1b[?2004h\\x1b[?2004l\"",
+        "col": 1,
+        "printed": false
+      }
+    ],
+    "autowrap": {
+      "cols": 120,
+      "off_row": 3,
+      "off_col": 120,
+      "on_row": 4,
+      "on_col": 4,
+      "wraps_when_on": true,
+      "stays_when_off": true
+    },
+    "queries": [
+      {
+        "id": "decrqm-2026-sync-output",
+        "query": "\"\\x1b[?2026$p\"",
+        "reply": "\"\\x1b[?2026;0$y\"",
+        "reply_hex": "1b5b3f323032363b302479",
+        "col": 1
+      },
+      {
+        "id": "decrqm-1049-alt-screen",
+        "query": "\"\\x1b[?1049$p\"",
+        "reply": "\"\\x1b[?1049;1$y\"",
+        "reply_hex": "1b5b3f313034393b312479",
+        "col": 1
+      },
+      {
+        "id": "decrqm-7-autowrap",
+        "query": "\"\\x1b[?7$p\"",
+        "reply": "\"\\x1b[?7;2$y\"",
+        "reply_hex": "1b5b3f373b322479",
+        "col": 1
+      },
+      {
+        "id": "decrqm-25-cursor",
+        "query": "\"\\x1b[?25$p\"",
+        "reply": "\"\\x1b[?25;2$y\"",
+        "reply_hex": "1b5b3f32353b322479",
+        "col": 1
+      },
+      {
+        "id": "decrqm-2004-bracketed-paste",
+        "query": "\"\\x1b[?2004$p\"",
+        "reply": "\"\\x1b[?2004;2$y\"",
+        "reply_hex": "1b5b3f323030343b322479",
+        "col": 1
+      }
+    ],
+    "joins": [
+      {
+        "id": "jamo-l+syllable",
+        "a": "ᄀ",
+        "b": "가",
+        "codepoints": "U+1100 + U+AC00",
+        "note": "ハングル字母 L の後の音節",
+        "width_a": 2,
+        "width_b": 2,
+        "row": 4,
+        "col_cup": 28,
+        "col_direct": 28,
+        "expected_col": 28,
+        "separated": true,
+        "col_rtl": 26
+      },
+      {
+        "id": "jamo-l+jamo-l",
+        "a": "ᄀ",
+        "b": "ᄀ",
+        "codepoints": "U+1100 + U+1100",
+        "note": "ハングル字母 L＋L",
+        "width_a": 2,
+        "width_b": 2,
+        "row": 7,
+        "col_cup": 28,
+        "col_direct": 28,
+        "expected_col": 28,
+        "separated": true,
+        "col_rtl": 26
+      },
+      {
+        "id": "virama+consonant",
+        "a": "क्",
+        "b": "ष",
+        "codepoints": "U+0915 U+094D + U+0937",
+        "note": "デーヴァナーガリーのヴィラーマの後の子音（GB9c）",
+        "width_a": 1,
+        "width_b": 1,
+        "row": 10,
+        "col_cup": 26,
+        "col_direct": 27,
+        "expected_col": 26,
+        "separated": true,
+        "col_rtl": 26
+      },
+      {
+        "id": "consonant+spacing-mark",
+        "a": "क",
+        "b": "ि",
+        "codepoints": "U+0915 + U+093F",
+        "note": "子音の後の母音記号（GB9a。単独でも幅 1 の通常の文字）",
+        "width_a": 1,
+        "width_b": 1,
+        "row": 13,
+        "col_cup": 26,
+        "col_direct": 26,
+        "expected_col": 26,
+        "separated": true,
+        "col_rtl": 25
+      },
+      {
+        "id": "zwj+emoji",
+        "a": "😀‍",
+        "b": "😀",
+        "codepoints": "U+1F600 U+200D + U+1F600",
+        "note": "ZWJ で終わる絵文字の後の絵文字（GB11）",
+        "width_a": 2,
+        "width_b": 2,
+        "row": 16,
+        "col_cup": 28,
+        "col_direct": 29,
+        "expected_col": 28,
+        "separated": true,
+        "col_rtl": 27
+      },
+      {
+        "id": "prepend+letter",
+        "a": "؀",
+        "b": "a",
+        "codepoints": "U+0600 + U+0061",
+        "note": "プリペンドの後の文字（GB9b）",
+        "width_a": 1,
+        "width_b": 1,
+        "row": 19,
+        "col_cup": 26,
+        "col_direct": 26,
+        "expected_col": 26,
+        "separated": true,
+        "col_rtl": 25
+      },
+      {
+        "id": "ascii+ascii",
+        "a": "a",
+        "b": "b",
+        "codepoints": "U+0061 + U+0062",
+        "note": "比較用（結合しない）",
+        "width_a": 1,
+        "width_b": 1,
+        "row": 22,
+        "col_cup": 26,
+        "col_direct": 26,
+        "expected_col": 26,
+        "separated": true,
+        "col_rtl": 25
+      }
+    ],
+    "join_row": 4,
+    "completed": true
+  },
+  "screen_selftest_panic": {
+    "started": "2026-09-26T15:32:19+09:00",
+    "probe_revision": "9c27bcb26988+dirty",
+    "goos": "windows",
+    "goarch": "arm64",
+    "cols": 120,
+    "rows": 30,
+    "output_method": "writeconsole",
+    "vt_input": true,
+    "env": {},
+    "info": {
+      "console_in_orig": "0x1f7",
+      "console_in_set": "0x3a8",
+      "console_input_cp": "932",
+      "console_out_orig": "0x3",
+      "console_out_set": "0xf",
+      "console_output_cp": "932",
+      "keyboard_layout": "00000411",
+      "os_version": "Windows 10.0 build 26200",
+      "output_cp_orig": "932",
+      "output_method": "writeconsole"
+    },
+    "pid": 12144,
+    "selftest": "panic",
+    "keys": [],
+    "inputs": [],
+    "resizes": [
+      {
+        "t_ms": 0.672,
+        "source": "event",
+        "cols": 120,
+        "rows": 30
+      }
+    ],
+    "frames": {
+      "count": 2,
+      "max_draw_ms": 0,
+      "max_flush_ms": 0.672,
+      "max_bytes": 5654,
+      "max_coalesced": 0
+    },
+    "exit": "panic",
+    "error": "tuiprobe: self-test panic in the event loop"
+  },
   "terminal": "conhost",
   "terminal_version": "10.0.26100.8875",
   "width": {
