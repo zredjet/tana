@@ -178,6 +178,17 @@ func classify(text string) Cluster {
 		}
 		class, display = Unstable, b.String()
 	}
+	if class == Unstable {
+		// 規則を当てた後の形が、さらに規則に当たることがある（例: 0 U+20E3 U+FE0F は、VS16 を除くと 0 U+20E3 になり、キーキャップの規則で 0 になる）。
+		// 当てるたびに短くなるので、通常の文字になるまで当てる。
+		switch d := classify(display); d.Class {
+		case Normal:
+		case Unstable:
+			display = d.Display
+		default:
+			return replaced(text, Invisible)
+		}
+	}
 	width, varies := 0, false
 	for _, r := range display {
 		p := lookup(r)

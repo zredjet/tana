@@ -50,6 +50,33 @@ func TestGenerate(t *testing.T) {
 	}
 }
 
+// TestGenerateCRLF は、改行が CRLF の UCD のファイル（Windows のチェックアウト）から、LF のものと同じ表を作ることを確かめる。
+func TestGenerateCRLF(t *testing.T) {
+	t.Parallel()
+	dir := copyUCD(t)
+	for _, name := range Files {
+		p := filepath.Join(dir, name)
+		data, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(strings.ReplaceAll(string(data), "\n", "\r\n")), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	crlf, err := Generate(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lf, err := Generate(filepath.Join("..", "..", "ucd"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(crlf) != string(lf) {
+		t.Error("tables generated from CRLF files differ from those generated from LF files")
+	}
+}
+
 func TestProps(t *testing.T) {
 	t.Parallel()
 	p, _, err := Props(filepath.Join("..", "..", "ucd"))

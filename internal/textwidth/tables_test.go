@@ -20,8 +20,22 @@ func TestTablesUpToDate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(got, want) {
+	if !sameSource(got, want) {
 		t.Error("tables.go is out of date; run go generate in internal/textwidth")
+	}
+}
+
+// TestSameSourceIgnoresCRLF は、Windows で改行が CRLF に変えられてチェックアウトされた tables.go も、
+// 生成したもの（LF）と同じとみなすことを確かめる（CI の windows-latest は core.autocrlf が有効）。
+func TestSameSourceIgnoresCRLF(t *testing.T) {
+	t.Parallel()
+	lf := []byte("package textwidth\n\nvar x = 1\n")
+	crlf := bytes.ReplaceAll(lf, []byte("\n"), []byte("\r\n"))
+	if !sameSource(crlf, lf) || !sameSource(lf, lf) {
+		t.Error("sameSource does not accept CRLF line endings")
+	}
+	if sameSource([]byte("package textwidth\n\nvar x = 2\n"), lf) {
+		t.Error("sameSource accepts different content")
 	}
 }
 
@@ -77,4 +91,10 @@ func TestLookupEdges(t *testing.T) {
 	if lookup(0x3042)&widthMask>>widthShift != widthTwo {
 		t.Error("U+3042 is not wide")
 	}
+}
+
+// sameSource は、改行の違い（CRLF と LF）を除いて、2 つのソースが同じかを返す。
+func sameSource(a, b []byte) bool {
+	lf := func(s []byte) []byte { return bytes.ReplaceAll(s, []byte("\r\n"), []byte("\n")) }
+	return bytes.Equal(lf(a), lf(b))
 }

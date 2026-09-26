@@ -78,6 +78,10 @@ func TestClusters(t *testing.T) {
 		{"zwj with skin tone", "👩\U0001f3fd\u200d💻", []Cluster{c("👩\U0001f3fd\u200d💻", Unstable, "👩", 2, false)}},
 		{"rainbow flag", "🏳\ufe0f\u200d🌈", []Cluster{c("🏳\ufe0f\u200d🌈", Unstable, "🏳", 1, false)}},
 		{"keycap", "#\ufe0f\u20e3", []Cluster{c("#\ufe0f\u20e3", Unstable, "#", 1, false)}},
+		// VS16 を除くとキーキャップになるもの（ファジングで見つかった）。簡略な形になるまで規則を当てる。
+		{"vs16 after keycap mark", "0\u20e3\ufe0f", []Cluster{c("0\u20e3\ufe0f", Unstable, "0", 1, false)}},
+		// 簡略な形が見えない文字になるもの（キーキャップの規則で、既定で無視されるハングルの初声の埋め字だけになる）。
+		{"keycap mark after hangul filler", "\u115f\u20e3", []Cluster{c("\u115f\u20e3", Invisible, "?", 1, false)}},
 		{"tag sequence", "🏴\U000e0067\U000e0062\U000e0065\U000e006e\U000e0067\U000e007f", []Cluster{
 			c("🏴\U000e0067\U000e0062\U000e0065\U000e006e\U000e0067\U000e007f", Unstable, "🏴", 2, false)}},
 		{"flag", "\U0001f1ef\U0001f1f5", []Cluster{c("\U0001f1ef\U0001f1f5", Unstable, "??", 2, false)}},
