@@ -381,3 +381,29 @@ func TestSignals(t *testing.T) {
 	for range in {
 	}
 }
+
+// TestInputErrorWhenTerminalCloses は、端末が閉じられて読み取りに失敗したら、Err を持つ入力を送ってチャネルを閉じることを確かめる
+// （呼び出し側が Restore して終われるように）。
+func TestInputErrorWhenTerminalCloses(t *testing.T) {
+	master, slave := openPty(t)
+	tm := startOn(t, slave, Options{})
+	defer tm.Restore()
+	in := tm.StartInput()
+	unix.Close(master) // 疑似端末の親を閉じると、子の読み取りは EOF か EIO になる
+	deadline := time.After(5 * time.Second)
+	gotErr := false
+	for {
+		select {
+		case x, ok := <-in:
+			if !ok {
+				if !gotErr {
+					t.Error("input closed without an error")
+				}
+				return
+			}
+			gotErr = gotErr || x.Err != nil
+		case <-deadline:
+			t.Fatal("no error after the terminal closed")
+		}
+	}
+}
