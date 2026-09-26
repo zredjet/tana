@@ -27,6 +27,7 @@ type fakeTerm struct {
 	out        bytes.Buffer
 	restored   int
 	writeErr   error
+	onWrite    func(out string) // 書かれるたびに、それまでに書かれたもの全体で呼ぶ（画面に応じて入力を送るため）
 }
 
 func newFakeTerm(cols, rows int) *fakeTerm {
@@ -39,7 +40,11 @@ func (f *fakeTerm) Write(p []byte) (int, error) {
 	if f.writeErr != nil {
 		return 0, f.writeErr
 	}
-	return f.out.Write(p)
+	n, err := f.out.Write(p)
+	if f.onWrite != nil {
+		f.onWrite(f.out.String())
+	}
+	return n, err
 }
 
 func (f *fakeTerm) Size() (int, int, error) {

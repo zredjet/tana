@@ -33,8 +33,18 @@ var directionRules = []directionRule{
 	// screen・lineedit は textwidth だけを使う（tui §3）。
 	{"internal/screen", []string{"internal/textwidth"}},
 	{"internal/lineedit", []string{"internal/textwidth"}},
-	// tui は土台のパッケージを組み合わせる（filer §4）。term を通して x/sys を使う。
-	{"internal/tui", []string{"internal/term", "internal/keys", "internal/screen", "internal/lineedit", "internal/textwidth", "golang.org/x/sys"}},
+	// platform は x/sys だけを使い、ほかの tana のパッケージを import しない（filer §4）。
+	{"internal/platform", []string{"golang.org/x/sys"}},
+	// msg・textfmt・listing・app は、term・keys・screen・tui を import しない（filer §4）。
+	{"internal/msg", []string{"internal/fsops", "golang.org/x/sys"}},
+	{"internal/textfmt", []string{"internal/textwidth"}},
+	{"internal/listing", []string{"internal/fsops", "golang.org/x/sys", "golang.org/x/text"}},
+	{"internal/app", []string{"internal/fsops", "internal/listing", "internal/msg", "internal/platform", "internal/lineedit", "internal/textwidth",
+		"golang.org/x/sys", "golang.org/x/text"}},
+	// tui は土台のパッケージを組み合わせ、app の状態を描く（filer §4）。term を通して x/sys を使う。
+	{"internal/tui", []string{"internal/term", "internal/keys", "internal/screen", "internal/lineedit", "internal/textwidth",
+		"internal/app", "internal/listing", "internal/msg", "internal/textfmt", "internal/platform", "internal/fsops",
+		"golang.org/x/sys", "golang.org/x/text"}},
 }
 
 // within は、p が root そのものか、その配下のパッケージかを返す。

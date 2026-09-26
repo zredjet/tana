@@ -135,6 +135,9 @@ func (s *Screen) SetCursor(x, y int, visible bool) {
 	s.cursorX, s.cursorY, s.cursorVisible = x, y, visible
 }
 
+// Cursor は、SetCursor で設定した本物のカーソルの位置と表示・非表示を返す（ゴールデンファイルのテスト用）。
+func (s *Screen) Cursor() (x, y int, visible bool) { return s.cursorX, s.cursorY, s.cursorVisible }
+
 // Cell は (x, y) のセルを返す。画面の外なら空のセル。
 func (s *Screen) Cell(x, y int) Cell {
 	if x < 0 || x >= s.cols || y < 0 || y >= s.rows {

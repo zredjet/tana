@@ -1,7 +1,10 @@
 // Package tui は、ファイラーの描画とキー入力（docs/SPEC-filer.md §4・§10）。
 //
-// フェーズ16の時点では土台だけを持つ: term・keys・screen を組み合わせたイベントループ（Loop）と、panic とシグナルからの復元。
-// 画面の状態を持つ app と、その描画は、フェーズ18で加える。
+// 2 つの部分からなる。
+//   - 土台: term・keys・screen を組み合わせたイベントループ（Loop）と、panic とシグナルからの復元（フェーズ16）。
+//   - ファイラーのメイン画面（Filer。フェーズ18）: app の状態を描き、キー入力を app の操作（app.Action）に変える。
+//     画面の状態は app が持ち、Filer は持たない（filer §4）。app の Cmd は Loop.Go で動かし、結果を Post で app に返す（filer §10）。
+//     ペインを横に並べる構成とキーの割り当ては、filer §15 で決めるまでの案。変えるときは Filer だけを変える。
 //
 // # API
 //
@@ -21,7 +24,7 @@
 //	t, err := term.Open(term.Options{AltScreen: true, HideCursor: true, NoAutoWrap: true, BracketedPaste: true, VTInput: true, Signals: true})
 //	if err != nil { ... }
 //	defer t.Restore()
-//	err = tui.New(t).Run(h)
+//	err = tui.New(t).Run(h)          // ファイラーは tui.RunFiler(l, a, cmds)（cmd/tana）
 //	var pe *tui.PanicError
 //	if errors.As(err, &pe) { fmt.Fprint(os.Stderr, pe); os.Exit(2) } // 端末を戻した後で、panic とスタックを出す
 //
