@@ -322,7 +322,8 @@ CLAUDE.md の「仮想マシンでの確認」と、docs/PROMPTS.md の §5 も�
   置き場所は internal/fsops/internal/probe
 - 測定:
   - Mac の Terminal.app と iTerm2 の width は、あなたが open -a で起動して行う
-  - 仮想マシンの Windows Terminal と conhost の width と keys は、あなたが computer use で行う
+  - 仮想マシンの Windows Terminal と conhost の width は、あなたが行う（prlctl exec で起動し、computer use で撮影する）
+  - 仮想マシンの keys は私が行うので、起動用のファイルを用意して、手順を示して私に頼む
   - Mac の端末の keys（IME で確定した日本語と貼り付けを含む）は私が行うので、手順を示して私に頼む
 
 完了条件:
@@ -391,7 +392,8 @@ CLAUDE.md の「仮想マシンでの確認」と、docs/PROMPTS.md の §5 も�
 - internal/tui の土台: term・keys・screen を組み合わせたイベントループ、panic とシグナルからの復元
 - cmd/tuiprobe に確認用の画面を足す: 2 ペイン・10 万行の一覧、中央の入力欄（lineedit と本物のカーソル）、
   進捗の更新、panic とシグナルの試験、大きさの変更
-- 手動の確認（VU1・VU4・VU5・VU9・VT4・VT5）: 仮想マシンはあなたが computer use で行い、Mac の端末は手順を示して私に頼む
+- 手動の確認（VU1・VU4・VU5・VU9・VT4・VT5）: 画面の撮影とマウスで行える操作（ウィンドウの大きさの変更など）はあなたが行い、
+  キー入力と IME は、仮想マシン・Mac の端末とも、手順を示して私に頼む（CLAUDE.md の「仮想マシンでの確認」）
 
 完了条件:
 - term が tui §10 の完了条件を満たす
@@ -473,7 +475,7 @@ CLAUDE.md の「仮想マシンでの確認」と、docs/PROMPTS.md の §5 も�
 
 やること:
 - filer §12 と tui §9 のうち、まだ結果のない項目を確かめる
-- 仮想マシンの Windows Terminal と conhost で、v0.1 のすべての操作を一通り行う（あなたが computer use で行う）
+- 仮想マシンの Windows Terminal と conhost で、v0.1 のすべての操作を一通り行う（キーで行う操作は、手順書を作って私に頼む。画面の確認はあなたが行う）
 - Mac の端末で私が行う確認の手順書を作る
 - 結果を filer §12 に追記し、仕様と実装のずれを一覧にする
 
@@ -553,7 +555,9 @@ macOS 用のバイナリは、ごみ箱に cgo を使うため、Mac 上で `CGO
 ## 5. 仮想マシンでの確認（Parallels Desktop）
 
 端末の見え方やキー入力は、CI では確かめられません（SPEC-filer §12）。
-そこで、Parallels Desktop の仮想マシン「Windows 11」（ARM 版）で確かめます。仮想マシンの操作は Claude Code が computer use で行います。
+そこで、Parallels Desktop の仮想マシン「Windows 11」（ARM 版）で確かめます。
+Claude Code は、`prlctl exec` で端末とプローブを起動し、computer use で画面を撮影します。
+キー入力と IME は、あなたが実物のキーボードで行います。フェーズ12で、computer use で送るキーは当てにならないと分かったためです（次の「注意」）。
 
 ### 準備（1 回だけ。あなたが行う）
 
@@ -564,19 +568,24 @@ macOS 用のバイナリは、ごみ箱に cgo を使うため、Mac 上で `CGO
 ### 毎回の流れ（Claude Code が行う）
 
 1. `prlctl start "Windows 11"` で仮想マシンを起動する。
-2. `GOOS=windows GOARCH=arm64` でビルドし、仮想マシンのローカルのプローブ用のフォルダ（例: `%USERPROFILE%\tana-probe`）に置く。
-3. computer use で、Windows Terminal（`wt.exe`）と conhost（`conhost.exe`）からプローブを起動し、案内に従って操作する。
-4. 結果のファイルを `docs/probe-results` に取り込む。
+2. `GOOS=windows GOARCH=arm64` でビルドし、リポジトリの `.vmstage`（git に入れない）と共有フォルダ（`Z:`）を通して、
+   仮想マシンのローカルのプローブ用のフォルダ（`%USERPROFILE%\tana-probe`）に置く。
+3. 入力の要らないもの（width など）は、`prlctl exec` で Windows Terminal（`wt.exe`）と conhost（`conhost.exe`）からプローブを起動し、computer use で画面を撮影する。
+4. キー入力が要るものは、ダブルクリックで起動できるファイル（`.cmd`）をプローブ用のフォルダに用意し、手順を示してあなたに頼む。
+5. 結果のファイルを `docs/probe-results` に取り込む。
 
 ### あなたにお願いすること
 
-- 主なキー（Esc、Shift＋英字、Ctrl＋英字、Backspace）を、実物のキーボードでも確かめる。Claude Code が送るキーは、macOS から Parallels を通って届く合成のイベントのため。
-- Claude Code が送るキーで IME が動かなかった場合は、IME の確認。
-- Mac の Terminal.app と iTerm2 での keys と IME の確認。computer use では、端末のアプリに文字を打てないため。
-  プローブの案内に従ってキーを押すだけで、記録と判定はプローブが行う（1 端末あたり 10〜15 分の見込み）。
+- 仮想マシンと Mac の端末（Terminal.app・iTerm2）での、キー入力と IME の確認。
+  プローブの案内に従ってキーを押すだけで、記録はプローブが行う（1 端末あたり 5〜15 分の見込み）。押し間違えた手順は、`-steps` で撮り直せる。
 - 仮想マシンの設定の変更が必要になった場合の変更（Claude Code はシステムの設定を変えない）。
 
 ### 注意
 
 - 仮想マシンは ARM 版の Windows 11 です。x64 の PC や Windows 10 の conhost とは違うことがあるので、結果には OS と端末の版を記録します。
 - 共有フォルダ（`\\Mac\...`）はネットワークドライブとして扱われ、ごみ箱が使えず、SmartScreen に止められることもあります。プローブは仮想マシンのローカルのフォルダで動かします。
+- computer use で送るキーは、仮想マシンでは当てになりません（フェーズ12）。
+  - Esc は computer use の停止のキーなので届きません。Claude Code が操作している間にあなたが Esc を押すと、Claude Code の操作が止まります。
+  - 速い文字の入力は、文字が落ちます。文字のキーは Windows 11 の長押しの候補（Å など）を開き、後のキーを飲み込みます。
+  - Mac の Option が Ctrl として届くことがあります。
+- conhost では、プローブの入力モードで Ctrl＋V が貼り付けになりません。貼り付けは右クリックのメニューで行います。

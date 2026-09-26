@@ -91,11 +91,19 @@ TUI のライブラリは使わず、端末の入出力から自作する。
 
 ## 仮想マシンでの確認（Parallels Desktop）
 
-- 仮想マシン「Windows 11」（ARM 版）を、computer use（Parallels Desktop の画面）と `prlctl`（`prlctl start`・`prlctl exec` など）で操作してよい。
+- 仮想マシン「Windows 11」（ARM 版）を、`prlctl`（`prlctl start`・`prlctl exec` など）と computer use（Parallels Desktop の画面）で操作してよい。
+- 端末は `prlctl exec "Windows 11" --current-user cmd /c "start \"\" wt.exe ..."` のように起動する。文字を打って起動しない（computer use の速い入力は文字が落ちる）。
+  conhost は `conhost.exe` から直接起動する。`start "" conhost.exe ...` は窓が閉じるまで戻らないことがあるので、バックグラウンドで実行する。
+- computer use は、画面の撮影と、マウスで行える操作（ウィンドウの大きさの変更など）に使う。
+- 仮想マシンでのキー入力と IME の確認は私が行う（filer §12.2）。computer use で送るキーは当てにならないため。
+  - Esc は computer use の停止のキーなので、仮想マシンに届かない。
+  - 文字のキーは Windows 11 の長押しの候補を開き、後のキーを飲み込む。
+  - Mac の Option が Ctrl として届くことがある。
+  あなたは、ダブルクリックで起動できるファイル（`.cmd`）をプローブ用のフォルダに用意し、手順を示して私に頼む。
 - 仮想マシンのシステムの設定（既定の端末、IME、ごみ箱、レジストリなど）は変えない。必要なら私に頼む。
 - プローブは、仮想マシンのローカルの専用のフォルダ（例: `%USERPROFILE%\tana-probe`）の中だけで動かし、その外のファイルを作ったり消したりしない。
   共有フォルダ（`\\Mac\...`）はネットワークドライブなので、そこでは動かさない。
-- conhost は `conhost.exe` から直接起動する。
+- ファイルの受け渡しは、共有フォルダ（`Z:` は Mac のホーム）の、リポジトリの `.vmstage`（git に入れない）を通し、使い終わったら消す。
 - Mac の Terminal.app と iTerm2 には、computer use で文字を打てない。これらでのキー入力と IME の確認は私が行う（filer §12.2）。
 - 結果は `docs/probe-results` に置き、OS と端末の版を記録する。
 

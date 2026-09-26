@@ -20,6 +20,9 @@ desktop.ini
 *.out
 /dist/
 
+# 仮想マシンとのファイルの受け渡し（CLAUDE.md の「仮想マシンでの確認」）
+/.vmstage/
+
 # ボリュームをまたぐテスト用のイメージ（SPEC §18.3）
 *.dmg
 *.vhd
