@@ -272,9 +272,22 @@ func ConflictHeader(op fsops.OpKind, from, to string) string {
 // ConflictColumns は、衝突の一覧の見出し。
 var ConflictColumns = [4]string{"名前", "コピー元", "コピー先", "決定"}
 
-// ConflictKeys は、衝突の画面のキーの案内（3 行）。
-var ConflictKeys = [3]string{
-	"この行: s スキップ  o 上書き  r 自動リネーム  m マージ",
+// ConflictRowTitle と ConflictRowKeys は、衝突の画面の「この行」のキーの案内。その行で使えない決定は暗く出す（filer §8.3）。
+const ConflictRowTitle = "この行: "
+
+// ConflictKey は、1 行ずつの決定のキーと、その案内。
+type ConflictKey struct {
+	Decision fsops.Decision
+	Text     string
+}
+
+var ConflictRowKeys = []ConflictKey{
+	{fsops.DecisionSkip, "s スキップ"}, {fsops.DecisionOverwrite, "o 上書き"},
+	{fsops.DecisionAutoRename, "r 自動リネーム"}, {fsops.DecisionMerge, "m マージ"},
+}
+
+// ConflictKeys は、衝突の画面のキーの案内の残りの 2 行。
+var ConflictKeys = [2]string{
 	"すべて: S スキップ  O 上書き  N 新しいときだけ上書き  R 自動リネーム  M マージ",
 	"Enter 実行  Esc やめる  Space 展開・折りたたみ  u 未選択だけ表示",
 }

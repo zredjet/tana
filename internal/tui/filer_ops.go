@@ -209,7 +209,7 @@ func (f *Filer) drawConflicts(s *screen.Screen) {
 	}
 	rule := strings.Repeat(boxSingle.h, cols)
 	s.Put(full, 0, header, rule, styleDim)
-	nameW := cols - 2 - infoW - 1 - infoW - 1 - decisionW
+	nameW := cols - 2 - (infoW + 1) - (infoW + 1) - 1 - decisionW // 左端の 2 桁と、欄の間の 3 つの空白
 	colX := [4]int{2, 2 + nameW + 1, 2 + nameW + 1 + infoW + 1, 2 + nameW + 1 + 2*(infoW+1)}
 	for i, h := range msg.ConflictColumns {
 		s.Put(full, colX[i], header+1, h, styleDim)
@@ -251,19 +251,16 @@ func (f *Filer) drawConflicts(s *screen.Screen) {
 	}
 	s.Put(full, 0, rows-4, rule, styleDim)
 	// この行のキー: その行で使えない決定は暗くする（filer §8.3）。
-	lx := 1 + s.Put(full, 1, rows-3, "この行: ", screen.Style{})
-	for _, k := range []struct {
-		d    fsops.Decision
-		text string
-	}{{fsops.DecisionSkip, "s スキップ"}, {fsops.DecisionOverwrite, "o 上書き"}, {fsops.DecisionAutoRename, "r 自動リネーム"}, {fsops.DecisionMerge, "m マージ"}} {
+	lx := 1 + s.Put(full, 1, rows-3, msg.ConflictRowTitle, screen.Style{})
+	for _, k := range msg.ConflictRowKeys {
 		st := screen.Style{}
-		if cur.ID == 0 || !cur.Allowed[k.d] {
+		if cur.ID == 0 || !cur.Allowed[k.Decision] {
 			st = styleDim
 		}
-		lx += s.Put(full, lx, rows-3, k.text, st) + 2
+		lx += s.Put(full, lx, rows-3, k.Text, st) + 2
 	}
-	s.Put(full, 1, rows-2, msg.ConflictKeys[1], screen.Style{})
-	s.Put(full, 1, rows-1, msg.ConflictKeys[2], screen.Style{})
+	s.Put(full, 1, rows-2, msg.ConflictKeys[0], screen.Style{})
+	s.Put(full, 1, rows-1, msg.ConflictKeys[1], screen.Style{})
 	if text, isErr := f.app.Message(); text != "" { // 使えない決定の理由などは、キーの案内の上に重ねて出す
 		st := screen.Style{}
 		if isErr {
@@ -316,6 +313,7 @@ func (f *Filer) drawProgress(s *screen.Screen) {
 	case p.TotalFiles > 0:
 		percent = p.DoneFiles * 100 / p.TotalFiles
 	}
+	percent = max(min(percent, 100), 0) // 計画の後にファイルが大きくなると、済んだ量が合計を超える
 	barW := in - 8
 	filled := barW * percent / 100
 	bar := "[" + strings.Repeat("#", filled) + strings.Repeat("-", barW-filled) + "]  " + strconv.Itoa(percent) + "%"

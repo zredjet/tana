@@ -111,6 +111,7 @@ func TestGoldenConfirmAndConflicts(t *testing.T) {
 		t.Fatalf("screen %v", sc.a.Screen())
 	}
 	golden(t, "op-conflicts-80x24", sc.draw(80, 24))
+
 	sc.keys(char('m'))                            // 写真/ をマージ（内側の衝突を出す）
 	sc.keys(key(keys.KeyDown), key(keys.KeyDown)) // IMG_0013.jpg
 	sc.keys(char('o'))
@@ -118,6 +119,24 @@ func TestGoldenConfirmAndConflicts(t *testing.T) {
 	golden(t, "op-conflicts-decided-120x40", sc.draw(120, 40))
 	if text, isErr := sc.a.Message(); !isErr || text != msg.DecisionNotAllowed(fsops.DecisionMerge) {
 		t.Errorf("message %q", text)
+	}
+}
+
+// TestConflictColumns80 は、80 桁でも決定の欄（最も広い「自動リネーム」）が切れないことを確かめる。
+func TestConflictColumns80(t *testing.T) {
+	t.Parallel()
+	sc, _ := newOpScene(t, fsops.OpCopy, nil, nil)
+	sc.draw(80, 24)
+	sc.keys(key(keys.KeyEnter))
+	sc.draw(80, 24)
+	sc.keys(char('R')) // すべて自動リネーム
+	s := sc.draw(80, 24)
+	found := false
+	for y := range 24 {
+		found = found || strings.Contains(s.Row(y), "自動リネーム")
+	}
+	if !found {
+		t.Errorf("the decision column is cut at 80 columns:\n%s", render(s))
 	}
 }
 
@@ -249,5 +268,34 @@ func TestRunFilerCopy(t *testing.T) {
 	}
 	if b, err := os.ReadFile(filepath.Join(dst, "hello.txt")); err != nil || string(b) != "hi" {
 		t.Errorf("not copied: %q, %v", b, err)
+	}
+}
+
+// TestProgressOverflow は、計画の後にファイルが大きくなり、済んだバイト数が合計を超えても、進捗の画面を描けることを確かめる。
+func TestProgressOverflow(t *testing.T) {
+	t.Parallel()
+	started := make(chan struct{})
+	sc, plan := newOpScene(t, fsops.OpCopy, nil, nil)
+	plan.conflicts = nil
+	plan.exec = func(ctx context.Context, opt fsops.ExecOptions) (*fsops.Result, error) {
+		opt.Progress(fsops.Progress{Stage: fsops.StageCopy, Current: colDir + "/log.txt", DoneFiles: 3, TotalFiles: 2, DoneBytes: 2000, TotalBytes: 1000})
+		close(started)
+		<-ctx.Done()
+		return &fsops.Result{Status: fsops.StatusCanceled}, nil
+	}
+	sc.draw(80, 24)
+	sc.hold = true
+	sc.keys(key(keys.KeyEnter))
+	go sc.held[0].Run()
+	<-started
+	sc.a.Refresh()
+	defer sc.a.Abort(time.Second)
+	s := sc.draw(80, 24) // 以前は strings.Repeat に負の数を渡して panic した
+	found := false
+	for y := range 24 {
+		found = found || strings.Contains(s.Row(y), "100%")
+	}
+	if !found {
+		t.Error("the progress over the total is not shown as 100%")
 	}
 }
