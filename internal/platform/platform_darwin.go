@@ -22,7 +22,7 @@ var executableExts = []string{".command", ".tool", ".terminal", ".jar", ".workfl
 func IsExecutable(path string, isDir bool) bool {
 	ext := strings.ToLower(filepath.Ext(path))
 	if isDir {
-		return ext == ".app" || ext == ".workflow" || ext == ".action" // Automator のものはフォルダ（バンドル）のこともある
+		return ext == ".app"
 	}
 	if slices.Contains(executableExts, ext) {
 		return true

@@ -43,6 +43,7 @@ func TestDecodeText(t *testing.T) {
 		{"sjis", sjis(t, "日本語のテキスト\r\n２行目"), false, "日本語のテキスト\r\n２行目", "Shift_JIS", true},
 		{"sjis cut after a lead byte", sjis(t, "テキスト")[:7], true, "テキス", "Shift_JIS", true},
 		{"utf16le bom", utf16le(t, "ab日本"), false, "ab日本", "UTF-16", true},
+		{"ff fe then broken utf-16", []byte("\xff\xfe\x00\xd8A\x00"), false, "", "", false}, // 対にならないサロゲート
 		{"empty", nil, false, "", "UTF-8", true},
 		{"nul", []byte("a\x00b"), false, "", "", false},
 		{"not text", []byte("\xff\xfe\xfd\xfc\x80\x80"[2:]), false, "", "", false},

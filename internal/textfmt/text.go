@@ -24,7 +24,7 @@ func DecodeText(data []byte, truncated bool) (text, encoding string, ok bool) {
 			data = data[:len(data)-1] // 途中で切れた符号単位
 		}
 		b, err := unicode.UTF16(unicode.LittleEndian, unicode.ExpectBOM).NewDecoder().Bytes(data)
-		if err != nil {
+		if err != nil || bytes.ContainsRune(b, utf8.RuneError) { // たまたま FF FE で始まるバイナリ（Shift_JIS と同じ判断）
 			return "", "", false
 		}
 		return textOK(string(b), "UTF-16")
