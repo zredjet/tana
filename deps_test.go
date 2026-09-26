@@ -30,6 +30,9 @@ var directionRules = []directionRule{
 	{"internal/textwidth", nil},
 	// keys は標準ライブラリだけを使う（tui §3）。
 	{"internal/keys", nil},
+	// screen・lineedit は textwidth だけを使う（tui §3）。
+	{"internal/screen", []string{"internal/textwidth"}},
+	{"internal/lineedit", []string{"internal/textwidth"}},
 }
 
 // within は、p が root そのものか、その配下のパッケージかを返す。
