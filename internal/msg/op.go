@@ -132,7 +132,7 @@ func Type(t fsops.EntryType) string {
 func Partial(m fsops.Method, o fsops.Outcome) string {
 	switch {
 	case o == fsops.OutcomeCopiedSourceKept:
-		return "移動先は完成しています。移動元の一部を残しました（データは無事です）"
+		return "移動先は完成。移動元の一部を残しました"
 	case o != fsops.OutcomePartial:
 		return ""
 	case m == fsops.MethodCopy:
@@ -193,6 +193,7 @@ const (
 	Canceling           = "中止しています..."
 	Unresponsive        = "応答がありません。Q で終了できますが、次のものが残る場合があります:"
 	ProgressKeys        = "Esc 中止"
+	ForceQuitKey        = "Q 終了"
 	ResultKeys          = "Space 詳細   e 英語の詳細   Enter 閉じる"
 	NewerMark           = "新"
 	MetadataWarning     = "一部の属性を引き継げませんでした"

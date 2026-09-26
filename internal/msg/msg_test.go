@@ -61,7 +61,12 @@ func TestError(t *testing.T) {
 func TestBrowseTextsWidth(t *testing.T) {
 	texts := []string{Loading, LoadCanceled, CannotOpenName, ExecConfirm, ExecChoices, PathInputTitle, NotYet, TooSmall, HelpTitle,
 		CannotOpenDir(""), ShowingAncestor(""), Opened(""), OpenFailed(""), Items(1, 2, 3),
-		TypeParent, TypeDir, TypeJunction, TypeSymlink, TypeSpecial, UnitBytes, LinkArrow, KeyGuide,
+		TypeParent, TypeDir, TypeJunction, TypeSymlink, TypeSpecial, UnitBytes, LinkArrow, KeyGuide, YankedIndicator(3),
+		Planning, NothingToYank, NothingYanked, DestNotFound, SpaceWarning, NothingRunnable, ConfirmKeys, ConfirmKeysConflict,
+		ConfirmKeysNone, UnsetIsSkip, InnerHidden, InnerCollapsed, CancelTitle, CancelQuestion, CancelNoPartial, CancelDoneKept,
+		CancelChoices, Canceling, Unresponsive, ProgressKeys, ResultKeys, NewerMark, MetadataWarning, Yanked(2),
+		ConflictKeys[0], ConflictKeys[1], ConflictKeys[2], ConflictColumns[0], ConflictColumns[1], ConflictColumns[2], ConflictColumns[3],
+		ConflictHeader(fsops.OpCopy, "a", "b"), ResultTitle(fsops.OpMove, "x", "a", "b"), Done(fsops.OpCopy, 1, 2, true),
 		PaneIndicator(1, 2), PreviewEmpty, PreviewBinary, PreviewNotLocal,
 		LabelDir, LabelJunction, LabelSymlink, LabelSpecial, LabelError}
 	for _, h := range Help {
@@ -143,5 +148,20 @@ func TestResultError(t *testing.T) {
 		if got := ResultError(tt.o, tt.err); got != tt.want {
 			t.Errorf("ResultError(%v, %v) = %q, want %q", tt.o, tt.err, got, tt.want)
 		}
+	}
+}
+
+// TestKeyGuideWidth は、キーの案内が 80 桁の画面に収まることを確かめる（1 桁目から描く）。
+func TestKeyGuideWidth(t *testing.T) {
+	w := 0
+	for _, r := range KeyGuide {
+		if r < 0x80 {
+			w++
+		} else {
+			w += 2 // 案内の日本語はすべて全角
+		}
+	}
+	if w > 78 {
+		t.Errorf("KeyGuide is %d columns wide", w)
 	}
 }

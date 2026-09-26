@@ -57,7 +57,8 @@ const (
 type operation struct {
 	gen    int
 	req    fsops.Request
-	pane   int // 貼り付けたペイン
+	from   string // 覚えたときのフォルダ（見出しに出す）
+	pane   int    // 貼り付けたペイン
 	screen Screen
 	frame  int // この画面を出したときの a.frames。描いた後に届いたキーでだけ確定する（filer U2）
 	cancel context.CancelFunc
@@ -146,7 +147,7 @@ func (a *App) yank() {
 		a.setMessage(msg.NothingToYank, false)
 		return
 	}
-	a.yanked = t
+	a.yanked, a.yankDir = t, a.panes[a.active].dir
 	a.setMessage(msg.Yanked(len(t)), false)
 }
 
@@ -164,7 +165,7 @@ func (a *App) paste(op fsops.OpKind) []Cmd {
 	a.gen++
 	gen := a.gen
 	ctx, cancel := context.WithCancel(context.Background())
-	a.op = &operation{gen: gen, req: req, pane: a.active, cancel: cancel, planning: true, collapsed: map[fsops.ConflictID]bool{}}
+	a.op = &operation{gen: gen, req: req, from: a.yankDir, pane: a.active, cancel: cancel, planning: true, collapsed: map[fsops.ConflictID]bool{}}
 	newPlan := a.cfg.NewPlan
 	return []Cmd{
 		{Run: func() any {

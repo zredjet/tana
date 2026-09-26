@@ -53,7 +53,7 @@ type ConflictsView struct {
 func (a *App) Conflicts() ConflictsView {
 	op := a.op
 	cs := op.plan.Conflicts()
-	v := ConflictsView{Op: op.req.Op, From: filepath.Dir(op.req.Sources[0]), To: op.req.DestDir, UnsetOnly: op.unsetOnly}
+	v := ConflictsView{Op: op.req.Op, From: op.from, To: op.req.DestDir, UnsetOnly: op.unsetOnly}
 	for _, c := range cs {
 		v.All++
 		if c.Parent == 0 {

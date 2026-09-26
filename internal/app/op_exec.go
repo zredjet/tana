@@ -50,6 +50,9 @@ func (a *App) tick() Cmd {
 	return Cmd{Delay: opTickInterval, Run: func() any { return opTick{gen: gen} }}
 }
 
+// SetWake は、実行中の進捗が届いたことをイベントループに知らせる関数を設定する（tui が Loop.Wake を渡す）。
+func (a *App) SetWake(f func()) { a.cfg.Wake = f }
+
 // Refresh は、最新の進捗を読む（tui が Wake の知らせを受けたときに呼ぶ）。
 func (a *App) Refresh() {
 	if op := a.op; op != nil && op.screen == ScreenProgress {
@@ -164,7 +167,7 @@ func (a *App) executed(m executed) []Cmd {
 		return nil
 	}
 	res := m.res
-	a.result = &resultState{op: op.req.Op, from: filepath.Dir(op.req.Sources[0]), to: op.req.DestDir, res: res, expanded: map[int]bool{}}
+	a.result = &resultState{op: op.req.Op, from: op.from, to: op.req.DestDir, res: res, expanded: map[int]bool{}}
 	done, skipped, warned := 0, 0, false
 	for _, it := range res.Items {
 		a.logErr(errOrNil(it.Err))

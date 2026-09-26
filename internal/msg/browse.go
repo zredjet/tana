@@ -62,7 +62,10 @@ const (
 )
 
 // KeyGuide は、画面の最下行のキーの案内（2 ペインと Yazi 風で同じ。filer §5.1・§5.3・§7）。80 桁に収める（ほかのキーはヘルプで示す）。
-const KeyGuide = "Enter 開く  h 親へ  l 入る  Tab 切替  Space マーク  v 表示  ? ヘルプ  q 終了"
+const KeyGuide = "h 親へ  Tab 切替  Space マーク  y 覚える  p 貼る  v 表示  ? ヘルプ  q 終了"
+
+// YankedIndicator は、覚えている項目の数（状態行の右に出す）。
+func YankedIndicator(n int) string { return "覚えた項目 " + strconv.Itoa(n) }
 
 // PaneIndicator は、Yazi 風の表示で、どちらのペインを表示しているかの印（[1/2]。filer §5.3）。
 func PaneIndicator(i, n int) string { return "[" + strconv.Itoa(i) + "/" + strconv.Itoa(n) + "]" }
@@ -83,6 +86,9 @@ var Help = [][2]string{
 	{"l  Right", "フォルダに入る（ファイルでは何もしない）"},
 	{"Tab", "ペインの切り替え（Yazi 風では表示するペイン）"},
 	{"Space", "マークの切り替え"},
+	{"y", "対象を覚える（マークした項目か、カーソル行）"},
+	{"p  P", "覚えた項目を、このフォルダへコピー・移動"},
+	{"L", "直前の操作の結果をもう一度見る"},
 	{"a", "すべてマークする・すべて外す"},
 	{"g", "パスを入力して移動（ドライブの切り替えも）"},
 	{"=", "反対側のペインを同じフォルダにする"},
@@ -92,7 +98,7 @@ var Help = [][2]string{
 	{"Ctrl+L", "画面の描き直し（表示が崩れたとき）"},
 	{"Esc", "読み込みの中止"},
 	{"q", "終了"},
-	{"c m d D r n L", "（フェーズ19・20で作る）"},
+	{"d D r n", "（フェーズ20で作る）"},
 }
 
 // 起動（cmd/tana）の文言。

@@ -92,6 +92,7 @@ type App struct {
 
 	needs        Needs        // 表示形式が求めるもの（SetNeeds）
 	yanked       []string     // 覚えた項目のパス（y。filer §7）
+	yankDir      string       // 覚えたときのペインのフォルダ（見出しに出す）
 	op           *operation   // 進めているファイル操作（計画から結果まで。filer §8）
 	result       *resultState // 直前の操作の結果（L でもう一度出す）
 	preview      Preview      // 操作中のペインのカーソル行のプレビュー（読んでいる途中なら Kind が PreviewNone）
