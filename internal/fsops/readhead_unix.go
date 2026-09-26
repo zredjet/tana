@@ -19,7 +19,7 @@ func readHeadSys(s string, max int) (Head, error) {
 		return h, err
 	}
 	fd, err := ignoringEINTR2(func() (int, error) {
-		return unix.Open(s, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+		return unix.Open(s, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_NOCTTY|unix.O_CLOEXEC, 0)
 	})
 	if err != nil {
 		return Head{}, &os.PathError{Op: "open", Path: s, Err: err}
@@ -31,9 +31,9 @@ func readHeadSys(s string, max int) (Head, error) {
 	if h, done, err := checkHeadStat(s, &st); done {
 		return h, err
 	}
-	buf := make([]byte, max)
+	buf := make([]byte, headBufSize(max, st.Size))
 	n := 0
-	for n < max {
+	for n < len(buf) {
 		m, err := ignoringEINTR2(func() (int, error) { return unix.Read(fd, buf[n:]) })
 		if err != nil {
 			return Head{}, &os.PathError{Op: "read", Path: s, Err: err}

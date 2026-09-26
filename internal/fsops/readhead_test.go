@@ -28,6 +28,7 @@ func TestReadHead(t *testing.T) {
 	}{
 		{"a.txt", 5, "hello", 11},
 		{"a.txt", 100, "hello world", 11},
+		{"a.txt", 1 << 30, "hello world", 11}, // 大きな max でも、ファイルの大きさを超えて確保しない
 		{"a.txt", 0, "", 11},
 		{"empty", 10, "", 0},
 		{"日本語.txt", 64, "中身", 6},
@@ -71,17 +72,20 @@ func TestReadHeadLinks(t *testing.T) {
 	t.Parallel()
 	root := testfs.TempDir(t)
 	testfs.Build(t, root, testfs.Tree{
-		"a.txt":    testfs.File("target data"),
-		"dir":      testfs.Dir(),
-		"link":     testfs.Symlink("a.txt"),
-		"dirlink":  testfs.DirSymlink("dir"),
-		"dangling": testfs.Symlink("missing"),
+		"a.txt":           testfs.File("target data"),
+		"dir":             testfs.Dir(),
+		"link":            testfs.Symlink("a.txt"),
+		"dirlink":         testfs.DirSymlink("dir"),
+		"filelink-to-dir": testfs.Symlink("dir"), // Windows では、ファイル用のリンクがフォルダを指す
+		"dangling":        testfs.Symlink("missing"),
 	})
 	if h, err := ReadHead(filepath.Join(root, "link"), 6); err != nil || string(h.Data) != "target" || h.Size != 11 {
 		t.Errorf("ReadHead(link) = %q, %d, %v, want the target's head", h.Data, h.Size, err)
 	}
 	_, err := ReadHead(filepath.Join(root, "dirlink"), 6)
 	wantOpErrorReadHead(t, err, KindUnsupportedType, filepath.Join(root, "dirlink"))
+	_, err = ReadHead(filepath.Join(root, "filelink-to-dir"), 6)
+	wantOpErrorReadHead(t, err, KindUnsupportedType, filepath.Join(root, "filelink-to-dir"))
 	_, err = ReadHead(filepath.Join(root, "dangling"), 6)
 	wantOpErrorReadHead(t, err, KindNotFound, filepath.Join(root, "dangling"))
 }

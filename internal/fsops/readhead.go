@@ -12,6 +12,12 @@ type Head struct {
 // errNotRegular は、通常のファイルでないこと（ReadHead は KindUnsupportedType にする）。
 var errNotRegular = errors.New("not a regular file")
 
+// headBufSize は、大きさ size のファイルの先頭を limit バイトまで読むためのバッファの大きさ。ファイルの大きさを超えて確保しない。
+// 大きさが 0 と報告されても中身のあるファイル（Linux の /proc など）のために、4 KiB までは確保する。
+func headBufSize(limit int, size int64) int {
+	return int(min(int64(limit), max(size, 4096)))
+}
+
 // ReadHead は、ファイル path の先頭を max バイトまで読む（プレビューのため。§14.4）。リンク・ジャンクションは辿る。
 // 読むのは通常のファイルだけで、フォルダ・FIFO・デバイスなどは開かずに KindUnsupportedType にする。
 // 中身が手元にないファイル（クラウドのファイルなど）は開かずに NotLocal を返す。

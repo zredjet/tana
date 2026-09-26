@@ -30,7 +30,8 @@ func readHeadSys(s string, max int) (Head, error) {
 	}
 	h, err := windows.CreateFile(s16, windows.GENERIC_READ,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil,
-		windows.OPEN_EXISTING, windows.FILE_FLAG_SEQUENTIAL_SCAN, 0)
+		// BACKUP_SEMANTICS: フォルダを指すファイル用のリンクも開けるようにし、開いた後に通常のファイルでないことを調べる
+		windows.OPEN_EXISTING, windows.FILE_FLAG_SEQUENTIAL_SCAN|windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
 	if err != nil {
 		return Head{}, &os.PathError{Op: "CreateFile", Path: s, Err: err}
 	}
@@ -46,9 +47,9 @@ func readHeadSys(s string, max int) (Head, error) {
 	if bi.FileAttributes&notLocalAttrs != 0 { // リンク先のファイル
 		return Head{Size: size, NotLocal: true}, nil
 	}
-	buf := make([]byte, max)
+	buf := make([]byte, headBufSize(max, size))
 	n := 0
-	for n < max {
+	for n < len(buf) {
 		var done uint32
 		if err := windows.ReadFile(h, buf[n:], &done, nil); err != nil {
 			return Head{}, &os.PathError{Op: "ReadFile", Path: s, Err: err}
