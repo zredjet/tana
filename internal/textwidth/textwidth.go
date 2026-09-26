@@ -122,12 +122,23 @@ func classify(text string) Cluster {
 		prev                      rune = -1
 		last                      rune
 		count                     int
+		p0                        uint16 // 最初の符号位置の性質
+		width                     int    // text の幅（表示する形が text と同じとき使う）
+		varies                    bool
 	)
 	for i, r := range text {
 		if forbidden(r) {
 			return replaced(text, Forbidden)
 		}
 		p := lookup(r)
+		if i == 0 {
+			p0 = p
+		}
+		w := runeWidth(p)
+		width += w
+		if w > 0 && p&ambiguous != 0 || p&newEmoji != 0 {
+			varies = true
+		}
 		if p&defaultIgnorable == 0 {
 			allIgnorable = false
 		}
@@ -156,7 +167,7 @@ func classify(text string) Cluster {
 		// 地域指示記号は、対でも単独でも 1 つにつき ? にする。
 		return Cluster{Text: text, Class: Unstable, Display: strings.Repeat("?", ri), Width: ri}
 	}
-	if allIgnorable || lookup(r0)&mark != 0 {
+	if allIgnorable || p0&mark != 0 {
 		return replaced(text, Invisible)
 	}
 	class, display := Normal, text
@@ -180,23 +191,12 @@ func classify(text string) Cluster {
 	}
 	if class == Unstable {
 		// 規則を当てた後の形が、さらに規則に当たることがある（例: 0 U+20E3 U+FE0F は、VS16 を除くと 0 U+20E3 になり、キーキャップの規則で 0 になる）。
-		// 当てるたびに短くなるので、通常の文字になるまで当てる。
-		switch d := classify(display); d.Class {
-		case Normal:
-		case Unstable:
-			display = d.Display
-		default:
+		// 当てるたびに短くなるので、通常の文字になるまで当てる。幅は、その形を分類したときに数えたものを使う。
+		d := classify(display)
+		if d.Class != Normal && d.Class != Unstable {
 			return replaced(text, Invisible)
 		}
-	}
-	width, varies := 0, false
-	for _, r := range display {
-		p := lookup(r)
-		w := runeWidth(p)
-		width += w
-		if w > 0 && p&ambiguous != 0 || p&newEmoji != 0 {
-			varies = true
-		}
+		display, width, varies = d.Display, d.Width, d.Varies
 	}
 	if width == 0 {
 		return replaced(text, Invisible)

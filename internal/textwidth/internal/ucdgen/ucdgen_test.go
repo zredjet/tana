@@ -10,7 +10,10 @@ import (
 // copyUCD は、textwidth の ucd のファイルを一時フォルダに写す。
 func copyUCD(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, name := range append(Files, "GraphemeBreakTest.txt") {
 		data, err := os.ReadFile(filepath.Join("..", "..", "ucd", name))
 		if err != nil {

@@ -14,14 +14,16 @@ import (
 // allowedModules は、リポジトリのどのパッケージも import してよい、標準ライブラリ以外のモジュール（filer §4）。
 var allowedModules = []string{"golang.org/x/sys", "golang.org/x/text"}
 
-// directionRules は、パッケージの間の依存の向き（tui §3、filer §4）。
+// directionRule は、パッケージの間の依存の向きの規則。
 // pkg（モジュールからの相対パス）が依存してよいのは、標準ライブラリ、pkg 自身とその配下、allowed に挙げたものだけ。
 // allowed には、モジュールからの相対パス（このモジュールのパッケージ）か、外部のモジュールの import パスを書く。
-// パッケージを作るフェーズで、そのパッケージの行を足す。
-var directionRules = []struct {
+type directionRule struct {
 	pkg     string
 	allowed []string
-}{
+}
+
+// directionRules は、パッケージの間の依存の向き（tui §3、filer §4）。パッケージを作るフェーズで、そのパッケージの行を足す。
+var directionRules = []directionRule{
 	// term は x/sys だけを使い、ほかの土台のパッケージとファイラーのパッケージを import しない（tui §3）。
 	{"internal/term", []string{"golang.org/x/sys"}},
 	// textwidth は標準ライブラリだけを使う（tui §3）。表を作る internal/ucdgen・internal/gen も同じ。
@@ -89,10 +91,7 @@ const listFormat = `{{.ImportPath}}{{"\t"}}{{.Standard}}{{"\t"}}{{join .Deps ","
 
 // directionViolations は、pkgs（go list -deps -test の結果）のうち、rules の pkg とそのテスト用の変種が、
 // 許されていないパッケージに依存しているものを "依存元 -> 依存先" の形で返す。
-func directionViolations(pkgs []listedPackage, module string, rules []struct {
-	pkg     string
-	allowed []string
-}) []string {
+func directionViolations(pkgs []listedPackage, module string, rules []directionRule) []string {
 	standard := map[string]bool{}
 	for _, p := range pkgs {
 		if p.standard {
@@ -158,10 +157,7 @@ func TestDisallowedDeps(t *testing.T) {
 func TestDirectionViolations(t *testing.T) {
 	t.Parallel()
 	const m = "example.com/m"
-	rules := []struct {
-		pkg     string
-		allowed []string
-	}{
+	rules := []directionRule{
 		{"internal/term", []string{"golang.org/x/sys"}},
 		{"internal/screen", []string{"internal/textwidth"}},
 	}
