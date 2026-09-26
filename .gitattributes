@@ -1,0 +1,2 @@
+# ゴールデンファイルは LF のまま置く（Windows のチェックアウトの core.autocrlf で CRLF にしない。internal/tui の TestGoldenFilesLF）。
+*.golden text eol=lf
