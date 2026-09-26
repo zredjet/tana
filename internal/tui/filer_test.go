@@ -619,3 +619,35 @@ func TestColumnsKeys(t *testing.T) {
 		t.Errorf("v in the path input: %q, view %v", got, sc.f.view)
 	}
 }
+
+// TestRedrawKey は、Ctrl+L で、次に描くときに画面全体を端末に書き直すことを確かめる（入力欄を開いていても）。
+func TestRedrawKey(t *testing.T) {
+	t.Parallel()
+	sc := newScene(t)
+	s := screen.New(80, 24)
+	flush := func() string {
+		var b strings.Builder
+		s.Fill(screen.Region{W: 80, H: 24}, screen.Style{})
+		sc.f.Draw(s)
+		if err := s.Flush(&b); err != nil {
+			t.Fatal(err)
+		}
+		return b.String()
+	}
+	flush()
+	if out := flush(); out != "" {
+		t.Fatalf("second flush without changes wrote %q", out)
+	}
+	sc.keys(char('g'), ctrl('l'))
+	if sc.a.Dialog() != app.DialogPath {
+		t.Fatal("Ctrl+L closed the path input")
+	}
+	flush()
+	sc.keys(ctrl('l'))
+	if out := flush(); !strings.Contains(out, "C:\\Users\\hiro\\Documents") || !strings.Contains(out, "報告書.docx") {
+		t.Errorf("Ctrl+L did not rewrite the whole screen: %q", out)
+	}
+	if out := flush(); out != "" {
+		t.Errorf("the flush after the redraw wrote %q", out)
+	}
+}

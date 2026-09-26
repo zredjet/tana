@@ -24,8 +24,9 @@ const (
 // Filer は、ファイラーのメイン画面（filer §5）。app の状態を描き、キー入力を app の操作に変える。
 // 表示形式（2 ペインと Yazi 風）は Filer が持ち、v で切り替える（filer §4・§5.3）。app は表示形式を知らない。
 type Filer struct {
-	app  *app.App
-	view view
+	app    *app.App
+	view   view
+	redraw bool // 次に描くとき、画面全体を端末に書き直す（Ctrl+L）
 }
 
 // view は表示形式。
@@ -77,6 +78,10 @@ func (f *Filer) Handle(l *Loop, ev Event) bool {
 
 // key は、キー入力を処理する。v は表示形式を切り替え（Filer が持つ）、ほかは app の操作に変える。
 func (f *Filer) key(ev keys.Event) []app.Cmd {
+	if ev.Kind == keys.KeyEvent && ev.Key == keys.KeyRune && ev.Mod == keys.ModCtrl && ev.Rune == 'l' {
+		f.redraw = true // どの画面でも、端末に何かが残ったときの描き直し
+		return nil
+	}
 	if f.app.Dialog() == app.DialogNone && ev.Kind == keys.KeyEvent && ev.Key == keys.KeyRune && ev.Mod == 0 && ev.Rune == 'v' {
 		f.view = 1 - f.view
 		return f.app.SetNeeds(f.needs())
@@ -258,6 +263,10 @@ var (
 func (f *Filer) Draw(s *screen.Screen) {
 	cols, rows := s.Size()
 	s.SetCursor(0, 0, false)
+	if f.redraw {
+		s.Invalidate() // 差分でなく、画面全体を書く
+		f.redraw = false
+	}
 	if cols < minCols || rows < minRows {
 		s.Put(screen.Region{W: cols, H: rows}, 0, 0, msg.TooSmall, screen.Style{})
 		return
