@@ -257,8 +257,11 @@ func affected(dir string, req fsops.Request) bool {
 	if dir == filepath.Clean(req.DestDir) {
 		return true
 	}
+	if req.Op == fsops.OpCopy {
+		return false // コピーはコピー元を変えない
+	}
 	for _, s := range req.Sources {
-		if dir == filepath.Dir(s) || req.Op != fsops.OpCopy && (dir == s || strings.HasPrefix(dir, s+string(filepath.Separator))) {
+		if dir == filepath.Dir(s) || dir == s || strings.HasPrefix(dir, s+string(filepath.Separator)) {
 			return true
 		}
 	}

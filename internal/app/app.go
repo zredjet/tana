@@ -219,6 +219,7 @@ func (a *App) do(act Action) []Cmd {
 		}
 		return nil
 	case a.op != nil:
+		a.message, a.messageErr = "", false // キー入力のたびにメッセージ行を消す（ファイル操作の画面でも）
 		switch a.op.screen {
 		case ScreenConfirm:
 			return a.doConfirm(act)
@@ -229,6 +230,7 @@ func (a *App) do(act Action) []Cmd {
 		}
 		return nil
 	case a.result != nil && a.result.open:
+		a.message, a.messageErr = "", false
 		return a.doResult(act)
 	}
 	if a.dialog.kind != DialogNone {

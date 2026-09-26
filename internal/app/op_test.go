@@ -163,6 +163,10 @@ func TestTypeahead(t *testing.T) {
 	if h.a.Screen() != ScreenConflicts {
 		t.Fatal("text input moved the conflicts screen")
 	}
+	h.act(Action{Kind: ActDecideAll, Decision: fsops.DecisionOverwrite}) // 衝突の画面を描く前に届いた O
+	if v := h.a.Conflicts(); v.Rows[0].Decision != fsops.DecisionUnset {
+		t.Fatalf("a decision key typed before the conflicts were drawn changed %v (U1, U2)", v.Rows[0].Decision)
+	}
 }
 
 // TestPlanningCancel は、計画を作っている間の Esc で中止し、後から届いた計画を捨てることを確かめる。
@@ -224,6 +228,7 @@ func TestConflictDecisions(t *testing.T) {
 	h.do(ActNextPane)
 	h.do(ActPasteCopy)
 	h.confirm()
+	h.a.Drawn() // 衝突の画面を描いた（決定のキーは、描いた後にだけ効く）
 	names := func() []string {
 		var out []string
 		for _, r := range h.a.Conflicts().Rows {
@@ -242,6 +247,9 @@ func TestConflictDecisions(t *testing.T) {
 	h.do(ActEnd) // x（コピー元はファイル、コピー先はフォルダ）
 	h.act(Action{Kind: ActDecide, Decision: fsops.DecisionOverwrite})
 	h.wantMessage(msg.DecisionNotAllowed(fsops.DecisionOverwrite))
+	h.do(ActUp)
+	h.do(ActDown)
+	h.wantMessage("") // 次のキーでメッセージを消す
 	if r := h.a.Conflicts().Rows[4]; r.Decision != fsops.DecisionUnset || r.Allowed[fsops.DecisionOverwrite] {
 		t.Errorf("x: %+v", r)
 	}
@@ -670,5 +678,57 @@ func TestAbort(t *testing.T) {
 	}
 	if time.Since(start) > 30*time.Second {
 		t.Error("Abort waited for the whole timeout")
+	}
+}
+
+// TestPasteCancelsOpen は、関連付けで開く前の確認の途中で貼り付けると、その確認をやめ、操作の後に古い「実行しますか」を出さないことを確かめる。
+func TestPasteCancelsOpen(t *testing.T) {
+	t.Parallel()
+	root := tree(t)
+	name := "run"
+	if runtime.GOOS == "windows" {
+		name = "run.bat"
+	}
+	if err := os.WriteFile(filepath.Join(root, name), []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	h := newHarness(t, nil, root, filepath.Join(root, "sub"))
+	h.moveTo(name)
+	h.hold = true
+	h.do(ActEnter) // 開く前の確認が貯まる
+	h.hold = false
+	check := h.held
+	h.held = nil
+	h.moveTo("a.txt")
+	h.do(ActYank)
+	h.do(ActNextPane)
+	h.do(ActPasteCopy)
+	h.run(check) // 操作の間に確認の結果が届く
+	h.confirm()
+	if h.a.Dialog() != DialogNone || len(h.opened) != 0 {
+		t.Errorf("dialog %v after the operation, opened %q: the pending open check was not canceled", h.a.Dialog(), h.opened)
+	}
+}
+
+// TestCopyReloadsAffectedOnly は、コピーの後に読み直すのはコピー先のペインだけで、コピー元のペインは読み直さないことを確かめる（filer §6）。
+func TestCopyReloadsAffectedOnly(t *testing.T) {
+	t.Parallel()
+	root := tree(t)
+	reads := map[string]int{}
+	h := newHarness(t, func(c *Config) {
+		readDir := c.ReadDir
+		c.ReadDir = func(dir string) ([]fsops.Entry, error) {
+			reads[dir]++
+			return readDir(dir)
+		}
+	}, root, filepath.Join(root, "sub"))
+	h.pasteInto("a.txt", 1, ActPasteCopy)
+	before := map[string]int{root: reads[root], filepath.Join(root, "sub"): reads[filepath.Join(root, "sub")]}
+	h.confirm()
+	if reads[root] != before[root] {
+		t.Errorf("the source pane was re-read after a copy (%d times)", reads[root]-before[root])
+	}
+	if reads[filepath.Join(root, "sub")] == before[filepath.Join(root, "sub")] {
+		t.Error("the destination pane was not re-read")
 	}
 }

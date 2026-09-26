@@ -63,7 +63,7 @@ func (a *App) Conflicts() ConflictsView {
 			v.Unset++
 		}
 	}
-	v.Warnings = warningTexts(op.plan.Warnings()) // 決定によって計算し直される（fsops §6.4）
+	v.Warnings = op.warnings // 決定を変えたときに計算し直す（fsops §6.4）
 	v.Rows = conflictRows(cs, op.collapsed, op.unsetOnly)
 	op.cursor = max(min(op.cursor, len(v.Rows)-1), 0)
 	v.Cursor = op.cursor
@@ -128,14 +128,9 @@ func rowOf(c fsops.Conflict, depth int) ConflictRow {
 	return r
 }
 
-// conflictByID は、ID の衝突を返す。
+// conflictByID は、ID の衝突を返す（fsops の衝突の ID は 1 からの連番。Decide も添字で引く）。
 func conflictByID(cs []fsops.Conflict, id fsops.ConflictID) (fsops.Conflict, bool) {
-	if id < 1 || int(id) > len(cs) || cs[id-1].ID != id {
-		for _, c := range cs {
-			if c.ID == id {
-				return c, true
-			}
-		}
+	if id < 1 || int(id) > len(cs) {
 		return fsops.Conflict{}, false
 	}
 	return cs[id-1], true
@@ -156,13 +151,15 @@ func (a *App) doConflicts(act Action) []Cmd {
 	if op.cursor >= 0 && op.cursor < len(rows) {
 		row = rows[op.cursor]
 	}
+	if !a.armed() && act.Kind != ActCancel {
+		// 衝突の画面を描く前に届いたキー（先行入力）では、実行しないだけでなく、決定も変えない。
+		// 見ていない衝突が上書き・マージにならないように（U1・U2）。
+		return nil
+	}
 	switch act.Kind {
 	case ActCancel:
 		a.discard()
 	case ActSubmit:
-		if !a.armed() {
-			return nil // 衝突の画面を描く前に届いた Enter（先行入力。filer U2）
-		}
 		return a.execute()
 	case ActUp, ActDown, ActPageUp, ActPageDown, ActHome, ActEnd:
 		op.cursor = moveCursor(op.cursor, len(rows), op.rows, act.Kind)
@@ -220,11 +217,12 @@ func (a *App) doConflicts(act Action) []Cmd {
 	return nil
 }
 
-// decide は決定を設定する。使えることは呼ぶ側で確かめている。
+// decide は決定を設定し、警告（空き容量の見込みは決定で変わる）を計算し直す。使えることは呼ぶ側で確かめている。
 func (a *App) decide(id fsops.ConflictID, d fsops.Decision) {
 	if err := a.op.plan.Decide(id, d); err != nil {
 		a.logErr(err)
 	}
+	a.op.warnings = warningTexts(a.op.plan.Warnings())
 }
 
 // moveCursor は、n 行の一覧のカーソル cur を、操作 k で動かす（page は描いた行数）。

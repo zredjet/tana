@@ -65,6 +65,7 @@ type operation struct {
 
 	planning, slow bool // 計画を作っている。0.2 秒を超えた
 	plan           Plan
+	warnings       []string // 計画の警告の文言（決定を変えたときに計算し直す）
 
 	// 衝突の画面
 	collapsed map[fsops.ConflictID]bool
@@ -162,6 +163,7 @@ func (a *App) paste(op fsops.OpKind) []Cmd {
 		return nil
 	}
 	req := fsops.Request{Op: op, Sources: slices.Clone(a.yanked), DestDir: p.dir}
+	a.opening = 0 // 関連付けで開く前の確認をやめる（操作の後に古い「実行しますか」を出さない）
 	a.gen++
 	gen := a.gen
 	ctx, cancel := context.WithCancel(context.Background())
@@ -210,6 +212,7 @@ func (a *App) planned(m planned) {
 			}
 		}
 	}
+	op.warnings = warningTexts(op.plan.Warnings())
 	a.show(ScreenConfirm)
 }
 
@@ -267,7 +270,7 @@ func (a *App) Confirm() ConfirmView {
 			v.TopLvl++
 		}
 	}
-	v.Warnings = warningTexts(pl.Warnings())
+	v.Warnings = op.warnings
 	return v
 }
 
