@@ -153,6 +153,19 @@ var widthCases = []widthCase{
 	{"arrow-lr-vs16", "emoji", "↔\ufe0f", "U+2194（A）U+FE0F"},
 	{"play-vs16", "emoji", "▶\ufe0f", "U+25B6（A）U+FE0F"},
 	{"copyright-vs16", "emoji", "©\ufe0f", "U+00A9 U+FE0F"},
+	// textwidth が簡略な形にしたときの形（tui §4。フェーズ13で追加）
+	{"emoji-man", "emoji", "\U0001f468", "U+1F468（ZWJ の並びの簡略な形）"},
+	{"emoji-person", "emoji", "\U0001f9d1", "U+1F9D1（ZWJ の並びの簡略な形）"},
+	{"emoji-woman", "emoji", "\U0001f469", "U+1F469（ZWJ の並びの簡略な形）"},
+	{"white-flag", "emoji", "\U0001f3f3", "U+1F3F3（虹の旗の簡略な形）"},
+	{"black-flag", "emoji", "\U0001f3f4", "U+1F3F4（タグの並びの簡略な形）"},
+	{"arrow-lr", "ambiguous", "\u2194", "U+2194（↔️ の簡略な形）"},
+	{"play", "ambiguous", "\u25b6", "U+25B6（▶️ の簡略な形）"},
+	// Unicode 17.0・18.0 で加わった絵文字（フェーズ13で追加。幅が端末によって違いうるか）
+	{"emoji-u17", "emoji", "\U0001fac8", "U+1FAC8（Unicode 17.0）"},
+	{"emoji-u17b", "emoji", "\U0001f6d8", "U+1F6D8（Unicode 17.0）"},
+	{"emoji-u18", "emoji", "\U0001faf9", "U+1FAF9（Unicode 18.0）"},
+	{"emoji-u18b", "emoji", "\U0001f6d9", "U+1F6D9（Unicode 18.0）"},
 
 	{"zwsp", "format", "\u200b", "U+200B"},
 	{"zwj", "format", "\u200d", "U+200D"},
@@ -167,6 +180,8 @@ var widthCases = []widthCase{
 
 	{"jamo-lv", "script", "가", "ハングル字母 L＋V"},
 	{"jamo-l", "script", "ᄀ", "U+1100（W）"},
+	{"jamo-ll", "script", "\u1100\u1100", "ハングル字母 L＋L（1 つの書記素クラスタ。フェーズ13で追加）"},
+	{"jamo-v-alone", "script", "\u1161", "前に初声のない中声字母（フェーズ13で追加）"},
 	{"thai-am", "script", "กำ", ""},
 	{"thai-i", "script", "ก\u0e34", ""},
 	{"devanagari-kssi", "script", "क\u094dषि", ""},

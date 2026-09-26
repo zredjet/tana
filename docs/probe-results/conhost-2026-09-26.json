@@ -5284,8 +5284,8 @@
   "terminal": "conhost",
   "terminal_version": "10.0.26100.8875",
   "width": {
-    "started": "2026-09-26T10:25:12+09:00",
-    "probe_revision": "7b1b3c525c73",
+    "started": "2026-09-26T11:58:40+09:00",
+    "probe_revision": "9f80e44b2162+dirty",
     "goos": "windows",
     "goarch": "arm64",
     "cols": 120,
@@ -6482,6 +6482,116 @@
         "row": 3
       },
       {
+        "id": "emoji-man",
+        "category": "emoji",
+        "text": "👨",
+        "hex": "f09f91a8",
+        "codepoints": "U+1F468",
+        "note": "U+1F468（ZWJ の並びの簡略な形）",
+        "advance": 2,
+        "row": 3
+      },
+      {
+        "id": "emoji-person",
+        "category": "emoji",
+        "text": "🧑",
+        "hex": "f09fa791",
+        "codepoints": "U+1F9D1",
+        "note": "U+1F9D1（ZWJ の並びの簡略な形）",
+        "advance": 2,
+        "row": 3
+      },
+      {
+        "id": "emoji-woman",
+        "category": "emoji",
+        "text": "👩",
+        "hex": "f09f91a9",
+        "codepoints": "U+1F469",
+        "note": "U+1F469（ZWJ の並びの簡略な形）",
+        "advance": 2,
+        "row": 3
+      },
+      {
+        "id": "white-flag",
+        "category": "emoji",
+        "text": "🏳",
+        "hex": "f09f8fb3",
+        "codepoints": "U+1F3F3",
+        "note": "U+1F3F3（虹の旗の簡略な形）",
+        "advance": 1,
+        "row": 3
+      },
+      {
+        "id": "black-flag",
+        "category": "emoji",
+        "text": "🏴",
+        "hex": "f09f8fb4",
+        "codepoints": "U+1F3F4",
+        "note": "U+1F3F4（タグの並びの簡略な形）",
+        "advance": 2,
+        "row": 3
+      },
+      {
+        "id": "arrow-lr",
+        "category": "ambiguous",
+        "text": "↔",
+        "hex": "e28694",
+        "codepoints": "U+2194",
+        "note": "U+2194（↔️ の簡略な形）",
+        "advance": 1,
+        "row": 3
+      },
+      {
+        "id": "play",
+        "category": "ambiguous",
+        "text": "▶",
+        "hex": "e296b6",
+        "codepoints": "U+25B6",
+        "note": "U+25B6（▶️ の簡略な形）",
+        "advance": 1,
+        "row": 3
+      },
+      {
+        "id": "emoji-u17",
+        "category": "emoji",
+        "text": "🫈",
+        "hex": "f09fab88",
+        "codepoints": "U+1FAC8",
+        "note": "U+1FAC8（Unicode 17.0）",
+        "advance": 1,
+        "row": 3
+      },
+      {
+        "id": "emoji-u17b",
+        "category": "emoji",
+        "text": "🛘",
+        "hex": "f09f9b98",
+        "codepoints": "U+1F6D8",
+        "note": "U+1F6D8（Unicode 17.0）",
+        "advance": 1,
+        "row": 3
+      },
+      {
+        "id": "emoji-u18",
+        "category": "emoji",
+        "text": "🫹",
+        "hex": "f09fabb9",
+        "codepoints": "U+1FAF9",
+        "note": "U+1FAF9（Unicode 18.0）",
+        "advance": 1,
+        "row": 3
+      },
+      {
+        "id": "emoji-u18b",
+        "category": "emoji",
+        "text": "🛙",
+        "hex": "f09f9b99",
+        "codepoints": "U+1F6D9",
+        "note": "U+1F6D9（Unicode 18.0）",
+        "advance": 1,
+        "row": 3
+      },
+      {
         "id": "zwsp",
         "category": "format",
         "text": "​",
@@ -6588,6 +6698,26 @@
         "codepoints": "U+1100",
         "note": "U+1100（W）",
         "advance": 2,
+        "row": 3
+      },
+      {
+        "id": "jamo-ll",
+        "category": "script",
+        "text": "ᄀᄀ",
+        "hex": "e18480e18480",
+        "codepoints": "U+1100 U+1100",
+        "note": "ハングル字母 L＋L（1 つの書記素クラスタ。フェーズ13で追加）",
+        "advance": 4,
+        "row": 3
+      },
+      {
+        "id": "jamo-v-alone",
+        "category": "script",
+        "text": "ᅡ",
+        "hex": "e185a1",
+        "codepoints": "U+1161",
+        "note": "前に初声のない中声字母（フェーズ13で追加）",
+        "advance": 1,
         "row": 3
       },
       {
