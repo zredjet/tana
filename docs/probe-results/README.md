@@ -46,4 +46,4 @@
 - VM では、Mac の option＋A が Ctrl＋A として届くことがあった（Parallels のキーの対応によると思われる）。
   conhost（VT の入力モードあり）の `alt-a` は、撮り直しても Ctrl＋A だったので、未確認とする。
 - Windows の VM は ARM 版の Windows 11 で、日本語の環境（コードページ 932）。x64 の PC や Windows 10 の conhost とは違いうる。
-- 描画のずれの広がり（filer §12.1）は、`width` の最後の画面を Claude が撮影して確かめた（画像はリポジトリに置いていない）。見えたことは filer §12 への追記案に書く。
+- 描画のずれの広がり（filer §12.1）は、`width` の最後の画面を Claude が撮影して確かめた（画像はリポジトリに置いていない）。見えたことは filer §12.5 に書いた。
