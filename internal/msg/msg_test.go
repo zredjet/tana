@@ -61,13 +61,23 @@ func TestError(t *testing.T) {
 func TestBrowseTextsWidth(t *testing.T) {
 	texts := []string{Loading, LoadCanceled, CannotOpenName, ExecConfirm, ExecChoices, PathInputTitle, NotYet, TooSmall, HelpTitle,
 		CannotOpenDir(""), ShowingAncestor(""), Opened(""), OpenFailed(""), Items(1, 2, 3),
-		TypeParent, TypeDir, TypeJunction, TypeSymlink, TypeSpecial, UnitBytes, LinkArrow, KeyGuide}
+		TypeParent, TypeDir, TypeJunction, TypeSymlink, TypeSpecial, UnitBytes, LinkArrow, KeyGuide,
+		LabelDir, LabelJunction, LabelSymlink, LabelSpecial, LabelError}
 	for _, h := range Help {
 		texts = append(texts, h[0], h[1])
 	}
 	for _, s := range texts {
 		if i := strings.IndexAny(s, "…→←↑↓○●※×①②③◆■□△▲"); i >= 0 {
 			t.Errorf("%q contains an ambiguous-width character at %d (filer §9.1)", s, i)
+		}
+	}
+}
+
+// TestLabelsWidth は、サイズの欄の種類がどれも 5 桁（ASCII の 5 文字）であることを確かめる（欄の幅は tui が 5 桁で取る）。
+func TestLabelsWidth(t *testing.T) {
+	for _, l := range []string{LabelDir, LabelJunction, LabelSymlink, LabelSpecial, LabelError} {
+		if len(l) != 5 || strings.ContainsFunc(l, func(r rune) bool { return r < 0x20 || r > 0x7e }) {
+			t.Errorf("%q is not 5 printable ASCII characters", l)
 		}
 	}
 }

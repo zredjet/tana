@@ -151,12 +151,16 @@ func (f *Filer) action(ev keys.Event) (app.Action, bool) {
 }
 
 // pathAction は、パスの入力欄のキーを操作に変える。貼り付けは最初の行だけを入れる（コマンドとして解釈しない。tui §5）。
+// 貼り付けの改行は、端末によって LF・CRLF・CR（Terminal.app・iTerm2 は LF を CR にして送る）のどれでも届く。
 func pathAction(ev keys.Event) (app.Action, bool) {
 	act := func(k app.ActionKind) (app.Action, bool) { return app.Action{Kind: k}, true }
 	switch ev.Kind {
 	case keys.PasteEvent:
-		line, _, _ := strings.Cut(ev.Text, "\n")
-		return app.Action{Kind: app.ActInsert, Text: strings.TrimSuffix(line, "\r")}, true
+		line := ev.Text
+		if i := strings.IndexAny(line, "\r\n"); i >= 0 {
+			line = line[:i]
+		}
+		return app.Action{Kind: app.ActInsert, Text: line}, true
 	case keys.KeyEvent:
 	default:
 		return app.Action{}, false
@@ -203,7 +207,7 @@ var (
 
 // 欄の幅（filer §5.1）。
 const (
-	sizeW    = 5  // サイズ（3.1K、<DIR>）
+	sizeW    = 5  // サイズ（3.1K、<DIR>。msg.LabelDir などはこの幅）
 	dateW    = 11 // 更新日時（09-24 11:19）
 	minNameW = 16 // これより名前の欄が狭くなるなら、更新日時の欄を隠す
 )
@@ -379,19 +383,19 @@ func itemStyle(it listing.Item, marked bool) screen.Style {
 func sizeText(it listing.Item) string {
 	switch {
 	case it.Parent:
-		return "<DIR>"
+		return msg.LabelDir
 	case it.Err != nil:
-		return "<ERR>"
+		return msg.LabelError
 	}
 	switch it.Info.Type {
 	case fsops.TypeDir:
-		return "<DIR>"
+		return msg.LabelDir
 	case fsops.TypeJunction:
-		return "<JCT>"
+		return msg.LabelJunction
 	case fsops.TypeSymlink:
-		return "<LNK>"
+		return msg.LabelSymlink
 	case fsops.TypeSpecial:
-		return "<SPC>"
+		return msg.LabelSpecial
 	}
 	return textfmt.Size(it.Info.Size)
 }

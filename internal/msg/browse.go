@@ -52,6 +52,15 @@ const (
 	LinkArrow    = " -> "
 )
 
+// 一覧のサイズの欄に出す種類（filer §5.1）。どれも 5 桁（tui のサイズの欄の幅）。
+const (
+	LabelDir      = "<DIR>"
+	LabelJunction = "<JCT>"
+	LabelSymlink  = "<LNK>"
+	LabelSpecial  = "<SPC>"
+	LabelError    = "<ERR>" // 列挙はできたが調べられなかった項目
+)
+
 // KeyGuide は、画面の最下行のキーの案内（filer §5.1。キーの割り当ては仮。§15）。
 const KeyGuide = "Enter 開く  BS 親へ  Tab 切替  Space マーク  g パス  . 隠し  ? ヘルプ  q 終了"
 

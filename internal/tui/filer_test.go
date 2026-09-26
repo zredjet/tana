@@ -283,8 +283,8 @@ func TestGoldenMain(t *testing.T) {
 	sc.mainState()
 	golden(t, "main-80x24", sc.draw(80, 24))
 	golden(t, "main-120x40", sc.draw(120, 40))
-	// ペインの内側が狭いときは更新日時を隠す（81 桁でも 80 と同じ欄。更新日時を隠す幅の確認は 120 桁と 80 桁で）。
-	sc.keys(char('.')) // 隠しファイルを出す
+	// 隠しファイルを出して、右のペインに移る（更新日時を隠す幅は TestColumns で確かめる）。
+	sc.keys(char('.'))
 	sc.keys(key(keys.KeyTab))
 	golden(t, "main-hidden-right-80x24", sc.draw(80, 24))
 }
@@ -380,6 +380,45 @@ func TestKeyMap(t *testing.T) {
 	}
 	if act, _ := sc.f.action(key(keys.KeyRight)); act.Pane != 1 {
 		t.Errorf("Right: pane %d, want 1", act.Pane)
+	}
+}
+
+// TestPastePath は、パスの入力欄への貼り付けは最初の行だけを入れることを確かめる。改行は LF・CRLF・CR のどれでも届く。
+func TestPastePath(t *testing.T) {
+	t.Parallel()
+	sc := newScene(t)
+	sc.keys(char('g'))
+	for _, tt := range []struct{ text, want string }{
+		{"C:\\x\nnext", "C:\\x"}, {"/a b\r\nnext", "/a b"}, {"/tmp\rnext", "/tmp"}, {"one", "one"}, {"\rnext", ""},
+	} {
+		act, ok := sc.f.action(paste(tt.text))
+		if !ok || act.Kind != app.ActInsert || act.Text != tt.want {
+			t.Errorf("paste %q: %v %q %v, want insert %q", tt.text, act.Kind, act.Text, ok, tt.want)
+		}
+	}
+}
+
+// TestColumns は、ペインの内側の幅による欄の割り当てを確かめる。狭ければ更新日時を隠して名前に回す（filer §5.1）。
+func TestColumns(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		w, nameW int
+		date     bool
+	}{
+		{38, 19, true},  // 80 桁の 2 ペイン
+		{58, 39, true},  // 120 桁の 2 ペイン
+		{35, 16, true},  // 名前の欄が minNameW ちょうど
+		{34, 27, false}, // 名前の欄が minNameW より狭くなるので、更新日時を隠す
+		{8, 1, false},
+		{1, 1, false},
+	} {
+		nameW, date := columns(tt.w)
+		if nameW != tt.nameW || date != tt.date {
+			t.Errorf("columns(%d) = %d, %v, want %d, %v", tt.w, nameW, date, tt.nameW, tt.date)
+		}
+		if used := 1 + nameW + 1 + sizeW; date && used+1+dateW > tt.w || !date && tt.w >= 7 && used > tt.w {
+			t.Errorf("columns(%d): %d columns do not fit", tt.w, used)
+		}
 	}
 }
 
