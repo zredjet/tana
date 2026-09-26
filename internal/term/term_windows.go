@@ -43,15 +43,22 @@ func openSys(opts Options) (_ *sysTerm, err error) {
 			err = errors.Join(err, s.restore())
 		}
 	}()
-	if s.in, err = openConsole("CONIN$"); err != nil {
+	// 開けたハンドルだけを s に入れる（CreateFile は失敗すると 0 ではなく InvalidHandle を返す。restore は 0 かどうかで判断する）。
+	in, err := openConsole("CONIN$")
+	if err != nil {
 		return nil, fmt.Errorf("term: open CONIN$: %w", err)
 	}
-	if s.out, err = openConsole("CONOUT$"); err != nil {
+	s.in = in
+	out, err := openConsole("CONOUT$")
+	if err != nil {
 		return nil, fmt.Errorf("term: open CONOUT$: %w", err)
 	}
-	if s.cancel, err = windows.CreateEvent(nil, 1, 0, nil); err != nil {
+	s.out = out
+	cancel, err := windows.CreateEvent(nil, 1, 0, nil)
+	if err != nil {
 		return nil, fmt.Errorf("term: CreateEvent: %w", err)
 	}
+	s.cancel = cancel
 	if err = windows.GetConsoleMode(s.in, &s.origIn); err != nil {
 		return nil, fmt.Errorf("term: GetConsoleMode(in): %w", err)
 	}

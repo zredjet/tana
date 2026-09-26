@@ -163,9 +163,31 @@ func TestRestoreConcurrent(t *testing.T) {
 	}
 }
 
+// TestStartFailsOnHighFd は、select で待てない大きな fd（FD_SETSIZE 以上）の端末では始めず、
+// termios を変えないことを確かめる（読み取りの goroutine が FdSet で panic し、端末を戻せなくなるため。T1）。
+func TestStartFailsOnHighFd(t *testing.T) {
+	_, slave := openPty(t)
+	before := getTermios(t, slave)
+	high := unix.FD_SETSIZE + 100
+	if err := unix.Dup2(slave, high); err != nil {
+		t.Skipf("cannot dup the pty to fd %d: %v", high, err)
+	}
+	defer unix.Close(high)
+	if _, err := newSys(high); err == nil {
+		t.Fatalf("newSys(fd %d): err = nil, want an error", high)
+	}
+	if after := getTermios(t, slave); after != before {
+		t.Errorf("termios changed by a failed newSys: %+v, want %+v", after, before)
+	}
+}
+
 // TestStartFailsOnNonTerminal は、端末でない fd では始めないことを確かめる。
 func TestStartFailsOnNonTerminal(t *testing.T) {
-	f, err := os.Create(filepath.Join(t.TempDir(), "file"))
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Create(filepath.Join(dir, "file"))
 	if err != nil {
 		t.Fatal(err)
 	}

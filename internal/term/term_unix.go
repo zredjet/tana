@@ -36,7 +36,11 @@ func openSys(Options) (*sysTerm, error) {
 }
 
 // newSys は fd の端末を raw モードにする。fd は閉じない（呼び出し側が持つ）。
+// 読み取りは select で待つので、FD_SETSIZE 以上の fd は扱えない（FdSet の外になり、読み取りの goroutine が panic する）。
 func newSys(fd int) (*sysTerm, error) {
+	if fd < 0 || fd >= unix.FD_SETSIZE {
+		return nil, fmt.Errorf("term: fd %d cannot be used with select (FD_SETSIZE %d)", fd, unix.FD_SETSIZE)
+	}
 	orig, err := unix.IoctlGetTermios(fd, ioctlGetTermios)
 	if err != nil {
 		return nil, fmt.Errorf("term: not a terminal: %w", err)
@@ -47,6 +51,11 @@ func newSys(fd int) (*sysTerm, error) {
 	}
 	unix.CloseOnExec(p[0])
 	unix.CloseOnExec(p[1])
+	if p[0] >= unix.FD_SETSIZE || p[1] >= unix.FD_SETSIZE {
+		unix.Close(p[0])
+		unix.Close(p[1])
+		return nil, fmt.Errorf("term: pipe fds %d, %d cannot be used with select", p[0], p[1])
+	}
 	s := &sysTerm{fd: fd, orig: *orig, wakeR: p[0], wakeW: p[1]}
 	raw := makeRaw(*orig)
 	if err := setTermios(fd, &raw); err != nil {
@@ -79,11 +88,21 @@ func setTermios(fd int, t *unix.Termios) error {
 func (s *sysTerm) write(p []byte) error {
 	for len(p) > 0 {
 		n, err := unix.Write(s.fd, p)
-		if err == unix.EINTR || err == unix.EAGAIN {
+		switch {
+		case err == unix.EINTR:
 			continue
-		}
-		if err != nil {
+		case err == unix.EAGAIN:
+			// ノンブロッキングの fd で出力のバッファが一杯。書けるようになるまで select で待つ（空回りしない）。
+			var wset unix.FdSet
+			wset.Set(s.fd)
+			if _, err := unix.Select(s.fd+1, nil, &wset, nil, nil); err != nil && err != unix.EINTR {
+				return fmt.Errorf("term: select for write: %w", err)
+			}
+			continue
+		case err != nil:
 			return fmt.Errorf("term: write: %w", err)
+		case n == 0:
+			return fmt.Errorf("term: write: %w", io.ErrShortWrite)
 		}
 		p = p[n:]
 	}
