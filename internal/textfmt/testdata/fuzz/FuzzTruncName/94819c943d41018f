@@ -1,0 +1,3 @@
+go test fuzz v1
+string("00000\u0600~00000000000")
+int(95)
