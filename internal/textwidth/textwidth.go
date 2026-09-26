@@ -45,7 +45,7 @@ type Cluster struct {
 	Class   Class
 	Display string // 表示する形。Normal なら Text と同じ
 	Width   int    // Display の表示幅（1 以上）
-	Varies  bool   // 幅が端末によって違いうる（幅が曖昧な文字、Unicode 16.0 より新しい絵文字、幅が 3 以上）
+	Varies  bool   // 幅が端末によって違いうる（幅が曖昧な文字、Unicode 16.0 より新しい絵文字、幅が 3 以上、結合文字を含むもの）
 }
 
 // Next は、s の先頭の書記素クラスタと、残りの文字列を返す。s が空なら、ゼロ値の Cluster と空の文字列を返す。
@@ -138,6 +138,9 @@ func classify(text string) Cluster {
 		width += w
 		if w > 0 && p&ambiguous != 0 || p&newEmoji != 0 {
 			varies = true
+		}
+		if i > 0 && p&mark != 0 {
+			varies = true // 基底の文字の後の結合文字。conhost は別の桁に描く（tui §4）
 		}
 		if p&defaultIgnorable == 0 {
 			allIgnorable = false

@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -198,4 +199,39 @@ func isASCII(s string) bool {
 		}
 	}
 	return true
+}
+
+// TestVariesConhostMarks は、conhost の幅がほかの 3 端末と違った、結合文字を含む書記素クラスタに、
+// 幅が違いうる印が付くことを確かめる（tui §4。conhost は結合文字を別の桁に描く。screen はこの印で行を書き直す）。
+func TestVariesConhostMarks(t *testing.T) {
+	conhost := loadProbe(t, "conhost")
+	main := loadProbe(t, "windows-terminal")
+	checked := 0
+	for id, pc := range conhost {
+		b, err := hex.DecodeString(pc.Hex)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(b)
+		clusters := slices.Collect(All(text))
+		hasMark := false
+		for _, c := range clusters {
+			for i, r := range c.Text {
+				hasMark = hasMark || i > 0 && lookup(r)&mark != 0
+			}
+		}
+		mp, ok := main[id]
+		if !hasMark || !ok || pc.Advance == nil || mp.Advance == nil || *pc.Advance == *mp.Advance {
+			continue
+		}
+		checked++
+		for _, c := range clusters {
+			if c.Class == Normal && !c.Varies {
+				t.Errorf("%s: %q is not marked as varying (conhost %d, Windows Terminal %d)", id, c.Text, *pc.Advance, *mp.Advance)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Error("no conhost measurement with combining marks")
+	}
 }

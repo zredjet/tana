@@ -24,12 +24,13 @@ func TestClusters(t *testing.T) {
 		{"ascii", "ab", []Cluster{n("a", 1), n("b", 1)}},
 		{"wide", "あ漢Ａ𠮷", []Cluster{n("あ", 2), n("漢", 2), n("Ａ", 2), n("𠮷", 2)}},
 		{"halfwidth kana with voiced mark", "ｶﾞ", []Cluster{n("ｶﾞ", 2)}},
-		{"nfd kana", "か\u3099き\u3099", []Cluster{n("か\u3099", 2), n("き\u3099", 2)}},
-		{"nfd latin (combining mark is not ambiguous-width)", "e\u0301", []Cluster{n("e\u0301", 1)}},
-		{"ivs", "葛\U000e0100", []Cluster{n("葛\U000e0100", 2)}},
+		// 結合文字を含むものは、幅が違いうる印を付ける（conhost は結合文字を別の桁に描く。フェーズ12の実測。tui §4）
+		{"nfd kana", "か\u3099き\u3099", []Cluster{c("か\u3099", Normal, "か\u3099", 2, true), c("き\u3099", Normal, "き\u3099", 2, true)}},
+		{"nfd latin", "e\u0301", []Cluster{c("e\u0301", Normal, "e\u0301", 1, true)}},
+		{"ivs", "葛\U000e0100", []Cluster{c("葛\U000e0100", Normal, "葛\U000e0100", 2, true)}}, // 異体字セレクタは結合文字（conhost は 4 桁）
 		{"thai sara am", "กำ", []Cluster{n("กำ", 2)}},
 		{"hangul L+V", "\u1100\u1161", []Cluster{n("\u1100\u1161", 2)}},
-		{"emoji vs15", "😀\ufe0e", []Cluster{n("😀\ufe0e", 2)}},
+		{"emoji vs15", "😀\ufe0e", []Cluster{c("😀\ufe0e", Normal, "😀\ufe0e", 2, true)}}, // VS15 は結合文字（conhost は 3 桁）
 		{"skin tone alone", "\U0001f3fd", []Cluster{n("\U0001f3fd", 2)}},
 		{"unicode 16.0 emoji", "\U0001fabe", []Cluster{n("\U0001fabe", 2)}},
 		{"text-default emoji", "❤", []Cluster{n("❤", 1)}},
