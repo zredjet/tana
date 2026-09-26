@@ -1,0 +1,588 @@
+package app
+
+import (
+	"errors"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/zredjet/tana/internal/fsops"
+	"github.com/zredjet/tana/internal/lineedit"
+	"github.com/zredjet/tana/internal/listing"
+	"github.com/zredjet/tana/internal/msg"
+	"github.com/zredjet/tana/internal/platform"
+)
+
+// slowLoad は、読み込み中の表示を出すまでの時間（filer §6）。
+const slowLoad = 200 * time.Millisecond
+
+// Cmd は、作業用の goroutine で動かす処理。Delay の後に Run を動かし、戻り値を Update に渡す（filer §10）。
+// Run は App の状態に触れない（必要な値は Cmd を作るときに写す）。
+type Cmd struct {
+	Delay time.Duration
+	Run   func() any
+}
+
+// Config は、App の設定と、OS・ファイルシステムへの入口（テストで差し替える）。
+type Config struct {
+	Dirs           []string // 各ペインの最初のフォルダ（絶対パス）。数がペインの数になる
+	DotFilesHidden bool     // 名前が . で始まるものを隠しファイルとして扱う（filer §6）
+
+	ReadDir      func(dir string) ([]fsops.Entry, error)
+	Readlink     func(path string) (string, error)
+	Open         func(path string) error
+	IsExecutable func(path string, isDir bool) bool
+	CanOpen      func(path string) bool
+	Now          func() time.Time
+	Log          func(err error) // 英語の詳細の記録（TANA_LOG。filer §10）。nil なら記録しない
+}
+
+// DefaultConfig は、本物の fsops と platform を使う設定を返す。
+func DefaultConfig(dirs []string) Config {
+	return Config{
+		Dirs:           dirs,
+		DotFilesHidden: platform.DotFilesHidden,
+		ReadDir:        fsops.ReadDir,
+		Readlink:       fsops.Readlink,
+		Open:           platform.Open,
+		IsExecutable:   platform.IsExecutable,
+		CanOpen:        platform.CanOpen,
+		Now:            time.Now,
+	}
+}
+
+// DialogKind は、開いているダイアログの種類。
+type DialogKind int
+
+const (
+	DialogNone DialogKind = iota
+	DialogPath            // パスの入力（g）
+	DialogExec            // 実行ファイルを開く前の確認（filer §7）
+	DialogHelp            // ヘルプ
+)
+
+type dialog struct {
+	kind  DialogKind
+	edit  *lineedit.Editor // DialogPath
+	path  string           // DialogExec: 開くパス
+	name  string           // DialogExec: 表示する名前
+	frame int              // 開いたときの a.frames。これより後に描いてから届いたキーだけで確定する（filer U2）
+}
+
+// App は、画面の状態。
+type App struct {
+	cfg        Config
+	panes      []*Pane
+	active     int
+	showHidden bool
+	message    string
+	messageErr bool
+	dialog     dialog
+	gen        int // 読み込み・開く処理の世代。古い結果を捨てる
+	opening    int // 関連付けで開く前の確認をしている世代（0 ならしていない）
+	frames     int // 描いた回数（Drawn）
+	quit       bool
+}
+
+// New は、App を作り、各ペインの最初の読み込みを返す。
+func New(cfg Config) (*App, []Cmd) {
+	a := &App{cfg: cfg}
+	var cmds []Cmd
+	for i, dir := range cfg.Dirs {
+		p := &Pane{dir: dir, marks: map[string]struct{}{}, targets: map[string]string{}}
+		a.panes = append(a.panes, p)
+		cmds = append(cmds, a.load(i, dir, loadInitial, "")...)
+	}
+	return a, cmds
+}
+
+// ---- tui が読む状態 ----
+
+// Panes は、ペインの並びを返す。
+func (a *App) Panes() []*Pane { return a.panes }
+
+// Active は、操作中のペインの番号を返す。
+func (a *App) Active() int { return a.active }
+
+// ShowHidden は、隠しファイルを表示しているかを返す。
+func (a *App) ShowHidden() bool { return a.showHidden }
+
+// Message は、メッセージ行の文言と、それがエラーかを返す。
+func (a *App) Message() (text string, isErr bool) { return a.message, a.messageErr }
+
+// Dialog は、開いているダイアログの種類を返す。
+func (a *App) Dialog() DialogKind { return a.dialog.kind }
+
+// PathEditor は、パスの入力欄を返す（DialogPath のとき）。
+func (a *App) PathEditor() *lineedit.Editor { return a.dialog.edit }
+
+// ExecName は、実行の確認で表示する名前を返す（DialogExec のとき）。
+func (a *App) ExecName() string { return a.dialog.name }
+
+// Now は、日時の表示に使う現在の時刻を返す。
+func (a *App) Now() time.Time { return a.cfg.Now() }
+
+// Quit は、終了するかを返す。
+func (a *App) Quit() bool { return a.quit }
+
+// Drawn は、tui が画面を描いた後に呼ぶ。確認のダイアログは、描いた後に届いたキーでだけ確定する（先行入力を捨てる。filer U2）。
+func (a *App) Drawn() { a.frames++ }
+
+// ---- 操作 ----
+
+// ActionKind は、利用者の操作の種類。キーとの対応は tui が決める（filer §7・§15）。
+type ActionKind int
+
+const (
+	ActUp ActionKind = iota + 1
+	ActDown
+	ActPageUp
+	ActPageDown
+	ActHome
+	ActEnd
+	ActEnter        // フォルダに入る、ファイルを開く
+	ActParent       // 親のフォルダへ
+	ActNextPane     // 次のペインへ
+	ActFocus        // Action.Pane のペインへ
+	ActFocusOrUp    // Action.Pane のペインへ。すでにそのペインなら親のフォルダへ
+	ActMark         // マークの切り替え
+	ActMarkAll      // すべてマークする・すべて外す
+	ActToggleHidden // 隠しファイルの表示の切り替え
+	ActReload       // 再読み込み
+	ActGoPath       // パスを入力して移動
+	ActSyncOther    // 次のペインを同じフォルダにする
+	ActHelp
+	ActQuit
+	ActCancel // Esc。読み込みの中止、ダイアログを閉じる
+	ActNotYet // まだない操作
+
+	// ダイアログの中の操作。
+	ActYes
+	ActNo
+	ActInsert // Action.Text を入れる（打った文字、貼り付け）
+	ActBackspace
+	ActDelete
+	ActLeft
+	ActRight
+	ActLineHome
+	ActLineEnd
+	ActSubmit
+)
+
+// Action は、利用者の操作。
+type Action struct {
+	Kind ActionKind
+	Pane int    // ActFocus・ActFocusOrUp
+	Text string // ActInsert
+}
+
+// Do は、利用者の操作を行う。キー入力のたびにメッセージ行を消す（filer §5.1）。
+func (a *App) Do(act Action) []Cmd {
+	if a.dialog.kind != DialogNone {
+		return a.doDialog(act)
+	}
+	a.message, a.messageErr = "", false
+	p := a.panes[a.active]
+	if act.Kind == ActCancel {
+		return a.cancel()
+	}
+	// 読み込み中のペインでは、そのペインの操作を受け付けない（読み込みが終わると一覧が変わるため）。
+	if p.load != nil && paneLocal(act.Kind) {
+		return nil
+	}
+	switch act.Kind {
+	case ActUp:
+		p.move(-1)
+	case ActDown:
+		p.move(1)
+	case ActPageUp:
+		p.move(-max(p.rows, 1))
+	case ActPageDown:
+		p.move(max(p.rows, 1))
+	case ActHome:
+		p.move(-len(p.visible))
+	case ActEnd:
+		p.move(len(p.visible))
+	case ActEnter:
+		return a.enter()
+	case ActParent:
+		return a.parent(a.active)
+	case ActNextPane:
+		a.active = (a.active + 1) % len(a.panes)
+	case ActFocus:
+		if act.Pane >= 0 && act.Pane < len(a.panes) {
+			a.active = act.Pane
+		}
+	case ActFocusOrUp:
+		if act.Pane == a.active {
+			return a.parent(a.active)
+		}
+		if act.Pane >= 0 && act.Pane < len(a.panes) {
+			a.active = act.Pane
+		}
+	case ActMark:
+		if it, ok := p.current(); ok && !it.Parent {
+			p.toggleMark(it.Name)
+		}
+		p.move(1)
+	case ActMarkAll:
+		p.markAll()
+	case ActToggleHidden:
+		a.showHidden = !a.showHidden
+		for _, q := range a.panes {
+			q.filter(a.showHidden)
+		}
+	case ActReload:
+		var cmds []Cmd
+		for i, q := range a.panes {
+			if q.loaded {
+				cmds = append(cmds, a.load(i, q.dir, loadReload, "")...)
+			}
+		}
+		return cmds
+	case ActGoPath:
+		a.dialog = dialog{kind: DialogPath, edit: lineedit.New(p.dir, len(p.dir))}
+	case ActSyncOther:
+		if len(a.panes) > 1 && p.loaded {
+			return a.load((a.active+1)%len(a.panes), p.dir, loadGo, "")
+		}
+	case ActHelp:
+		a.dialog = dialog{kind: DialogHelp}
+	case ActQuit:
+		a.quit = true
+	case ActNotYet:
+		a.setMessage(msg.NotYet, false)
+	}
+	return a.linkTarget(a.active)
+}
+
+// paneLocal は、操作中のペインの一覧を使う操作かを返す。
+func paneLocal(k ActionKind) bool {
+	switch k {
+	case ActUp, ActDown, ActPageUp, ActPageDown, ActHome, ActEnd, ActEnter, ActParent, ActMark, ActMarkAll, ActGoPath, ActSyncOther:
+		return true
+	}
+	return false
+}
+
+// cancel は、読み込みと、開く前の確認を中止する（filer U5。待つのをやめて結果を捨てる）。
+func (a *App) cancel() []Cmd {
+	canceled := a.opening != 0
+	a.opening = 0
+	for _, p := range a.panes {
+		if p.load != nil {
+			p.load = nil
+			canceled = true
+		}
+	}
+	if canceled {
+		a.setMessage(msg.LoadCanceled, false)
+	}
+	return nil
+}
+
+// doDialog は、ダイアログを開いているときの操作を行う。
+func (a *App) doDialog(act Action) []Cmd {
+	d := &a.dialog
+	switch d.kind {
+	case DialogHelp:
+		if act.Kind != ActInsert { // 貼り付けでは閉じない
+			a.dialog = dialog{}
+		}
+	case DialogExec:
+		if a.frames <= d.frame {
+			return nil // 確認を描く前に届いたキー（filer U2）
+		}
+		switch act.Kind {
+		case ActYes:
+			path, name := d.path, d.name
+			a.dialog = dialog{}
+			return a.openCmd(path, name)
+		case ActNo, ActCancel:
+			a.dialog = dialog{}
+		}
+	case DialogPath:
+		e := d.edit
+		switch act.Kind {
+		case ActInsert:
+			e.Insert(act.Text)
+		case ActBackspace:
+			e.DeleteBackward()
+		case ActDelete:
+			e.DeleteForward()
+		case ActLeft:
+			e.Left()
+		case ActRight:
+			e.Right()
+		case ActLineHome:
+			e.Home()
+		case ActLineEnd:
+			e.End()
+		case ActCancel:
+			a.dialog = dialog{}
+		case ActSubmit:
+			text := e.Text()
+			a.dialog = dialog{}
+			a.message, a.messageErr = "", false
+			if strings.TrimSpace(text) == "" {
+				return nil
+			}
+			return a.load(a.active, resolve(a.panes[a.active].dir, text), loadGo, "")
+		}
+	}
+	return nil
+}
+
+// resolve は、入力されたパスを絶対パスにする。相対パスは dir から数える。Windows の D: はドライブのルートにする。
+// 入力されたパスは利用者が打った文字列で、表示用に加工したものではない（filer U4）。
+func resolve(dir, input string) string {
+	if filepath.IsAbs(input) {
+		return filepath.Clean(input)
+	}
+	if vol := filepath.VolumeName(input); vol != "" {
+		return filepath.Clean(vol + string(filepath.Separator) + input[len(vol):])
+	}
+	return filepath.Join(dir, input)
+}
+
+func (a *App) setMessage(text string, isErr bool) { a.message, a.messageErr = text, isErr }
+
+func (a *App) logErr(err error) {
+	if err != nil && a.cfg.Log != nil {
+		a.cfg.Log(err)
+	}
+}
+
+// ---- フォルダの読み込み ----
+
+type loadKind int
+
+const (
+	loadInitial loadKind = iota + 1 // 起動時。開けなければ、開ける祖先を表示する
+	loadReload                      // 再読み込み。フォルダが消えていれば、存在する祖先を表示する（filer §6）
+	loadGo                          // ほかのフォルダへ（入る、親へ、パスの入力）。開けなければ留まる
+	loadLink                        // リンクに入る。リンク先がフォルダでなければ、開く処理に移る
+)
+
+type loading struct {
+	gen   int
+	dir   string
+	kind  loadKind
+	focus string // 読み込んだ後にカーソルを置く名前（親へ移ったとき、来たフォルダ）
+	slow  bool   // 読み込み中の表示を出す
+}
+
+// loaded は、読み込みの結果。
+type loaded struct {
+	pane, gen int
+	dir       string // 読み込んだフォルダ（祖先を表示するときは、その祖先）
+	items     []listing.Item
+	err       error // 求めたフォルダを開けなかった理由
+	notDir    bool  // loadLink で、リンク先がフォルダでなかった
+}
+
+// loadSlow は、読み込みが slowLoad を超えたこと。
+type loadSlow struct{ pane, gen int }
+
+// load は、ペイン i にフォルダ dir を読み込む処理を返す。
+func (a *App) load(i int, dir string, kind loadKind, focus string) []Cmd {
+	a.gen++
+	gen := a.gen
+	a.panes[i].load = &loading{gen: gen, dir: dir, kind: kind, focus: focus}
+	readDir, dotHidden := a.cfg.ReadDir, a.cfg.DotFilesHidden
+	run := func() any {
+		entries, err := readDir(dir)
+		if err == nil {
+			return loaded{pane: i, gen: gen, dir: dir, items: listing.Build(dir, entries, dotHidden)}
+		}
+		res := loaded{pane: i, gen: gen, dir: dir, err: err}
+		kindOf := fsops.KindUnknown
+		if oe, ok := errors.AsType[*fsops.OpError](err); ok {
+			kindOf = oe.Kind
+		}
+		switch {
+		case kind == loadLink && kindOf == fsops.KindNotFound:
+			res.notDir = true
+		case kind == loadInitial || kind == loadReload && kindOf == fsops.KindNotFound:
+			// 開ける祖先を探す（filer §6）。
+			for d := filepath.Dir(dir); ; d = filepath.Dir(d) {
+				if entries, err := readDir(d); err == nil {
+					res.dir, res.items = d, listing.Build(d, entries, dotHidden)
+					break
+				}
+				if filepath.Dir(d) == d {
+					break
+				}
+			}
+		}
+		return res
+	}
+	return []Cmd{{Run: run}, {Delay: slowLoad, Run: func() any { return loadSlow{pane: i, gen: gen} }}}
+}
+
+// Update は、Cmd の結果を反映する。
+func (a *App) Update(m any) []Cmd {
+	switch m := m.(type) {
+	case loaded:
+		return a.loaded(m)
+	case loadSlow:
+		if p := a.panes[m.pane]; p.load != nil && p.load.gen == m.gen {
+			p.load.slow = true
+		}
+	case linkRead:
+		p := a.panes[m.pane]
+		delete(p.pending, m.name)
+		if p.dir == m.dir && p.loaded {
+			p.targets[m.name] = m.target
+		}
+	case checked:
+		return a.checked(m)
+	case opened:
+		if m.err != nil {
+			a.logErr(m.err)
+			a.setMessage(msg.OpenFailed(m.name), true)
+		} else {
+			a.setMessage(msg.Opened(m.name), false)
+		}
+	}
+	return nil
+}
+
+func (a *App) loaded(m loaded) []Cmd {
+	p := a.panes[m.pane]
+	if p.load == nil || p.load.gen != m.gen {
+		return nil // 中止した、または新しい読み込みに置き換えた
+	}
+	ld := p.load
+	p.load = nil
+	if m.notDir {
+		// リンク先がフォルダでない。ファイルとして開く（filer §7）。
+		return a.startOpen(m.dir, filepath.Base(m.dir))
+	}
+	if m.err != nil {
+		a.logErr(m.err)
+		if m.items == nil {
+			a.setMessage(msg.CannotOpenDir(msg.Error(m.err)), true)
+			return nil
+		}
+		a.setMessage(msg.ShowingAncestor(msg.Error(m.err)), true)
+	}
+	keep := ld.kind == loadReload && m.dir == p.dir && p.loaded
+	p.set(m.dir, m.items, a.showHidden, keep, ld.focus)
+	return a.linkTarget(m.pane)
+}
+
+// enter は、カーソル行の項目に入る・開く（filer §7）。
+func (a *App) enter() []Cmd {
+	p := a.panes[a.active]
+	it, ok := p.current()
+	if !ok {
+		return nil
+	}
+	path := filepath.Join(p.dir, it.Name) // 列挙で得た名前から作る（U4）
+	switch {
+	case it.Parent:
+		return a.parent(a.active)
+	case it.Err != nil:
+		a.setMessage(msg.Error(it.Err), true)
+		return nil
+	case it.IsDir():
+		return a.load(a.active, path, loadGo, "")
+	case it.Info.Type == fsops.TypeSymlink:
+		return a.load(a.active, path, loadLink, "")
+	case it.Info.Type == fsops.TypeSpecial:
+		a.setMessage(msg.Kind(fsops.KindUnsupportedType), true)
+		return nil
+	}
+	return a.startOpen(path, it.Name)
+}
+
+// parent は、ペイン i を親のフォルダにし、カーソルを来たフォルダに置く。
+func (a *App) parent(i int) []Cmd {
+	p := a.panes[i]
+	if !p.loaded || listing.IsRoot(p.dir) {
+		return nil
+	}
+	return a.load(i, filepath.Dir(p.dir), loadGo, filepath.Base(p.dir))
+}
+
+// ---- 関連付けで開く ----
+
+// checked は、開く前の確認（開ける名前か、実行ファイルか）の結果。
+type checked struct {
+	gen        int
+	path, name string
+	canOpen    bool
+	exec       bool
+}
+
+// opened は、関連付けで開いた結果。
+type opened struct {
+	name string
+	err  error
+}
+
+// startOpen は、開く前の確認を作業用の goroutine で行う（実行ファイルの判定はファイルシステムを調べることがある。filer U5）。
+func (a *App) startOpen(path, name string) []Cmd {
+	a.gen++
+	gen := a.gen
+	a.opening = gen
+	canOpen, isExec := a.cfg.CanOpen, a.cfg.IsExecutable
+	return []Cmd{{Run: func() any {
+		return checked{gen: gen, path: path, name: name, canOpen: canOpen(path), exec: isExec(path, false)}
+	}}}
+}
+
+func (a *App) checked(m checked) []Cmd {
+	if a.opening != m.gen {
+		return nil
+	}
+	a.opening = 0
+	switch {
+	case !m.canOpen:
+		a.setMessage(msg.CannotOpenName, true)
+		return nil
+	case m.exec:
+		a.dialog = dialog{kind: DialogExec, path: m.path, name: m.name, frame: a.frames}
+		return nil
+	}
+	return a.openCmd(m.path, m.name)
+}
+
+func (a *App) openCmd(path, name string) []Cmd {
+	open := a.cfg.Open
+	return []Cmd{{Run: func() any { return opened{name: name, err: open(path)} }}}
+}
+
+// ---- リンク先 ----
+
+// linkRead は、リンク先の読み取りの結果（状態行に出す）。
+type linkRead struct {
+	pane      int
+	dir, name string
+	target    string
+}
+
+// linkTarget は、ペイン i のカーソル行がリンク・ジャンクションで、リンク先をまだ読んでいなければ、読む処理を返す。
+func (a *App) linkTarget(i int) []Cmd {
+	p := a.panes[i]
+	it, ok := p.current()
+	if !ok || p.load != nil || it.Err != nil || it.Info.Type != fsops.TypeSymlink && it.Info.Type != fsops.TypeJunction {
+		return nil
+	}
+	if _, ok := p.targets[it.Name]; ok {
+		return nil
+	}
+	if _, ok := p.pending[it.Name]; ok {
+		return nil
+	}
+	p.pending[it.Name] = struct{}{}
+	dir, name, readlink := p.dir, it.Name, a.cfg.Readlink
+	return []Cmd{{Run: func() any {
+		target, err := readlink(filepath.Join(dir, name))
+		if err != nil {
+			target = "(" + msg.Error(err) + ")"
+		}
+		return linkRead{pane: i, dir: dir, name: name, target: target}
+	}}}
+}
