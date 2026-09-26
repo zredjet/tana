@@ -4119,53 +4119,1239 @@
     "join_row": 4,
     "completed": true
   },
-  "screen": {
-    "started": "2026-09-26T15:57:33+09:00",
-    "probe_revision": "9c27bcb26988+dirty",
-    "goos": "windows",
-    "goarch": "arm64",
-    "cols": 120,
-    "rows": 30,
-    "output_method": "writeconsole",
-    "vt_input": true,
-    "env": {
-      "SESSIONNAME": "Console",
-      "WT_PROFILE_ID": "{0caa0dad-35be-5f56-a8ff-afceeeaa6101}",
-      "WT_SESSION": "f8b76aba-1bb5-48d1-a91b-c844a129f594"
+  "screen": [
+    {
+      "started": "2026-09-26T15:57:33+09:00",
+      "probe_revision": "9c27bcb26988+dirty",
+      "goos": "windows",
+      "goarch": "arm64",
+      "cols": 120,
+      "rows": 30,
+      "output_method": "writeconsole",
+      "vt_input": true,
+      "env": {
+        "SESSIONNAME": "Console",
+        "WT_PROFILE_ID": "{0caa0dad-35be-5f56-a8ff-afceeeaa6101}",
+        "WT_SESSION": "f8b76aba-1bb5-48d1-a91b-c844a129f594"
+      },
+      "info": {
+        "console_in_orig": "0x1f7",
+        "console_in_set": "0x3a8",
+        "console_input_cp": "932",
+        "console_out_orig": "0x7",
+        "console_out_set": "0xf",
+        "console_output_cp": "932",
+        "keyboard_layout": "00000411",
+        "os_version": "Windows 10.0 build 26200",
+        "output_cp_orig": "932",
+        "output_method": "writeconsole"
+      },
+      "pid": 2156,
+      "keys": [],
+      "inputs": [],
+      "resizes": [
+        {
+          "t_ms": 0.558,
+          "source": "event",
+          "cols": 120,
+          "rows": 30
+        }
+      ],
+      "frames": {
+        "count": 2,
+        "max_draw_ms": 0,
+        "max_flush_ms": 0.558,
+        "max_bytes": 5654,
+        "max_coalesced": 0
+      },
+      "exit": "signal",
+      "error": "terminated"
     },
-    "info": {
-      "console_in_orig": "0x1f7",
-      "console_in_set": "0x3a8",
-      "console_input_cp": "932",
-      "console_out_orig": "0x7",
-      "console_out_set": "0xf",
-      "console_output_cp": "932",
-      "keyboard_layout": "00000411",
-      "os_version": "Windows 10.0 build 26200",
-      "output_cp_orig": "932",
-      "output_method": "writeconsole"
-    },
-    "pid": 2156,
-    "keys": [],
-    "inputs": [],
-    "resizes": [
-      {
-        "t_ms": 0.558,
-        "source": "event",
-        "cols": 120,
-        "rows": 30
-      }
-    ],
-    "frames": {
-      "count": 2,
-      "max_draw_ms": 0,
-      "max_flush_ms": 0.558,
-      "max_bytes": 5654,
-      "max_coalesced": 0
-    },
-    "exit": "signal",
-    "error": "terminated"
-  },
+    {
+      "started": "2026-09-26T16:06:25+09:00",
+      "probe_revision": "848bfbebc4be+dirty",
+      "goos": "windows",
+      "goarch": "arm64",
+      "cols": 120,
+      "rows": 30,
+      "output_method": "writeconsole",
+      "vt_input": true,
+      "env": {
+        "SESSIONNAME": "Console",
+        "WT_PROFILE_ID": "{0caa0dad-35be-5f56-a8ff-afceeeaa6101}",
+        "WT_SESSION": "190fd9c0-e010-4664-ae2d-7f4536486444"
+      },
+      "info": {
+        "console_in_orig": "0x1f7",
+        "console_in_set": "0x3a8",
+        "console_input_cp": "932",
+        "console_out_orig": "0x7",
+        "console_out_set": "0xf",
+        "console_output_cp": "932",
+        "keyboard_layout": "00000411",
+        "os_version": "Windows 10.0 build 26200",
+        "output_cp_orig": "932",
+        "output_method": "writeconsole"
+      },
+      "pid": 2928,
+      "keys": [
+        {
+          "t_ms": 14749.067,
+          "event": "'i'",
+          "raw_hex": "69"
+        },
+        {
+          "t_ms": 17151.65,
+          "event": "'あ'",
+          "raw_hex": "e38182"
+        },
+        {
+          "t_ms": 17151.65,
+          "event": "'い'",
+          "raw_hex": "e38184"
+        },
+        {
+          "t_ms": 17151.65,
+          "event": "'う'",
+          "raw_hex": "e38186"
+        },
+        {
+          "t_ms": 17151.65,
+          "event": "'え'",
+          "raw_hex": "e38188"
+        },
+        {
+          "t_ms": 17151.65,
+          "event": "'お'",
+          "raw_hex": "e3818a"
+        },
+        {
+          "t_ms": 19820.768,
+          "event": "Left",
+          "raw_hex": "1b5b44"
+        },
+        {
+          "t_ms": 20195.866,
+          "event": "Backspace",
+          "raw_hex": "7f"
+        },
+        {
+          "t_ms": 20558.077,
+          "event": "Left",
+          "raw_hex": "1b5b44"
+        },
+        {
+          "t_ms": 20934.466,
+          "event": "Backspace",
+          "raw_hex": "7f"
+        },
+        {
+          "t_ms": 22157.047,
+          "event": "Enter",
+          "raw_hex": "0d"
+        }
+      ],
+      "inputs": [
+        {
+          "t_ms": 22157.047,
+          "result": "confirmed",
+          "text": "報告書_2026年度あうお.docx",
+          "hex": "e5a0b1e5918ae69bb85f32303236e5b9b4e5baa6e38182e38186e3818a2e646f6378"
+        }
+      ],
+      "resizes": [
+        {
+          "t_ms": 1.096,
+          "source": "event",
+          "cols": 120,
+          "rows": 30
+        },
+        {
+          "t_ms": 2341.206,
+          "source": "event",
+          "cols": 119,
+          "rows": 30
+        },
+        {
+          "t_ms": 2345.751,
+          "source": "event",
+          "cols": 117,
+          "rows": 29
+        },
+        {
+          "t_ms": 2357.16,
+          "source": "event",
+          "cols": 114,
+          "rows": 28
+        },
+        {
+          "t_ms": 2364.912,
+          "source": "event",
+          "cols": 110,
+          "rows": 28
+        },
+        {
+          "t_ms": 2371.534,
+          "source": "event",
+          "cols": 106,
+          "rows": 27
+        },
+        {
+          "t_ms": 2379.114,
+          "source": "event",
+          "cols": 102,
+          "rows": 26
+        },
+        {
+          "t_ms": 2387.841,
+          "source": "event",
+          "cols": 99,
+          "rows": 25
+        },
+        {
+          "t_ms": 2395.545,
+          "source": "event",
+          "cols": 95,
+          "rows": 24
+        },
+        {
+          "t_ms": 2404.266,
+          "source": "event",
+          "cols": 93,
+          "rows": 23
+        },
+        {
+          "t_ms": 2413.025,
+          "source": "event",
+          "cols": 91,
+          "rows": 23
+        },
+        {
+          "t_ms": 2420.849,
+          "source": "event",
+          "cols": 89,
+          "rows": 22
+        },
+        {
+          "t_ms": 2429.075,
+          "source": "event",
+          "cols": 88,
+          "rows": 22
+        },
+        {
+          "t_ms": 2436.908,
+          "source": "event",
+          "cols": 87,
+          "rows": 22
+        },
+        {
+          "t_ms": 2444.698,
+          "source": "event",
+          "cols": 86,
+          "rows": 21
+        },
+        {
+          "t_ms": 2454.123,
+          "source": "event",
+          "cols": 85,
+          "rows": 21
+        },
+        {
+          "t_ms": 2500.838,
+          "source": "poll",
+          "cols": 85,
+          "rows": 21
+        },
+        {
+          "t_ms": 3279.333,
+          "source": "event",
+          "cols": 86,
+          "rows": 21
+        },
+        {
+          "t_ms": 3286.86,
+          "source": "event",
+          "cols": 87,
+          "rows": 22
+        },
+        {
+          "t_ms": 3297.488,
+          "source": "event",
+          "cols": 88,
+          "rows": 22
+        },
+        {
+          "t_ms": 3305.219,
+          "source": "event",
+          "cols": 90,
+          "rows": 23
+        },
+        {
+          "t_ms": 3313.784,
+          "source": "event",
+          "cols": 91,
+          "rows": 24
+        },
+        {
+          "t_ms": 3321.805,
+          "source": "event",
+          "cols": 93,
+          "rows": 24
+        },
+        {
+          "t_ms": 3329.324,
+          "source": "event",
+          "cols": 94,
+          "rows": 25
+        },
+        {
+          "t_ms": 3338.698,
+          "source": "event",
+          "cols": 96,
+          "rows": 26
+        },
+        {
+          "t_ms": 3346.398,
+          "source": "event",
+          "cols": 98,
+          "rows": 26
+        },
+        {
+          "t_ms": 3354.85,
+          "source": "event",
+          "cols": 99,
+          "rows": 27
+        },
+        {
+          "t_ms": 3363.477,
+          "source": "event",
+          "cols": 101,
+          "rows": 28
+        },
+        {
+          "t_ms": 3371.616,
+          "source": "event",
+          "cols": 102,
+          "rows": 28
+        },
+        {
+          "t_ms": 3379.792,
+          "source": "event",
+          "cols": 102,
+          "rows": 29
+        },
+        {
+          "t_ms": 3388.334,
+          "source": "event",
+          "cols": 103,
+          "rows": 29
+        },
+        {
+          "t_ms": 3396.58,
+          "source": "event",
+          "cols": 104,
+          "rows": 29
+        },
+        {
+          "t_ms": 3411.922,
+          "source": "event",
+          "cols": 105,
+          "rows": 29
+        },
+        {
+          "t_ms": 3420.968,
+          "source": "event",
+          "cols": 105,
+          "rows": 30
+        },
+        {
+          "t_ms": 3450.286,
+          "source": "event",
+          "cols": 106,
+          "rows": 30
+        },
+        {
+          "t_ms": 3501.247,
+          "source": "poll",
+          "cols": 106,
+          "rows": 30
+        },
+        {
+          "t_ms": 3862.564,
+          "source": "event",
+          "cols": 107,
+          "rows": 30
+        },
+        {
+          "t_ms": 3874.607,
+          "source": "event",
+          "cols": 111,
+          "rows": 31
+        },
+        {
+          "t_ms": 3880.827,
+          "source": "event",
+          "cols": 113,
+          "rows": 32
+        },
+        {
+          "t_ms": 3889.549,
+          "source": "event",
+          "cols": 117,
+          "rows": 32
+        },
+        {
+          "t_ms": 3897.182,
+          "source": "event",
+          "cols": 121,
+          "rows": 34
+        },
+        {
+          "t_ms": 3905.528,
+          "source": "event",
+          "cols": 124,
+          "rows": 34
+        },
+        {
+          "t_ms": 3913.986,
+          "source": "event",
+          "cols": 127,
+          "rows": 35
+        },
+        {
+          "t_ms": 3921.67,
+          "source": "event",
+          "cols": 130,
+          "rows": 36
+        },
+        {
+          "t_ms": 3929.953,
+          "source": "event",
+          "cols": 132,
+          "rows": 36
+        },
+        {
+          "t_ms": 3938.608,
+          "source": "event",
+          "cols": 133,
+          "rows": 36
+        },
+        {
+          "t_ms": 3947.531,
+          "source": "event",
+          "cols": 134,
+          "rows": 37
+        },
+        {
+          "t_ms": 3955.218,
+          "source": "event",
+          "cols": 135,
+          "rows": 37
+        },
+        {
+          "t_ms": 3963.798,
+          "source": "event",
+          "cols": 136,
+          "rows": 37
+        },
+        {
+          "t_ms": 3971.991,
+          "source": "event",
+          "cols": 137,
+          "rows": 37
+        },
+        {
+          "t_ms": 3987.071,
+          "source": "event",
+          "cols": 138,
+          "rows": 37
+        },
+        {
+          "t_ms": 4001.228,
+          "source": "poll",
+          "cols": 138,
+          "rows": 37
+        },
+        {
+          "t_ms": 4438.632,
+          "source": "event",
+          "cols": 139,
+          "rows": 36
+        },
+        {
+          "t_ms": 4442.822,
+          "source": "event",
+          "cols": 141,
+          "rows": 35
+        },
+        {
+          "t_ms": 4448.706,
+          "source": "event",
+          "cols": 142,
+          "rows": 34
+        },
+        {
+          "t_ms": 4460.752,
+          "source": "event",
+          "cols": 144,
+          "rows": 33
+        },
+        {
+          "t_ms": 4461.831,
+          "source": "event",
+          "cols": 146,
+          "rows": 31
+        },
+        {
+          "t_ms": 4471.332,
+          "source": "event",
+          "cols": 148,
+          "rows": 30
+        },
+        {
+          "t_ms": 4479.747,
+          "source": "event",
+          "cols": 149,
+          "rows": 28
+        },
+        {
+          "t_ms": 4488.855,
+          "source": "event",
+          "cols": 151,
+          "rows": 26
+        },
+        {
+          "t_ms": 4496.629,
+          "source": "event",
+          "cols": 153,
+          "rows": 25
+        },
+        {
+          "t_ms": 4500.591,
+          "source": "poll",
+          "cols": 153,
+          "rows": 25
+        },
+        {
+          "t_ms": 4504.166,
+          "source": "event",
+          "cols": 154,
+          "rows": 24
+        },
+        {
+          "t_ms": 4513.058,
+          "source": "event",
+          "cols": 155,
+          "rows": 23
+        },
+        {
+          "t_ms": 4528.633,
+          "source": "event",
+          "cols": 155,
+          "rows": 22
+        },
+        {
+          "t_ms": 4545.073,
+          "source": "event",
+          "cols": 155,
+          "rows": 21
+        },
+        {
+          "t_ms": 4752.106,
+          "source": "poll",
+          "cols": 155,
+          "rows": 21
+        },
+        {
+          "t_ms": 5150.546,
+          "source": "event",
+          "cols": 152,
+          "rows": 22
+        },
+        {
+          "t_ms": 5159.154,
+          "source": "event",
+          "cols": 148,
+          "rows": 24
+        },
+        {
+          "t_ms": 5161.822,
+          "source": "event",
+          "cols": 142,
+          "rows": 26
+        },
+        {
+          "t_ms": 5174.051,
+          "source": "event",
+          "cols": 136,
+          "rows": 28
+        },
+        {
+          "t_ms": 5181.72,
+          "source": "event",
+          "cols": 129,
+          "rows": 31
+        },
+        {
+          "t_ms": 5189.147,
+          "source": "event",
+          "cols": 122,
+          "rows": 34
+        },
+        {
+          "t_ms": 5196.928,
+          "source": "event",
+          "cols": 117,
+          "rows": 36
+        },
+        {
+          "t_ms": 5205.474,
+          "source": "event",
+          "cols": 111,
+          "rows": 39
+        },
+        {
+          "t_ms": 5213.984,
+          "source": "event",
+          "cols": 107,
+          "rows": 40
+        },
+        {
+          "t_ms": 5222.371,
+          "source": "event",
+          "cols": 104,
+          "rows": 41
+        },
+        {
+          "t_ms": 5230.564,
+          "source": "event",
+          "cols": 102,
+          "rows": 41
+        },
+        {
+          "t_ms": 5238.649,
+          "source": "event",
+          "cols": 101,
+          "rows": 41
+        },
+        {
+          "t_ms": 5246.869,
+          "source": "event",
+          "cols": 100,
+          "rows": 41
+        },
+        {
+          "t_ms": 5250.667,
+          "source": "poll",
+          "cols": 100,
+          "rows": 41
+        },
+        {
+          "t_ms": 5255.133,
+          "source": "event",
+          "cols": 98,
+          "rows": 41
+        },
+        {
+          "t_ms": 5278.604,
+          "source": "event",
+          "cols": 97,
+          "rows": 41
+        },
+        {
+          "t_ms": 5501.204,
+          "source": "poll",
+          "cols": 97,
+          "rows": 41
+        },
+        {
+          "t_ms": 5966.414,
+          "source": "event",
+          "cols": 95,
+          "rows": 41
+        },
+        {
+          "t_ms": 5972.411,
+          "source": "event",
+          "cols": 92,
+          "rows": 41
+        },
+        {
+          "t_ms": 5979.801,
+          "source": "event",
+          "cols": 89,
+          "rows": 41
+        },
+        {
+          "t_ms": 5991.278,
+          "source": "event",
+          "cols": 81,
+          "rows": 39
+        },
+        {
+          "t_ms": 5997.636,
+          "source": "event",
+          "cols": 78,
+          "rows": 38
+        },
+        {
+          "t_ms": 6000.397,
+          "source": "poll",
+          "cols": 78,
+          "rows": 38
+        },
+        {
+          "t_ms": 6005.458,
+          "source": "event",
+          "cols": 74,
+          "rows": 36
+        },
+        {
+          "t_ms": 6013.959,
+          "source": "event",
+          "cols": 71,
+          "rows": 35
+        },
+        {
+          "t_ms": 6022.052,
+          "source": "event",
+          "cols": 68,
+          "rows": 34
+        },
+        {
+          "t_ms": 6029.686,
+          "source": "event",
+          "cols": 65,
+          "rows": 33
+        },
+        {
+          "t_ms": 6038.299,
+          "source": "event",
+          "cols": 64,
+          "rows": 32
+        },
+        {
+          "t_ms": 6046.32,
+          "source": "event",
+          "cols": 63,
+          "rows": 31
+        },
+        {
+          "t_ms": 6053.712,
+          "source": "event",
+          "cols": 62,
+          "rows": 31
+        },
+        {
+          "t_ms": 6062.093,
+          "source": "event",
+          "cols": 61,
+          "rows": 30
+        },
+        {
+          "t_ms": 6070.476,
+          "source": "event",
+          "cols": 60,
+          "rows": 30
+        },
+        {
+          "t_ms": 6251.855,
+          "source": "poll",
+          "cols": 60,
+          "rows": 30
+        },
+        {
+          "t_ms": 6565.82,
+          "source": "event",
+          "cols": 67,
+          "rows": 26
+        },
+        {
+          "t_ms": 6574.026,
+          "source": "event",
+          "cols": 82,
+          "rows": 17
+        },
+        {
+          "t_ms": 6578.034,
+          "source": "event",
+          "cols": 88,
+          "rows": 14
+        },
+        {
+          "t_ms": 6594.615,
+          "source": "event",
+          "cols": 94,
+          "rows": 10
+        },
+        {
+          "t_ms": 6602.615,
+          "source": "event",
+          "cols": 96,
+          "rows": 9
+        },
+        {
+          "t_ms": 6612.141,
+          "source": "event",
+          "cols": 97,
+          "rows": 8
+        },
+        {
+          "t_ms": 6628.847,
+          "source": "event",
+          "cols": 98,
+          "rows": 7
+        },
+        {
+          "t_ms": 6636.842,
+          "source": "event",
+          "cols": 99,
+          "rows": 7
+        },
+        {
+          "t_ms": 6751.391,
+          "source": "poll",
+          "cols": 99,
+          "rows": 7
+        },
+        {
+          "t_ms": 7130.517,
+          "source": "event",
+          "cols": 100,
+          "rows": 8
+        },
+        {
+          "t_ms": 7135.07,
+          "source": "event",
+          "cols": 101,
+          "rows": 9
+        },
+        {
+          "t_ms": 7143.414,
+          "source": "event",
+          "cols": 103,
+          "rows": 11
+        },
+        {
+          "t_ms": 7152.151,
+          "source": "event",
+          "cols": 104,
+          "rows": 12
+        },
+        {
+          "t_ms": 7159.023,
+          "source": "event",
+          "cols": 106,
+          "rows": 14
+        },
+        {
+          "t_ms": 7167.471,
+          "source": "event",
+          "cols": 108,
+          "rows": 16
+        },
+        {
+          "t_ms": 7175.969,
+          "source": "event",
+          "cols": 110,
+          "rows": 17
+        },
+        {
+          "t_ms": 7183.588,
+          "source": "event",
+          "cols": 111,
+          "rows": 18
+        },
+        {
+          "t_ms": 7191.932,
+          "source": "event",
+          "cols": 112,
+          "rows": 19
+        },
+        {
+          "t_ms": 7200.305,
+          "source": "event",
+          "cols": 112,
+          "rows": 20
+        },
+        {
+          "t_ms": 7216.061,
+          "source": "event",
+          "cols": 113,
+          "rows": 20
+        },
+        {
+          "t_ms": 7224.942,
+          "source": "event",
+          "cols": 113,
+          "rows": 21
+        },
+        {
+          "t_ms": 7241.75,
+          "source": "event",
+          "cols": 114,
+          "rows": 21
+        },
+        {
+          "t_ms": 7250.382,
+          "source": "poll",
+          "cols": 114,
+          "rows": 21
+        },
+        {
+          "t_ms": 7610.92,
+          "source": "event",
+          "cols": 113,
+          "rows": 22
+        },
+        {
+          "t_ms": 7620.585,
+          "source": "event",
+          "cols": 112,
+          "rows": 24
+        },
+        {
+          "t_ms": 7629.543,
+          "source": "event",
+          "cols": 111,
+          "rows": 26
+        },
+        {
+          "t_ms": 7633.107,
+          "source": "event",
+          "cols": 109,
+          "rows": 28
+        },
+        {
+          "t_ms": 7645.399,
+          "source": "event",
+          "cols": 107,
+          "rows": 30
+        },
+        {
+          "t_ms": 7652.817,
+          "source": "event",
+          "cols": 106,
+          "rows": 32
+        },
+        {
+          "t_ms": 7659.647,
+          "source": "event",
+          "cols": 104,
+          "rows": 34
+        },
+        {
+          "t_ms": 7668.262,
+          "source": "event",
+          "cols": 103,
+          "rows": 35
+        },
+        {
+          "t_ms": 7676.329,
+          "source": "event",
+          "cols": 102,
+          "rows": 36
+        },
+        {
+          "t_ms": 7683.892,
+          "source": "event",
+          "cols": 101,
+          "rows": 38
+        },
+        {
+          "t_ms": 7692.895,
+          "source": "event",
+          "cols": 100,
+          "rows": 38
+        },
+        {
+          "t_ms": 7701.01,
+          "source": "event",
+          "cols": 99,
+          "rows": 39
+        },
+        {
+          "t_ms": 7708.638,
+          "source": "event",
+          "cols": 98,
+          "rows": 40
+        },
+        {
+          "t_ms": 7732.887,
+          "source": "event",
+          "cols": 97,
+          "rows": 41
+        },
+        {
+          "t_ms": 7750.581,
+          "source": "poll",
+          "cols": 97,
+          "rows": 41
+        },
+        {
+          "t_ms": 7766.358,
+          "source": "event",
+          "cols": 96,
+          "rows": 41
+        },
+        {
+          "t_ms": 7782.966,
+          "source": "event",
+          "cols": 95,
+          "rows": 41
+        },
+        {
+          "t_ms": 7792.674,
+          "source": "event",
+          "cols": 93,
+          "rows": 41
+        },
+        {
+          "t_ms": 7800.679,
+          "source": "event",
+          "cols": 92,
+          "rows": 41
+        },
+        {
+          "t_ms": 7809.435,
+          "source": "event",
+          "cols": 90,
+          "rows": 41
+        },
+        {
+          "t_ms": 7817.757,
+          "source": "event",
+          "cols": 88,
+          "rows": 41
+        },
+        {
+          "t_ms": 7825.558,
+          "source": "event",
+          "cols": 85,
+          "rows": 41
+        },
+        {
+          "t_ms": 7833.615,
+          "source": "event",
+          "cols": 83,
+          "rows": 40
+        },
+        {
+          "t_ms": 7842.605,
+          "source": "event",
+          "cols": 81,
+          "rows": 40
+        },
+        {
+          "t_ms": 7850.861,
+          "source": "event",
+          "cols": 79,
+          "rows": 39
+        },
+        {
+          "t_ms": 7859.315,
+          "source": "event",
+          "cols": 77,
+          "rows": 37
+        },
+        {
+          "t_ms": 7867.544,
+          "source": "event",
+          "cols": 74,
+          "rows": 35
+        },
+        {
+          "t_ms": 7875.389,
+          "source": "event",
+          "cols": 73,
+          "rows": 32
+        },
+        {
+          "t_ms": 7883.948,
+          "source": "event",
+          "cols": 72,
+          "rows": 30
+        },
+        {
+          "t_ms": 7891.798,
+          "source": "event",
+          "cols": 72,
+          "rows": 27
+        },
+        {
+          "t_ms": 7900.012,
+          "source": "event",
+          "cols": 72,
+          "rows": 25
+        },
+        {
+          "t_ms": 7908.365,
+          "source": "event",
+          "cols": 73,
+          "rows": 23
+        },
+        {
+          "t_ms": 7916.294,
+          "source": "event",
+          "cols": 74,
+          "rows": 21
+        },
+        {
+          "t_ms": 7924.964,
+          "source": "event",
+          "cols": 75,
+          "rows": 19
+        },
+        {
+          "t_ms": 7933.015,
+          "source": "event",
+          "cols": 77,
+          "rows": 18
+        },
+        {
+          "t_ms": 7941.133,
+          "source": "event",
+          "cols": 80,
+          "rows": 17
+        },
+        {
+          "t_ms": 7949.587,
+          "source": "event",
+          "cols": 82,
+          "rows": 16
+        },
+        {
+          "t_ms": 7958.211,
+          "source": "event",
+          "cols": 85,
+          "rows": 16
+        },
+        {
+          "t_ms": 7965.918,
+          "source": "event",
+          "cols": 88,
+          "rows": 16
+        },
+        {
+          "t_ms": 7974.469,
+          "source": "event",
+          "cols": 91,
+          "rows": 16
+        },
+        {
+          "t_ms": 7982.822,
+          "source": "event",
+          "cols": 93,
+          "rows": 17
+        },
+        {
+          "t_ms": 8000.841,
+          "source": "poll",
+          "cols": 93,
+          "rows": 17
+        },
+        {
+          "t_ms": 8354.859,
+          "source": "event",
+          "cols": 95,
+          "rows": 17
+        },
+        {
+          "t_ms": 8362.29,
+          "source": "event",
+          "cols": 96,
+          "rows": 18
+        },
+        {
+          "t_ms": 8366.34,
+          "source": "event",
+          "cols": 98,
+          "rows": 19
+        },
+        {
+          "t_ms": 8376.55,
+          "source": "event",
+          "cols": 100,
+          "rows": 20
+        },
+        {
+          "t_ms": 8385.146,
+          "source": "event",
+          "cols": 102,
+          "rows": 22
+        },
+        {
+          "t_ms": 8393.411,
+          "source": "event",
+          "cols": 104,
+          "rows": 24
+        },
+        {
+          "t_ms": 8400.482,
+          "source": "event",
+          "cols": 106,
+          "rows": 26
+        },
+        {
+          "t_ms": 8409.191,
+          "source": "event",
+          "cols": 107,
+          "rows": 27
+        },
+        {
+          "t_ms": 8417.627,
+          "source": "event",
+          "cols": 108,
+          "rows": 28
+        },
+        {
+          "t_ms": 8425.948,
+          "source": "event",
+          "cols": 108,
+          "rows": 29
+        },
+        {
+          "t_ms": 8434.432,
+          "source": "event",
+          "cols": 109,
+          "rows": 29
+        },
+        {
+          "t_ms": 8442.551,
+          "source": "event",
+          "cols": 109,
+          "rows": 30
+        },
+        {
+          "t_ms": 8450.935,
+          "source": "event",
+          "cols": 110,
+          "rows": 30
+        },
+        {
+          "t_ms": 8459.145,
+          "source": "event",
+          "cols": 110,
+          "rows": 31
+        },
+        {
+          "t_ms": 8501.051,
+          "source": "poll",
+          "cols": 110,
+          "rows": 31
+        }
+      ],
+      "frames": {
+        "count": 188,
+        "max_draw_ms": 1.124,
+        "max_flush_ms": 9.664,
+        "max_bytes": 7709,
+        "max_coalesced": 0
+      },
+      "exit": "signal",
+      "error": "terminated"
+    }
+  ],
   "screen_selftest_panic": {
     "started": "2026-09-26T15:31:31+09:00",
     "probe_revision": "9c27bcb26988+dirty",

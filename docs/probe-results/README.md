@@ -10,6 +10,9 @@
 | `width_novtinput` | Windows で VT の入力モードを付けずに測ろうとしたもの。カーソル位置の報告が届かず、3 件で止まった（VT2） |
 | `keys` | 案内に従って押したキーの記録。Unix はバイト列と読み取りの時刻、Windows は入力のレコード（VT の入力モードなし） |
 | `keys_vtinput` | Windows で VT の入力モード（`ENABLE_VIRTUAL_TERMINAL_INPUT`）を付けた記録（VT2） |
+| `modes` | フェーズ16。制御シーケンスが文字として表示されないか（`set_reset`）、自動改行を切れるか（`autowrap`）、DECRQM の応答（`queries`。Terminal.app では送らない）（VT5）。結合しうる 2 つの書記素クラスタを、位置を指定し直して・続けて・右から書いたときに端末が進めた桁（`joins`。VT7） |
+| `screen` | フェーズ16。確認用の画面を開発者が操作した記録の配列（起動するたびに後ろに加える）。キー（`keys`）、入力欄で確定・取り消した文字列（`inputs`）、大きさの変更のイベントと 250 ミリ秒ごとの見回りで見つけた変化（`resizes`。VT4）、フレームの時間、終わり方（`exit`）（VU1・VU4） |
+| `screen_selftest_*` | フェーズ16。キーを押さずに終わり方を試した記録（`panic`・`worker_panic`・`signal`。signal は Unix だけ）。端末が戻ったことは撮影で確かめた（T1） |
 
 `keys` の各手順の `hex` は、届いたものをつないだもの（Windows は、キーを押したレコードの文字を UTF-8 にしたもの）。
 `reads` が読み取りごとの生の記録で、`t_ms` はその手順の最初のキーの入力からの時間。
@@ -47,3 +50,14 @@
   conhost（VT の入力モードあり）の `alt-a` は、撮り直しても Ctrl＋A だったので、未確認とする。
 - Windows の VM は ARM 版の Windows 11 で、日本語の環境（コードページ 932）。x64 の PC や Windows 10 の conhost とは違いうる。
 - 描画のずれの広がり（filer §12.1）は、`width` の最後の画面を Claude が撮影して確かめた（画像はリポジトリに置いていない）。見えたことは filer §12.5 に書いた。
+
+## フェーズ16（2026-09-26）
+
+- `modes`・`screen_selftest_*` は Claude が起動した（Mac は `open -a`、Windows は `prlctl exec` で `wt.exe`・`conhost.exe`）。画面は Mac は computer use、Windows は `prlctl capture` で撮影した。
+  Windows Terminal の版は 1.24.11911.0 のまま（`Get-AppxPackage` で確かめた）。
+- `screen` は開発者が操作した（Mac は `.vmstage/mac-screen-*.sh`、Windows は `8-wt-screen.cmd`・`9-conhost-screen.cmd`）。
+  最初の回は、起動し直したときに記録が上書きされた（プローブの不具合。直して配列にした）。残っている最初の要素は、ウィンドウを閉じて終わった短い回
+  （Terminal.app は SIGHUP、Windows はコンソールを閉じる通知が SIGTERM として届いた）で、2 つめの要素が入力欄と大きさの変更を試した回。
+  キーの区別（Shift＋英字は大文字、Ctrl＋M は Enter、Ctrl＋I は Tab、conhost の Ctrl＋V は貼り付けにならずキー）と、IME の変換中の見え方は、開発者の報告による。
+- `modes` の `joins` の「右から書く」行は、a の場所を空白にしてから b を書き、その後で a を書いたもの。分かれて描かれたかは撮影で確かめた（結果は tui §9 の VT7）。
+
