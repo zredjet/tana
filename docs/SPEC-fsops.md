@@ -16,10 +16,12 @@
 - 名前の変更
 - ごみ箱へ移動
 - 完全削除
+- フォルダの作成（§11.4）
+- 一覧のための、リンクを辿らない調べ・列挙（§14.3）。並べ替え・隠しファイルの扱い・表示は UI 側の責務
 
 扱わないもの:
 
-- フォルダ内容の一覧・表示・並べ替え・検索（UI 側の責務）
+- フォルダ内容の一覧の表示・並べ替え・検索（UI 側の責務。調べ・列挙の基本操作だけを §14.3 で提供する）
 - 圧縮・展開（7-Zip を外部コマンドとして呼ぶ予定）
 - ACL・所有者の保持
 - ネットワークプロトコルの直接操作（マウント済みのドライブ・共有フォルダは通常のパスとして扱う）
@@ -103,6 +105,8 @@ fsops のすべての操作は、正常終了・失敗・キャンセルのど�
     entry.go                  エントリ種類の判定（共通部）
     entry_windows.go          属性・リパースタグによる判定
     entry_unix.go             //go:build unix
+    list.go                   一覧のための調べ・列挙（Lstat・ReadDir・Readlink。§14.3）
+    mkdir.go                  フォルダの作成（Mkdir。§11.4）
     rename.go                 排他リネーム・置換リネームの共通部
     rename_windows.go
     rename_darwin.go
@@ -336,10 +340,36 @@ const (
 	OutcomeTrashUnconfirmed // ごみ箱: 元の場所から消えたが、ごみ箱に入ったことを確かめられなかった（§12.1）
 )
 
-// ---- 名前の変更 ----
+// ---- 名前の変更とフォルダの作成 ----
 
 // Rename は path の名前を newName に変える。上書きは一切しない（§11.3）。
 func Rename(path, newName string) error
+
+// Mkdir は、フォルダ parent の中に、名前 name のフォルダを作る。上書きは一切しない（§11.4）。
+func Mkdir(parent, name string) error
+
+// ---- 調べる・列挙する（一覧のため。§14.3） ----
+
+// Entry は、リンクを辿らずに調べた 1 つのエントリ。
+type Entry struct {
+	Name     string    // 列挙で得た名前（バイト列をそのまま。I6。UI はこれからパスを作る）
+	Info     EntryInfo // 種類・サイズ・更新日時（§14.1 の判定）
+	Hidden   bool      // Windows: FILE_ATTRIBUTE_HIDDEN。macOS: UF_HIDDEN。名前の . による判断は UI が行う
+	ReadOnly bool      // Windows: ファイルの読み取り専用属性（フォルダの属性は保護を意味しないので見ない）。
+	                   // Unix: オーナーの書き込み権限がない。macOS はロック（UF_IMMUTABLE）も含む
+	Err      *OpError  // 列挙はできたが調べられなかった（Unix の fstatat の失敗）。Info・Hidden・ReadOnly は使えない
+}
+
+// Lstat は path をリンクを辿らずに調べる。
+func Lstat(path string) (Entry, error)
+
+// ReadDir は、フォルダ dir の中身をリンクを辿らずに列挙し、名前のバイト順で返す（§13.1 と同じ方法）。
+// dir 自体がリンク・ジャンクションなら、そのリンク先を列挙する（利用者がリンクに入った場合）。
+// AppleDouble の付属（§8.5）は含めない。
+func ReadDir(dir string) ([]Entry, error)
+
+// Readlink は、シンボリックリンク・ジャンクション path のリンク先を、書き換えずに返す（表示用）。
+func Readlink(path string) (string, error)
 
 // ---- 進捗 ----
 
@@ -755,6 +785,20 @@ const (
   一時ファイルと取り違えて消されないようにするため（`doc.go` の「途中で止まった場合」に書く）。
   2 回目が失敗したら途中名から元の名前へ戻し、戻せなければ途中名のパスを `OpError` の `Dest` に入れて返す。
 
+### 11.4 フォルダの作成（`Mkdir`）
+
+- `parent` は存在するフォルダの絶対パス。`\x00` を含む・絶対パスでないものは `KindInvalidRequest`。
+- `name` の検査は `Rename` と同じ（§11.3）。使えない名前は `KindInvalidName`。名前は変換しない（I6）。
+- `\\?\` 形式への変換を通す（§8.2）。途中の要素のリンクは辿る（利用者が表示しているフォルダの中に作るため）。
+- OS の不可分なフォルダの作成（Unix の `mkdir`、Windows の `CreateDirectoryW`）で作る。同じ名前のエントリがあれば（ファイル・リンク・
+  大文字小文字や正規化だけが違う名前を含む）、OS が失敗を返すので `KindExist` にする。上書きも、既存のものへの変更もしない（I1）。途中の状態は残らない（I3）。
+- パーミッションは `0o777` から umask を引いたもの（Unix）。属性は既定のまま（Windows）。
+- 分類は §17 のとおり。親フォルダがない場合は `KindNotFound`、読み取り専用のボリュームは `KindReadOnly`、
+  macOS で親フォルダがロックされている場合（`EPERM` かつ `UF_IMMUTABLE`）は `KindReadOnly`、それ以外の拒否は `KindPermission`。
+  Windows のフォルダの読み取り専用属性は保護を意味しないので、分類に使わない。
+- エラーの `Path` は作ろうとしたフォルダのパス、`OnDest` は真にする。使えない名前のときは、`Path` に `parent` を入れる（使えない名前からパスを作らない）。
+- 使用中の一時的な失敗のやり直し（§17.1）は行わない（ほかのプロセスが作るフォルダの中身を待つ理由がないため）。
+
 ---
 
 ## 12. ごみ箱
@@ -984,6 +1028,23 @@ const (
 - シンボリックリンクは一時名を使わず、最終名（自動リネームでは候補名）に直接作る。リンクの作成は不可分で、名前が存在すれば失敗するため、I1・I3 を満たす。
 - Windows では、リンクのファイル用・フォルダ用の区別をコピー元のリンクの属性（`FILE_ATTRIBUTE_DIRECTORY`）に合わせる。
   `os.Symlink` はリンク先を調べて区別を決めるため使わず、`CreateSymbolicLink` に `SYMBOLIC_LINK_FLAG_DIRECTORY`（必要な場合）と `SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE` を指定する。
+
+### 14.3 一覧のための調べ・列挙（`Lstat`・`ReadDir`・`Readlink`）
+
+UI の一覧（filer §6）が、操作と同じ種類の判定・パスの扱い・エラーの分類を使えるようにする。読むだけで、ファイルシステムを変更しない。
+
+- `Lstat` と `ReadDir` の種類の判定は §14.1 と同じ。`ReadDir` の中のエントリはリンクを辿らない（§13.1 と同じ方法で列挙する。
+  Windows の FileIdExtdDirectoryInfo と、使えないボリュームでの切り替え（V14）を含む）。
+- `ReadDir` は、`dir` 自体がリンク・ジャンクションなら、そのリンク先を列挙する（利用者がリンクのフォルダに入った場合。Finder・エクスプローラーと同じ）。
+  I4 は削除・移動の走査に関するもので、fsops の中の走査（§13.1）は今までどおり、フォルダでないもの（リンク・ジャンクションを含む）に入らない。
+  `dir` がフォルダでない（リンク先がファイルの場合を含む）ときは `KindNotFound`。
+- `ReadDir` は AppleDouble の付属（§8.5）を含めない。操作が付属を独立した項目として扱わないので、一覧でも選べないようにする。
+- `Hidden`・`ReadOnly` は、列挙で得た属性（Windows はファイル属性、Unix は `fstatat` の結果）から求める。
+  `Lstat` は、1 つのハンドル（Windows）・`fstatat`（Unix）で、列挙と同じ値を求める。
+- `Readlink` は、リンク先の文字列を書き換えずに返す（§14.2 と同じく、Windows の絶対パスのリンク先は `\??\C:\x` の形が `C:\x` の形になる）。
+  リンクでもジャンクションでもないときは、OS のエラーを §17 で分類したものを返す。
+- エラーはすべて `*OpError`（Op は `lstat`・`readdir`・`readlink`）で、§17 のとおりに分類する。パスは `\\?\` の付かない形で返す（§8.2）。
+- 列挙はできたが調べられなかったエントリ（Unix の `fstatat` の失敗）は、`Entry.Err` を付けて返す。1 件のために、フォルダ全体を失敗にしない。
 
 ---
 
