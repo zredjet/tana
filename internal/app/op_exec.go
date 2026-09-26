@@ -233,7 +233,7 @@ func (a *App) afterOperation(req fsops.Request, res *fsops.Result) []Cmd {
 			continue
 		}
 		for _, p := range a.panes {
-			if p.dir == filepath.Dir(it.Src) {
+			if filepath.Clean(p.dir) == filepath.Dir(it.Src) {
 				delete(p.marks, filepath.Base(it.Src))
 			}
 		}
@@ -253,7 +253,8 @@ func (a *App) afterOperation(req fsops.Request, res *fsops.Result) []Cmd {
 // affected は、フォルダ dir の表示が操作 req で変わりうるかを返す（コピー先・移動先、項目のあったフォルダ、移動した項目の中）。
 // 画面を読み直すかの判断だけに使う（fsops に渡すパスは作らない）。
 func affected(dir string, req fsops.Request) bool {
-	if dir == req.DestDir {
+	dir = filepath.Clean(dir)
+	if dir == filepath.Clean(req.DestDir) {
 		return true
 	}
 	for _, s := range req.Sources {
