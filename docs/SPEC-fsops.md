@@ -18,6 +18,7 @@
 - 完全削除
 - フォルダの作成（§11.4）
 - 一覧のための、リンクを辿らない調べ・列挙（§14.3）。並べ替え・隠しファイルの扱い・表示は UI 側の責務
+- プレビューのための、ファイルの先頭の読み取り（§14.4）。文字コードの判定・表示は UI 側の責務
 
 扱わないもの:
 
@@ -1046,6 +1047,28 @@ UI の一覧（filer §6）が、操作と同じ種類の判定・パスの扱�
   リンクでもジャンクションでもないときは、OS のエラーを §17 で分類したものを返す。
 - エラーはすべて `*OpError`（Op は `lstat`・`readdir`・`readlink`）で、§17 のとおりに分類する。パスは `\\?\` の付かない形で返す（§8.2）。
 - 列挙はできたが調べられなかったエントリ（Unix の `fstatat` の失敗）は、`Entry.Err` を付けて返す。1 件のために、フォルダ全体を失敗にしない。
+
+### 14.4 プレビューのための先頭の読み取り（`ReadHead`）
+
+UI のプレビュー（filer §6）のために、ファイルの先頭を読む。読むだけで、ファイルシステムを変更しない（アクセス日時は OS の設定によって更新されうる）。
+
+```go
+type Head struct {
+	Data     []byte // 先頭の max バイトまで
+	Size     int64  // ファイルの大きさ
+	NotLocal bool   // 中身が手元にない（読むと取得が始まる）ので読んでいない。Data は空
+}
+
+func ReadHead(path string, max int) (Head, error)
+```
+
+- リンク・ジャンクションは辿る（利用者がリンクのファイルを選んだ場合）。`\\?\` 形式への変換を通す（§8.2。Win32 の正規化で隣の別のファイルを読まない）。
+- 読むのは通常のファイルだけ。フォルダ・FIFO・デバイス・ソケットなどは開く前に調べて `KindUnsupportedType` にする。
+  Unix は `O_NONBLOCK` で開き（FIFO に入れ替わっても止まらない）、開いた後にもう一度、通常のファイルかを調べる。
+- 中身が手元にないファイルは開かずに `NotLocal` にする。
+  Windows は `FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS`・`FILE_ATTRIBUTE_RECALL_ON_OPEN`・`FILE_ATTRIBUTE_OFFLINE`、macOS は `SF_DATALESS`（iCloud など）。
+- Windows は、ほかのアプリの読み書き・削除を妨げないように、共有モードをすべて許して開く。
+- エラーはすべて `*OpError`（Op は `readhead`）で、§17 のとおりに分類する。`max` が負なら `KindInvalidRequest`。
 
 ---
 
