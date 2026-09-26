@@ -1,7 +1,7 @@
 // tuiprobe は、端末の文字幅とキー入力を実測するプログラム（docs/SPEC-filer.md §12.1、docs/SPEC-tui.md §9）。
 //
 //	tuiprobe width [-terminal 名前] [-o ファイル] [-hold 秒] [-output 方法] [-vtinput=true|false]
-//	tuiprobe keys  [-terminal 名前] [-o ファイル] [-vtinput] [-output 方法]
+//	tuiprobe keys  [-terminal 名前] [-o ファイル] [-vtinput] [-output 方法] [-steps ID,...]
 //
 // 結果は JSON のファイル（既定は <端末>-<日付>.json）に書く。ファイルがあれば、その回の節（width・keys など）だけを置き換える。
 // -output（writeconsole・utf8cp・writefile）と -vtinput は Windows だけで意味を持つ（VT1・VT2）。
@@ -26,8 +26,9 @@ import (
 const usageText = `使い方:
   tuiprobe width [-terminal 名前] [-o ファイル] [-hold 秒] [-output 方法] [-vtinput=true|false]
       文字列ごとに、端末が進めた桁数をカーソル位置の問い合わせで測る。最後に、ずれの広がりを見る画面を -hold 秒だけ出す。
-  tuiprobe keys [-terminal 名前] [-o ファイル] [-vtinput] [-output 方法]
+  tuiprobe keys [-terminal 名前] [-o ファイル] [-vtinput] [-output 方法] [-steps ID,...]
       案内に従って押したキーを、届いたまま（Unix はバイト列、Windows は入力のレコード）記録する。
+      -steps を付けると、その手順だけを記録し、ファイルにある同じ節の同じ手順を置き換える（撮り直し）。
 
 共通の引数:
   -terminal 名前         端末の名前（例: Terminal.app、iTerm2、Windows Terminal、conhost）。省略すると環境変数から推測する
@@ -45,10 +46,10 @@ func main() {
 
 // options は、サブコマンドに共通の引数。
 type options struct {
-	terminal, terminalVersion, font, note, out string
-	output                                     term.OutputMethod
-	vtInput                                    bool
-	hold                                       time.Duration
+	terminal, terminalVersion, font, note, out, steps string
+	output                                            term.OutputMethod
+	vtInput                                           bool
+	hold                                              time.Duration
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
@@ -73,12 +74,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&output, "output", term.OutputWriteConsoleW.String(), "")
 	fs.BoolVar(&o.vtInput, "vtinput", cmd == "width", "")
 	fs.DurationVar(&o.hold, "hold", 0, "")
+	fs.StringVar(&o.steps, "steps", "", "")
 	fs.Usage = func() { fmt.Fprint(stderr, usageText) }
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
 	var err error
 	if o.output, err = term.ParseOutputMethod(output); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	steps, err := selectSteps(o.steps)
+	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2
 	}
@@ -128,7 +135,19 @@ func run(args []string, stdout, stderr io.Writer) int {
 		result, runErr = runWidth(t, box, sec, o.hold)
 	case "keys":
 		name = keysSectionName(o)
-		result, runErr = runKeys(t, box, sec, defaultKeyTiming)
+		var res *keysSection
+		res, runErr = runKeys(t, box, sec, steps, defaultKeyTiming)
+		result = res
+		if o.steps != "" {
+			// 撮り直し: ファイルにある記録の同じ手順だけを置き換える。
+			var old keysSection
+			if ok, err := loadSection(o.out, name, &old); err != nil {
+				runErr = errors.Join(runErr, err)
+				result = nil
+			} else if ok {
+				result = mergeKeys(&old, res)
+			}
+		}
 	}
 	restoreErr := t.Restore()
 

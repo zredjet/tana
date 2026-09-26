@@ -75,6 +75,29 @@ func saveSection(path string, h fileHeader, name string, v any) error {
 	return os.WriteFile(path, buf.Bytes(), 0o644)
 }
 
+// loadSection は、path の JSON の節 name を v に読む。ファイルか節がなければ false を返す。
+func loadSection(path, name string, v any) (bool, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		return false, fmt.Errorf("%s: %w", path, err)
+	}
+	raw, ok := m[name]
+	if !ok {
+		return false, nil
+	}
+	if err := json.Unmarshal(raw, v); err != nil {
+		return false, fmt.Errorf("%s: %s: %w", path, name, err)
+	}
+	return true, nil
+}
+
 // revision は、ビルドしたときのコミット（変更があれば +dirty を付ける）を返す。
 func revision() string {
 	info, ok := debug.ReadBuildInfo()

@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -16,8 +17,10 @@ import (
 // 案内の文には、幅が曖昧な文字（矢印など）を使わない（filer §9.1）。
 type keyStep struct {
 	id, label, hint string
-	long            bool // IME・貼り付け: 最後の入力から記録を終えるまでの時間を長くする
-	plainPaste      bool // bracketed paste を無効にして記録する（VT6）
+	// text は IME・貼り付けの手順。文字が届くまで記録を始めず（IME の切り替えのキーで始めない）、
+	// 最初の文字を待つ時間と、最後の入力から記録を終えるまでの時間を長くする。
+	text       bool
+	plainPaste bool // bracketed paste を無効にして記録する（VT6）
 }
 
 // pasteText は、貼り付けの手順で貼り付けてもらう文字列（改行・タブ・日本語・サロゲートの対になる絵文字を含む）。
@@ -60,9 +63,9 @@ var keySteps = []keyStep{
 	{id: "ctrl-i", label: "Ctrl＋I"},
 	{id: "ctrl-m", label: "Ctrl＋M"},
 	{id: "ctrl-bracket", label: "Ctrl＋[（左角かっこ）"},
-	{id: "ime", label: "日本語入力に切り替えて「にほんご」と打ち、「日本語」に変換して確定する", hint: "確定したら何も押さずに待つ。記録が終わったら英数の入力に戻す", long: true},
-	{id: "paste-bracketed", label: "クリップボードの文字列を貼り付ける", hint: pasteHint, long: true},
-	{id: "paste-plain", label: "もう一度、同じ文字列を貼り付ける（bracketed paste を無効にした状態）", hint: pasteHint, long: true, plainPaste: true},
+	{id: "ime", label: "日本語入力に切り替えて「にほんご」と打ち、「日本語」に変換して確定する", hint: "確定したら何も押さずに待つ。記録が終わったら英数の入力に戻す", text: true},
+	{id: "paste-bracketed", label: "クリップボードの文字列を貼り付ける", hint: pasteHint, text: true},
+	{id: "paste-plain", label: "もう一度、同じ文字列を貼り付ける（bracketed paste を無効にした状態）", hint: pasteHint, text: true, plainPaste: true},
 }
 
 const (
@@ -72,13 +75,14 @@ const (
 
 // keyTiming は、記録の区切りの時間。
 type keyTiming struct {
-	quiet     time.Duration // 最後の入力からこの時間だけ何も届かなければ、記録を終える
-	longQuiet time.Duration // 同じ（IME・貼り付け）
-	noInput   time.Duration // 案内を出してからこの時間だけ何も届かなければ、「届かない」とする
-	drain     time.Duration // 確かめのキーの後に捨てる時間（Windows のキーを離したレコード）
+	quiet       time.Duration // 最後の入力からこの時間だけ何も届かなければ、記録を終える
+	textQuiet   time.Duration // 同じ（IME・貼り付け）
+	noInput     time.Duration // 案内を出してからこの時間だけ何も届かなければ、「届かない」とする
+	textNoInput time.Duration // 同じ（IME・貼り付け）
+	drain       time.Duration // 確かめのキーの後に捨てる時間（Windows のキーを離したレコード）
 }
 
-var defaultKeyTiming = keyTiming{quiet: time.Second, longQuiet: 3 * time.Second, noInput: 15 * time.Second, drain: 300 * time.Millisecond}
+var defaultKeyTiming = keyTiming{quiet: time.Second, textQuiet: 3 * time.Second, noInput: 15 * time.Second, textNoInput: 60 * time.Second, drain: 300 * time.Millisecond}
 
 // recordJSON は、Windows の入力のレコード 1 つの記録。
 type recordJSON struct {
@@ -111,27 +115,32 @@ type stepResult struct {
 	WaitMs         float64    `json:"wait_ms,omitempty"` // 案内を出してから最初の入力まで
 	Hex            string     `json:"hex"`               // 入力をつないだもの（Windows は、キーを押したレコードの文字を UTF-8 にしたもの）
 	Reads          []readJSON `json:"reads"`
+	RecordedAt     string     `json:"recorded_at"`
 }
 
 type keysSection struct {
 	sectionHeader
 	PasteText   string       `json:"paste_text"`
 	QuietMs     int64        `json:"quiet_ms"`
-	LongQuietMs int64        `json:"long_quiet_ms"`
+	TextQuietMs int64        `json:"text_quiet_ms"`
 	Steps       []stepResult `json:"steps"`
-	Completed   bool         `json:"completed"`
+	Completed   bool         `json:"completed"` // keySteps のすべての手順の記録がある
 }
 
-// runKeys は、keySteps を順に案内して、届いた入力を記録する。途中で終わっても、そこまでの結果を返す。
-func runKeys(c console, box *inbox, sec sectionHeader, tm keyTiming) (*keysSection, error) {
-	res := &keysSection{sectionHeader: sec, PasteText: pasteText, QuietMs: tm.quiet.Milliseconds(), LongQuietMs: tm.longQuiet.Milliseconds()}
+// runKeys は、steps を順に案内して、届いた入力を記録する。途中で終わっても、そこまでの結果を返す。
+func runKeys(c console, box *inbox, sec sectionHeader, steps []keyStep, tm keyTiming) (*keysSection, error) {
+	res := &keysSection{sectionHeader: sec, PasteText: pasteText, QuietMs: tm.quiet.Milliseconds(), TextQuietMs: tm.textQuiet.Milliseconds()}
+	// 起動したときに届くもの（Windows の大きさの変更のレコードなど）を、最初の手順に混ぜない。
+	if err := drain(box, tm.drain); err != nil {
+		return res, err
+	}
 	attempts := 1
-	for i := 0; i < len(keySteps); {
-		st := keySteps[i]
+	for i := 0; i < len(steps); {
+		st := steps[i]
 		if err := c.SetBracketedPaste(!st.plainPaste); err != nil {
 			return res, err
 		}
-		if _, err := c.Write([]byte(stepScreen(i, st, attempts))); err != nil {
+		if _, err := c.Write([]byte(stepScreen(i, len(steps), st, attempts))); err != nil {
 			return res, err
 		}
 		rec, err := recordStep(box, st, tm)
@@ -161,31 +170,104 @@ func runKeys(c console, box *inbox, sec sectionHeader, tm keyTiming) (*keysSecti
 			return res, nil
 		}
 	}
-	res.Completed = true
+	res.Completed = coversAllSteps(res.Steps)
 	return res, nil
 }
 
-// recordStep は、最初の入力を tm.noInput まで待ち、その後は tm.quiet の間なにも届かなくなるまで記録する。
+// selectSteps は、コンマで区切った ID の手順を keySteps の順に返す（空なら keySteps のすべて）。
+func selectSteps(ids string) ([]keyStep, error) {
+	if ids == "" {
+		return keySteps, nil
+	}
+	want := map[string]bool{}
+	for id := range strings.SplitSeq(ids, ",") {
+		id = strings.TrimSpace(id)
+		if !slices.ContainsFunc(keySteps, func(st keyStep) bool { return st.id == id }) {
+			return nil, fmt.Errorf("unknown step %q", id)
+		}
+		want[id] = true
+	}
+	var out []keyStep
+	for _, st := range keySteps {
+		if want[st.id] {
+			out = append(out, st)
+		}
+	}
+	return out, nil
+}
+
+// mergeKeys は、以前の記録 old の手順を、撮り直した記録 redo の同じ ID の手順で置き換える（-steps）。
+// 節の項目（端末の情報など）は old のものを残す。手順は keySteps の順に並べる。
+func mergeKeys(old, redo *keysSection) *keysSection {
+	merged := *old
+	byID := map[string]stepResult{}
+	for _, s := range old.Steps {
+		byID[s.ID] = s
+	}
+	for _, s := range redo.Steps {
+		byID[s.ID] = s
+	}
+	merged.Steps = nil
+	for _, st := range keySteps {
+		if s, ok := byID[st.id]; ok {
+			merged.Steps = append(merged.Steps, s)
+		}
+	}
+	merged.Completed = coversAllSteps(merged.Steps)
+	return &merged
+}
+
+// coversAllSteps は、steps に keySteps のすべての手順があるかを返す。
+func coversAllSteps(steps []stepResult) bool {
+	for _, st := range keySteps {
+		if !slices.ContainsFunc(steps, func(s stepResult) bool { return s.ID == st.id }) {
+			return false
+		}
+	}
+	return true
+}
+
+// recordStep は、キーの入力（Unix のバイト列、Windows のキーのレコード）を tm.noInput まで待ち、
+// その後は tm.quiet の間なにも届かなくなるまで記録する。
+// キーの入力より前に届いたほかのレコード（大きさの変更、フォーカス）も記録するが、それだけでは記録を始めない。
+// t_ms は最初のキーの入力からの時間（キーの入力が届かなければ、案内を出した時からの時間）。
 func recordStep(box *inbox, st keyStep, tm keyTiming) (stepResult, error) {
-	res := stepResult{ID: st.id, Label: st.label, Result: "no_input", Reads: []readJSON{}}
 	start := time.Now()
-	quiet := tm.quiet
-	if st.long {
-		quiet = tm.longQuiet
+	res := stepResult{ID: st.id, Label: st.label, Result: "no_input", Reads: []readJSON{}, RecordedAt: start.Format(time.RFC3339)}
+	quiet, noInput, starts := tm.quiet, tm.noInput, hasKey
+	if st.text {
+		quiet, noInput, starts = tm.textQuiet, tm.textNoInput, hasText
 	}
-	x, err := box.next(tm.noInput)
-	if errors.Is(err, errTimeout) {
-		return res, nil
-	}
-	if err != nil {
-		return res, err
-	}
-	res.Result = "received"
-	first := x.Time
-	res.WaitMs = ms(first.Sub(start))
-	var all []byte
+	var got []term.Input
+	var first time.Time
 	for {
-		r := readJSON{TMs: ms(x.Time.Sub(first))}
+		wait := quiet
+		if first.IsZero() {
+			if wait = time.Until(start.Add(noInput)); wait <= 0 {
+				break
+			}
+		}
+		x, err := box.next(wait)
+		if errors.Is(err, errTimeout) {
+			break
+		}
+		if err != nil {
+			return res, err
+		}
+		got = append(got, x)
+		if first.IsZero() && starts(x) {
+			first = x.Time
+			res.Result = "received"
+			res.WaitMs = ms(first.Sub(start))
+		}
+	}
+	base := first
+	if base.IsZero() {
+		base = start
+	}
+	var all []byte
+	for _, x := range got {
+		r := readJSON{TMs: ms(x.Time.Sub(base))}
 		if x.Records == nil {
 			r.Hex = hex.EncodeToString(x.Bytes)
 		}
@@ -194,16 +276,25 @@ func recordStep(box *inbox, st keyStep, tm keyTiming) (stepResult, error) {
 		}
 		res.Reads = append(res.Reads, r)
 		all = append(all, inputBytes(x)...)
-		x, err = box.next(quiet)
-		if errors.Is(err, errTimeout) {
-			break
-		}
-		if err != nil {
-			return res, err
-		}
 	}
 	res.Hex = hex.EncodeToString(all)
 	return res, nil
+}
+
+// hasText は、x が文字（Unix のバイト列か、Windows のキーを押したレコードの文字）を含むかを返す。
+func hasText(x term.Input) bool { return len(inputBytes(x)) > 0 }
+
+// hasKey は、x がキーの入力（Unix のバイト列か、Windows のキーのレコード）を含むかを返す。
+func hasKey(x term.Input) bool {
+	if len(x.Bytes) > 0 {
+		return true
+	}
+	for _, r := range x.Records {
+		if r.Kind == term.KeyRecord {
+			return true
+		}
+	}
+	return false
 }
 
 func ms(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }
@@ -271,10 +362,10 @@ func drain(box *inbox, d time.Duration) error {
 	return nil
 }
 
-func stepScreen(i int, st keyStep, attempt int) string {
+func stepScreen(i, n int, st keyStep, attempt int) string {
 	var b strings.Builder
 	b.WriteString("\x1b[2J\x1b[H")
-	fmt.Fprintf(&b, "tuiprobe keys  %d/%d  %s", i+1, len(keySteps), st.id)
+	fmt.Fprintf(&b, "tuiprobe keys  %d/%d  %s", i+1, n, st.id)
 	if attempt > 1 {
 		fmt.Fprintf(&b, "（%d 回目）", attempt)
 	}
@@ -317,7 +408,7 @@ func summaryScreen(rec stepResult) string {
 				lines++
 			}
 		}
-		if rec.Hex != "" && rec.Reads[0].Records != nil {
+		if rec.Hex != "" && slices.ContainsFunc(rec.Reads, func(r readJSON) bool { return r.Records != nil }) {
 			raw, _ := hex.DecodeString(rec.Hex)
 			fmt.Fprintf(&b, "    文字: %s\r\n", visible(raw))
 		}

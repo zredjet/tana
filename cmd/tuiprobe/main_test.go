@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -195,7 +196,7 @@ func TestInputBytes(t *testing.T) {
 	}
 }
 
-var testTiming = keyTiming{quiet: 30 * time.Millisecond, longQuiet: 60 * time.Millisecond, noInput: 100 * time.Millisecond, drain: 10 * time.Millisecond}
+var testTiming = keyTiming{quiet: 30 * time.Millisecond, textQuiet: 60 * time.Millisecond, noInput: 100 * time.Millisecond, textNoInput: 150 * time.Millisecond, drain: 10 * time.Millisecond}
 
 // TestRunKeys は、記録・やり直し・届かない場合・中断の流れを確かめる。
 func TestRunKeys(t *testing.T) {
@@ -225,7 +226,7 @@ func TestRunKeys(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 		f.send([]byte("q"))
 	}()
-	res, err := runKeys(f, f.box(), sectionHeader{}, testTiming)
+	res, err := runKeys(f, f.box(), sectionHeader{}, keySteps, testTiming)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,5 +341,110 @@ func TestSectionNames(t *testing.T) {
 	}
 	if !slices.Contains([]string{"width", "width_utf8cp_novtinput"}, widthSectionName(options{output: term.OutputUTF8CodePage})) {
 		t.Errorf("widthSectionName(utf8cp, no vt input) = %q", widthSectionName(options{output: term.OutputUTF8CodePage}))
+	}
+}
+
+// TestRecordStepIgnoresNonKeyRecords は、キーの入力より前に届いた大きさの変更のレコードでは記録を始めず、
+// キーが届かなければ「届かない」とすることを確かめる（Windows で起動直後に届く WINDOW_BUFFER_SIZE_EVENT）。
+func TestRecordStepIgnoresNonKeyRecords(t *testing.T) {
+	t.Parallel()
+	ch := make(chan term.Input, 10)
+	box := &inbox{ctx: context.Background(), in: ch}
+	size := term.Input{Time: time.Now(), Records: []term.Record{{Kind: term.WindowSizeRecord, Width: 120, Height: 30}}}
+	ch <- size
+	rec, err := recordStep(box, keySteps[0], testTiming)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Result != "no_input" || len(rec.Reads) != 1 || rec.Reads[0].Records[0].Kind != "size" {
+		t.Errorf("size record only: %+v", rec)
+	}
+
+	ch <- size
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		ch <- term.Input{Time: time.Now(), Records: []term.Record{{Kind: term.KeyRecord, KeyDown: true, RepeatCount: 1, VirtualKey: 0x1b, Char: 0x1b}}}
+	}()
+	rec, err = recordStep(box, keySteps[0], testTiming)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Result != "received" || len(rec.Reads) != 2 || rec.Reads[0].TMs >= 0 || rec.Reads[1].TMs != 0 || rec.Hex != "1b" || rec.WaitMs <= 0 {
+		t.Errorf("size then key: %+v", rec)
+	}
+}
+
+// TestRecordStepTextStartsOnText は、IME の手順が、IME の切り替えのキー（文字のないレコード）では記録を始めず、
+// 確定した文字が届いてから始めることを確かめる。
+func TestRecordStepTextStartsOnText(t *testing.T) {
+	t.Parallel()
+	ime := keySteps[slices.IndexFunc(keySteps, func(st keyStep) bool { return st.id == "ime" })]
+	ch := make(chan term.Input, 10)
+	box := &inbox{ctx: context.Background(), in: ch}
+	key := func(down bool, vk, c uint16) term.Record {
+		return term.Record{Kind: term.KeyRecord, KeyDown: down, RepeatCount: 1, VirtualKey: vk, Char: c}
+	}
+	go func() {
+		ch <- term.Input{Time: time.Now(), Records: []term.Record{key(false, 0xf0, 0)}} // IME の切り替え
+		time.Sleep(100 * time.Millisecond)                                              // textQuiet より長く変換している
+		ch <- term.Input{Time: time.Now(), Records: []term.Record{key(true, 0xe7, 0x65e5), key(true, 0xe7, 0x672c), key(true, 0xe7, 0x8a9e)}}
+	}()
+	rec, err := recordStep(box, ime, testTiming)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Result != "received" || string(mustHex(t, rec.Hex)) != "日本語" || len(rec.Reads) != 2 || rec.Reads[0].TMs >= 0 {
+		t.Errorf("ime step = %+v", rec)
+	}
+}
+
+func mustHex(t *testing.T, h string) []byte {
+	t.Helper()
+	b, err := hex.DecodeString(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func TestSelectAndMergeSteps(t *testing.T) {
+	t.Parallel()
+	if got, err := selectSteps(""); err != nil || len(got) != len(keySteps) {
+		t.Errorf("selectSteps(\"\") = %d steps, %v", len(got), err)
+	}
+	got, err := selectSteps("ime, esc")
+	if err != nil || len(got) != 2 || got[0].id != "esc" || got[1].id != "ime" {
+		t.Errorf("selectSteps(ime, esc) = %+v, %v", got, err)
+	}
+	if _, err := selectSteps("esc,bogus"); err == nil {
+		t.Error("selectSteps(bogus): err = nil")
+	}
+
+	var old keysSection
+	old.Cols = 120
+	for _, st := range keySteps {
+		old.Steps = append(old.Steps, stepResult{ID: st.id, Result: "received", Hex: "00"})
+	}
+	old.Steps = slices.DeleteFunc(old.Steps, func(s stepResult) bool { return s.ID == "f11" })
+	redo := &keysSection{Steps: []stepResult{{ID: "ime", Result: "received", Hex: "e697a5"}, {ID: "f11", Result: "no_input"}}}
+	m := mergeKeys(&old, redo)
+	if m.Cols != 120 || !m.Completed || len(m.Steps) != len(keySteps) {
+		t.Fatalf("merged: cols %d completed %v steps %d", m.Cols, m.Completed, len(m.Steps))
+	}
+	for i, st := range keySteps {
+		s := m.Steps[i]
+		want := "00"
+		switch st.id {
+		case "ime":
+			want = "e697a5"
+		case "f11":
+			want = ""
+		}
+		if s.ID != st.id || s.Hex != want {
+			t.Errorf("merged step %d = %+v, want id %s hex %q", i, s, st.id, want)
+		}
+	}
+	if old.Completed || coversAllSteps(old.Steps) {
+		t.Error("old section without f11 counted as complete")
 	}
 }
