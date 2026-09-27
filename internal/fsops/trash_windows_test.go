@@ -318,6 +318,21 @@ func TestTrashPreDeleteAbortHelper(t *testing.T) {
 	t.Logf("HELPER-RESULT: %v outcome=%v err=%v", kind, res.Outcome, res.Err)
 }
 
+// TestHresultKind は、ごみ箱へ入れる呼び出しの HRESULT の分類を確かめる（§12.2、§17）。
+// 確認ダイアログで「いいえ」を選ぶと、PerformOperations は COPYENGINE_E_USER_CANCELLED（0x80270000）を返す（フェーズ21の VM で確認）。
+func TestHresultKind(t *testing.T) {
+	t.Parallel()
+	for hr, want := range map[uint32]Kind{
+		0x80270000: KindCanceled,   // COPYENGINE_E_USER_CANCELLED
+		0x80070005: KindPermission, // E_ACCESSDENIED（FACILITY_WIN32 の ERROR_ACCESS_DENIED）
+		0x80004005: KindUnknown,    // E_FAIL
+	} {
+		if got := hresultKind(hr); got != want {
+			t.Errorf("hresultKind(%#x) = %v, want %v", hr, got, want)
+		}
+	}
+}
+
 // TestHresultFailed は、HRESULT の成否を SUCCEEDED/FAILED（最上位ビット）で判定することを確かめる。
 // ごみ箱へ入れるのに成功しても、PostDeleteItem は S_OK ではなく COPYENGINE_S_DONT_PROCESS_CHILDREN（0x00270008）を渡す
 // （2026-09-24 の CI の V18 のログで確認）。S_OK 以外を失敗とすると、ごみ箱に入った項目を失敗と報告してしまう。

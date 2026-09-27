@@ -165,6 +165,18 @@ type hresultError uint32
 
 func (e hresultError) Error() string { return "HRESULT 0x" + strconv.FormatUint(uint64(e), 16) }
 
+// copyengineEUserCancelled は、利用者が確認ダイアログで「いいえ」を選んだときの HRESULT（COPYENGINE_E_USER_CANCELLED。
+// FOF_WANTNUKEWARNING のダイアログで確かめた。フェーズ21）。
+const copyengineEUserCancelled = 0x80270000
+
+// hresultKind は、ごみ箱へ入れる呼び出しの HRESULT を分類する（§12.2、§17）。利用者の取り消しは KindCanceled にする。
+func hresultKind(hr uint32) Kind {
+	if hr == copyengineEUserCancelled {
+		return KindCanceled
+	}
+	return classify(hresultErr(hr), classifyOpts{})
+}
+
 // hresultFailed は、HRESULT が失敗（FAILED。最上位ビットが 1）かを返す。
 // 成功を表す値は S_OK だけではない。ごみ箱へ入れるのに成功しても、PostDeleteItem は COPYENGINE_S_DONT_PROCESS_CHILDREN
 // （0x00270008）を渡す（V18 のログ）。
@@ -251,13 +263,11 @@ func trashLocked(src string) (string, error) {
 		// ごみ箱に入らず完全に削除されたとみられる（最大サイズを超えた項目。V18）。Done にしない（§12.2 の手順 5、I5）。
 		return fail(KindTrashUnavailable, nil)
 	case hresultFailed(perform):
-		err := hresultErr(perform)
-		return failAfter(classify(err, classifyOpts{}), err)
+		return failAfter(hresultKind(perform), hresultErr(perform)) // 確認ダイアログの「いいえ」は KindCanceled
 	case aborted != 0 || !sink.posted:
 		return failAfter(KindUnknown, hresultErr(eAbort))
 	case sink.failedHR != 0:
-		err := hresultErr(sink.failedHR)
-		return failAfter(classify(err, classifyOpts{}), err)
+		return failAfter(hresultKind(sink.failedHR), hresultErr(sink.failedHR))
 	}
 	return sink.trashed, nil
 }

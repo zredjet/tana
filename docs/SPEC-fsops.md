@@ -467,6 +467,8 @@ const (
   書き込みを伴わない項目（`MethodRename`）は続ける。
   ファイルの大きさの上限を超えた（`KindFileTooLarge`。§10.6）場合は、そのファイルだけを失敗にし、残りは続ける。
 - キャンセルされたら、処理中の項目を安全に中断し（§16）、残りを `OutcomeSkipped`（`KindCanceled`）にして `StatusCanceled` で返す。
+  残りを打ち切るのは `ctx` のキャンセルだけ。項目の結果が `KindCanceled` でも、`ctx` がキャンセルされていなければ（Windows のごみ箱の確認ダイアログで
+  利用者が「いいえ」を選んだ。§12.2）、その項目だけのことなので、残りの項目は続ける（フェーズ21で決めた）。
 
 ### 7.3 計画後の変化
 
@@ -507,6 +509,7 @@ const (
 | `Details` に Err 付きのエントリがある | Partial | 最初のエラー |
 | 移動元の削除に一部失敗した、一部を保護した、または削除中にキャンセルされた（§13.3） | CopiedSourceKept | 最初のエラー |
 | ごみ箱へ移す操作の後、元の項目が元の場所になく、ごみ箱の中の項目も確かめられない（§12.1） | TrashUnconfirmed | ごみ箱へ移す呼び出しのエラー（なければ `KindUnknown`） |
+| Windows のごみ箱の確認ダイアログで、利用者が「いいえ」を選んだ（§12.2。項目は元の場所に残る） | Failed | `KindCanceled` |
 
 - Partial・CopiedSourceKept が表す状態は、`ItemResult.Method`（実際に使った方式）で決まる。UI は方式に合わせて利用者に伝える。
 
@@ -854,6 +857,9 @@ const (
   2. `CoCreateInstance(CLSID_FileOperation)` で `IFileOperation` を作り、`SetOperationFlags` に `FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI | FOFX_RECYCLEONDELETE | FOF_WANTNUKEWARNING` を設定する。
      `FOF_WANTNUKEWARNING` は、事前確認が見落とした場合の安全装置（黙って完全削除される代わりに、Windows の確認ダイアログが出る。V18）。
      ダイアログは `Execute` を止め、`ctx` のキャンセルでは閉じられない。fsops のテストはダイアログが出る状況を作らない（事前確認で `KindTrashUnavailable` になる状況だけを使う）。
+     ダイアログの既定のボタンは「はい」（完全に削除する）で、コンソールのプロセスから出ても端末の前面に出る（filer の VU5。フェーズ20・21）。
+     利用者が「いいえ」を選ぶと、`PerformOperations` は `COPYENGINE_E_USER_CANCELLED`（`0x80270000`）を返す。これは `KindCanceled` にする
+     （項目は元の場所に残るので `OutcomeFailed`。§12.1 の規則 1。`ctx` のキャンセルではないので、残りの項目は続ける。§7.2）。フェーズ21で決めた。
   3. `SHCreateItemFromParsingName` でパスから `IShellItem` を作り、自前の `IFileOperationProgressSink` を付けて `DeleteItem` する。1 回の操作で 1 項目だけ渡す。
   4. 進捗通知の `PreDeleteItem` で、フラグに `TSF_DELETE_RECYCLE_IF_POSSIBLE`（`0x80`）がなければ（ごみ箱に入らず完全削除になる場合）、`E_ABORT` を返して中止させ、その項目を `KindTrashUnavailable` にする（I5。V18 で、中止した項目が残ることを確認済み）。
   5. `PerformOperations` の後、`GetAnyOperationsAborted` と `PostDeleteItem` の結果で成否を決める。`PostDeleteItem` で渡されるごみ箱内の項目からパスが取れれば `TrashedPath` に入れる。
@@ -1221,7 +1227,8 @@ type OpError struct {
   - `EPERM`（リンク作成以外）→ 読み取り専用なら ReadOnly、そうでなければ Permission
   - `ELOOP`（`O_NOFOLLOW` 以外。リンクの循環など）→ Unknown
   - `ERROR_ACCESS_DENIED`・`EPERM` で、対象が読み取り専用でない場合 → Permission
-- `ctx.Err()`（`context.Canceled`、`context.DeadlineExceeded`）は `KindCanceled`。
+- `ctx.Err()`（`context.Canceled`、`context.DeadlineExceeded`）は `KindCanceled`。Windows のごみ箱の確認ダイアログで利用者が取り消した場合
+  （`COPYENGINE_E_USER_CANCELLED`。§12.2）も `KindCanceled`。
 - `ERROR_ACCESS_DENIED` は原因が複数あるため、対象の属性を調べて ReadOnly か Permission かを決める。
 - Windows で、削除（確かめて開くハンドル）と、エントリを調べる操作（`Lstat`）が `ERROR_ACCESS_DENIED` で失敗し、直後の NT ステータス
   （`RtlGetLastNtStatus`。失敗した呼び出しと同じ OS スレッドで読む）が `STATUS_DELETE_PENDING` なら、`KindLocked` にする（V26）。

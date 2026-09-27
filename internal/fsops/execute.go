@@ -85,8 +85,10 @@ func (ex *executor) run() *Result {
 		if r.Err != nil && r.Err.Kind == KindNoSpace && r.Outcome != OutcomeSkipped {
 			noSpace = true // 以後の書き込みを伴う項目は Skipped（§7.2）
 		}
-		if r.Err != nil && r.Err.Kind == KindCanceled {
-			canceled = true // 処理中の項目でキャンセルを検出した
+		if r.Err != nil && r.Err.Kind == KindCanceled && ex.ctx.Err() != nil {
+			// 処理中の項目で ctx のキャンセルを検出した。ctx がキャンセルされていない KindCanceled（Windows のごみ箱の
+			// 確認ダイアログで利用者が「いいえ」を選んだ。§12.2）は、その項目だけのことなので、残りの項目は続ける。
+			canceled = true
 		}
 		res.Items[i] = r
 		ex.progress.report(true) // 項目の区切りでは必ず報告する（§16）

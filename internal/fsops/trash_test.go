@@ -165,3 +165,43 @@ func TestTrashPrecheckKinds(t *testing.T) {
 		}
 	}
 }
+
+// TestTrashUserCancelOneItem は、ごみ箱へ入れる呼び出しが KindCanceled を返しても（Windows の確認ダイアログで「いいえ」を選んだ。§12.2）、
+// ctx が中止されていなければ、その項目だけが失敗になり、残りの項目は処理を続けることを確かめる（§7.2。フェーズ21で決めた）。
+// 残りを止めるのは ctx の中止だけ。ごみ箱の呼び出しはフックで差し替える（本物のごみ箱に触れない）。
+func TestTrashUserCancelOneItem(t *testing.T) {
+	t.Parallel()
+	root := testfs.TempDir(t)
+	testfs.Build(t, root, testfs.Tree{"a.txt": testfs.File("a"), "b.txt": testfs.File("b")})
+	plan := mustPlan(t, Request{Op: OpTrash, Sources: []string{filepath.Join(root, "a.txt"), filepath.Join(root, "b.txt")}})
+	for i := range plan.items {
+		plan.items[i].Err = nil // ごみ箱のないビルドでも、実行の流れを確かめる（計画の時点の事前確認の結果を消す）
+	}
+	var calls []string
+	h := &testHooks{bypassTrashPrecheck: true, trashCall: func(src string, _ EntryInfo) (string, error) {
+		calls = append(calls, filepath.Base(src))
+		kind := KindLocked
+		if len(calls) == 1 {
+			kind = KindCanceled // 確認ダイアログで「いいえ」。項目は元の場所に残る
+		}
+		return "", &OpError{Op: "trash", Path: src, Kind: kind}
+	}}
+	res := execPlan(t, context.Background(), plan, ExecOptions{hooks: h})
+	if len(calls) != 2 {
+		t.Fatalf("trash called for %q, want both items (a cancel in the dialog must not cancel the rest)", calls)
+	}
+	if it := res.Items[0]; it.Outcome != OutcomeFailed || it.Err == nil || it.Err.Kind != KindCanceled {
+		t.Errorf("a.txt: %v %v, want Failed with KindCanceled", it.Outcome, it.Err)
+	}
+	if it := res.Items[1]; it.Outcome != OutcomeFailed || it.Err == nil || it.Err.Kind != KindLocked {
+		t.Errorf("b.txt: %v %v, want Failed with KindLocked (processed, not skipped)", it.Outcome, it.Err)
+	}
+	if res.Status != StatusCompletedWithErrors {
+		t.Errorf("status %v, want StatusCompletedWithErrors (not canceled)", res.Status)
+	}
+	for _, n := range []string{"a.txt", "b.txt"} {
+		if testfs.ReadFile(t, filepath.Join(root, n)) == "" {
+			t.Errorf("%s changed", n)
+		}
+	}
+}
