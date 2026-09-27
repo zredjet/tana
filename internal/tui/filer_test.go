@@ -694,6 +694,54 @@ func TestColumnsHiddenCurrent(t *testing.T) {
 }
 
 // TestMessageClearedByAnyKey は、割り当てのないキー・v・Ctrl+L・貼り付けでも、メッセージ行を消すことを確かめる（filer §5.1「次のキー入力で消す」）。
+// TestPlanningKeys は、計画を作っている間のキーを確かめる。v は表示形式を切り替える。
+// メッセージ行は、「計画を作成中」を出している間だけ消さない（filer §5.1）。
+func TestPlanningKeys(t *testing.T) {
+	t.Parallel()
+	sc, _ := newOpScene(t, fsops.OpCopy, nil, nil)
+	sc.keys(key(keys.KeyEsc), key(keys.KeyTab)) // 確認をやめ、左のペインへ
+	sc.moveTo("メモ.txt")
+	sc.hold = true
+	sc.keys(key(keys.KeyEnter)) // 開く前の確認
+	held := sc.held
+	sc.held = nil
+	for _, c := range held {
+		sc.run(sc.a.Update(c.Run())) // 開く処理が held に入る
+	}
+	if len(sc.held) != 1 {
+		t.Fatalf("held %d, want the open command", len(sc.held))
+	}
+	open := sc.held[0]
+	sc.held = nil
+	sc.keys(key(keys.KeyTab), char('p')) // 計画を作り始める（計画の処理は held に残る）
+	if sc.a.Screen() != app.ScreenBrowse || sc.a.Planning() || len(sc.held) != 1 {
+		t.Fatalf("screen %v planning %v held %d, want planning (not slow yet)", sc.a.Screen(), sc.a.Planning(), len(sc.held))
+	}
+	view := sc.f.view
+	sc.run(sc.a.Update(open.Run())) // 計画を作っている間に届いた結果
+	sc.keys(char('x'))
+	if text, _ := sc.a.Message(); text != "" {
+		t.Errorf("before the planning notice: message %q remains", text)
+	}
+	sc.keys(char('v'))
+	if sc.f.view == view {
+		t.Error("v did not switch the view while planning")
+	}
+	sc.fire() // 0.2 秒が過ぎた（「計画を作成中」を出す）
+	if !sc.a.Planning() {
+		t.Fatal("the planning notice is not shown")
+	}
+	sc.run(sc.a.Update(open.Run()))
+	want, _ := sc.a.Message()
+	sc.keys(char('x'), char('v'))
+	if text, _ := sc.a.Message(); text != want || want == "" {
+		t.Errorf("during the planning notice: message %q, want %q kept", text, want)
+	}
+	if sc.f.view != view {
+		t.Error("v did not switch the view back while the planning notice is shown")
+	}
+}
+
 func TestMessageClearedByAnyKey(t *testing.T) {
 	t.Parallel()
 	sc := newScene(t)

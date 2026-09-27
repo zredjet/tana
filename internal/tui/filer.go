@@ -90,24 +90,43 @@ func (f *Filer) key(ev keys.Event) []app.Cmd {
 	if !f.app.Planning() {
 		f.app.ClearMessage()
 	}
-	if ev.Kind == keys.KeyEvent && ev.Key == keys.KeyRune && ev.Mod == keys.ModCtrl && ev.Rune == 'l' {
-		f.redraw = true // どの画面でも、端末に何かが残ったときの描き直し
+	act, loc, ok := f.resolve(ev)
+	switch {
+	case !ok:
 		return nil
-	}
-	if s := f.app.Screen(); s != app.ScreenBrowse {
-		if act, ok := opAction(s, ev); ok {
-			return f.app.Do(act)
-		}
+	case loc == localRedraw:
+		f.redraw = true
 		return nil
-	}
-	if f.app.Dialog() == app.DialogNone && ev.Kind == keys.KeyEvent && ev.Key == keys.KeyRune && ev.Mod == 0 && ev.Rune == 'v' {
+	case loc == localView:
 		f.view = 1 - f.view
 		return f.app.SetNeeds(f.needs())
 	}
-	if act, ok := f.action(ev); ok {
-		return f.app.Do(act)
+	return f.app.Do(act)
+}
+
+// local は、tui の中だけで行う操作（app に渡さない）。
+type local int
+
+const (
+	localNone   local = iota
+	localRedraw       // Ctrl+L。どの画面でも、端末に何かが残ったときの描き直し
+	localView         // v。表示形式の切り替え
+)
+
+// resolve は、キー入力を app の操作か、tui の中だけで行う操作に変える。どちらでもなければ ok が偽。状態は変えない。
+func (f *Filer) resolve(ev keys.Event) (act app.Action, loc local, ok bool) {
+	if ev.Kind == keys.KeyEvent && ev.Key == keys.KeyRune && ev.Mod == keys.ModCtrl && ev.Rune == 'l' {
+		return app.Action{}, localRedraw, true
 	}
-	return nil
+	if s := f.app.Screen(); s != app.ScreenBrowse {
+		act, ok := opAction(s, ev)
+		return act, localNone, ok
+	}
+	if f.app.Dialog() == app.DialogNone && ev.Kind == keys.KeyEvent && ev.Key == keys.KeyRune && ev.Mod == 0 && ev.Rune == 'v' {
+		return app.Action{}, localView, true
+	}
+	act, ok = f.action(ev)
+	return act, localNone, ok
 }
 
 // action は、キー入力を app の操作に変える（filer §7。割り当ては仮）。対応しないキーは false。
