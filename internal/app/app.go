@@ -164,7 +164,7 @@ func (a *App) Drawn() { a.frames++ }
 
 // ---- 操作 ----
 
-// ActionKind は、利用者の操作の種類。キーとの対応は tui が決める（filer §7・§15）。
+// ActionKind は、利用者の操作の種類。キーとの対応は keymap の表が決める（filer §4・§7）。
 type ActionKind int
 
 const (
