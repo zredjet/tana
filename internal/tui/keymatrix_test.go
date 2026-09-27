@@ -10,6 +10,7 @@ import (
 
 	"github.com/zredjet/tana/internal/app"
 	"github.com/zredjet/tana/internal/fsops"
+	"github.com/zredjet/tana/internal/keymap"
 	"github.com/zredjet/tana/internal/keys"
 )
 
@@ -142,9 +143,9 @@ func cell(t *testing.T, sc *scene, ev keys.Event) string {
 	switch {
 	case !ok:
 		return "-"
-	case loc == localRedraw:
+	case loc == keymap.LocalRedraw:
 		return "local:redraw"
-	case loc == localView:
+	case loc == keymap.LocalView:
 		return "local:view"
 	}
 	name, known := actionNames[act.Kind]

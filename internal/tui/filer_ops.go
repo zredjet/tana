@@ -7,7 +7,6 @@ import (
 
 	"github.com/zredjet/tana/internal/app"
 	"github.com/zredjet/tana/internal/fsops"
-	"github.com/zredjet/tana/internal/keys"
 	"github.com/zredjet/tana/internal/listing"
 	"github.com/zredjet/tana/internal/msg"
 	"github.com/zredjet/tana/internal/screen"
@@ -16,106 +15,6 @@ import (
 )
 
 // ファイル操作の画面（確認・衝突の決定・進捗・結果・完全削除の確認。filer §8.2〜§8.6）のキーと描画。
-
-// opAction は、ファイル操作の画面のキーを app の操作に変える。貼り付けはコマンドとして解釈しない（tui §5。filer U2）。
-func opAction(s app.Screen, ev keys.Event) (app.Action, bool) {
-	act := func(k app.ActionKind) (app.Action, bool) { return app.Action{Kind: k}, true }
-	if ev.Kind != keys.KeyEvent {
-		return app.Action{}, false
-	}
-	nav := func() (app.Action, bool) {
-		switch {
-		case ev.Key == keys.KeyUp || ev.Key == keys.KeyRune && ev.Mod == 0 && ev.Rune == 'k':
-			return act(app.ActUp)
-		case ev.Key == keys.KeyDown || ev.Key == keys.KeyRune && ev.Mod == 0 && ev.Rune == 'j':
-			return act(app.ActDown)
-		case ev.Key == keys.KeyPageUp:
-			return act(app.ActPageUp)
-		case ev.Key == keys.KeyPageDown:
-			return act(app.ActPageDown)
-		case ev.Key == keys.KeyHome:
-			return act(app.ActHome)
-		case ev.Key == keys.KeyEnd:
-			return act(app.ActEnd)
-		}
-		return app.Action{}, false
-	}
-	switch {
-	case ev.Key == keys.KeyEnter && ev.Mod == 0 && s != app.ScreenProgress:
-		return act(app.ActSubmit)
-	case ev.Key == keys.KeyEsc:
-		return act(app.ActCancel)
-	case ev.Key == keys.KeyRune && ev.Mod == keys.ModCtrl && ev.Rune == 'c' && s == app.ScreenProgress:
-		return act(app.ActCancel) // 実行中の Ctrl+C は Esc と同じ（filer §7）
-	}
-	if a, ok := nav(); ok && (s == app.ScreenConflicts || s == app.ScreenResult) {
-		return a, true
-	}
-	if ev.Key != keys.KeyRune || ev.Mod&^keys.ModShift != 0 {
-		return app.Action{}, false
-	}
-	decide := func(k app.ActionKind, d fsops.Decision) (app.Action, bool) {
-		return app.Action{Kind: k, Decision: d}, true
-	}
-	switch s {
-	case app.ScreenConfirm:
-		if ev.Rune == 'D' {
-			return act(app.ActPurge) // ごみ箱: すべての項目がごみ箱に入らないとき、完全削除の確認へ
-		}
-	case app.ScreenDelete:
-		// 確定は y だけ（Enter はやめる。filer §8.6。U2）。
-		switch ev.Rune {
-		case 'y':
-			return act(app.ActYes)
-		case 'n':
-			return act(app.ActNo)
-		}
-	case app.ScreenConflicts:
-		switch ev.Rune {
-		case 's':
-			return decide(app.ActDecide, fsops.DecisionSkip)
-		case 'o':
-			return decide(app.ActDecide, fsops.DecisionOverwrite)
-		case 'r':
-			return decide(app.ActDecide, fsops.DecisionAutoRename)
-		case 'm':
-			return decide(app.ActDecide, fsops.DecisionMerge)
-		case 'S':
-			return decide(app.ActDecideAll, fsops.DecisionSkip)
-		case 'O':
-			return decide(app.ActDecideAll, fsops.DecisionOverwrite)
-		case 'R':
-			return decide(app.ActDecideAll, fsops.DecisionAutoRename)
-		case 'M':
-			return decide(app.ActDecideAll, fsops.DecisionMerge)
-		case 'N':
-			return act(app.ActNewerOnly)
-		case ' ':
-			return act(app.ActToggle)
-		case 'u':
-			return act(app.ActUnsetOnly)
-		}
-	case app.ScreenProgress:
-		switch ev.Rune {
-		case 'y':
-			return act(app.ActYes)
-		case 'n':
-			return act(app.ActNo)
-		case 'Q':
-			return act(app.ActForceQuit)
-		}
-	case app.ScreenResult:
-		switch ev.Rune {
-		case ' ':
-			return act(app.ActToggle)
-		case 'e':
-			return act(app.ActEnglish)
-		case 'D':
-			return act(app.ActPurge) // ごみ箱に入らなかった項目の完全削除の確認へ
-		}
-	}
-	return app.Action{}, false
-}
 
 var (
 	styleDim     = screen.Style{Attr: screen.AttrDim}

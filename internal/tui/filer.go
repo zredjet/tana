@@ -7,6 +7,7 @@ import (
 
 	"github.com/zredjet/tana/internal/app"
 	"github.com/zredjet/tana/internal/fsops"
+	"github.com/zredjet/tana/internal/keymap"
 	"github.com/zredjet/tana/internal/keys"
 	"github.com/zredjet/tana/internal/listing"
 	"github.com/zredjet/tana/internal/msg"
@@ -29,7 +30,8 @@ const (
 type Filer struct {
 	app    *app.App
 	view   view
-	redraw bool // 次に描くとき、画面全体を端末に書き直す（Ctrl+L）
+	redraw bool            // 次に描くとき、画面全体を端末に書き直す（Ctrl+L）
+	keys   keymap.Resolver // キーの表（filer §4）。零値のまま使う
 }
 
 // view は表示形式。
@@ -84,205 +86,35 @@ func (f *Filer) Handle(l *Loop, ev Event) bool {
 	return !f.app.Quit()
 }
 
-// key は、キー入力を処理する。v は表示形式を切り替え（Filer が持つ）、ほかは app の操作に変える。
-// どのキー入力でも、メッセージ行を消す（操作にならないキーでも。filer §5.1）。
+// key は、キー入力を処理する。キーは keymap の表で、フォーカスの道筋に沿って操作に解決する（filer §4）。
+// v は表示形式を切り替え（Filer が持つ）、Ctrl+L は画面全体を描き直す。ほかは app の操作に変える。
+// どのキー入力でも、メッセージ行を消す（操作にならないキーでも。「計画を作成中」の間は除く。filer §5.1）。
 func (f *Filer) key(ev keys.Event) []app.Cmd {
-	if !f.app.Planning() {
-		f.app.ClearMessage()
-	}
+	f.app.KeyPressed()
 	act, loc, ok := f.resolve(ev)
 	switch {
 	case !ok:
 		return nil
-	case loc == localRedraw:
+	case loc == keymap.LocalRedraw:
 		f.redraw = true
 		return nil
-	case loc == localView:
+	case loc == keymap.LocalView:
 		f.view = 1 - f.view
 		return f.app.SetNeeds(f.needs())
 	}
 	return f.app.Do(act)
 }
 
-// local は、tui の中だけで行う操作（app に渡さない）。
-type local int
-
-const (
-	localNone   local = iota
-	localRedraw       // Ctrl+L。どの画面でも、端末に何かが残ったときの描き直し
-	localView         // v。表示形式の切り替え
-)
-
 // resolve は、キー入力を app の操作か、tui の中だけで行う操作に変える。どちらでもなければ ok が偽。状態は変えない。
-func (f *Filer) resolve(ev keys.Event) (act app.Action, loc local, ok bool) {
-	if ev.Kind == keys.KeyEvent && ev.Key == keys.KeyRune && ev.Mod == keys.ModCtrl && ev.Rune == 'l' {
-		return app.Action{}, localRedraw, true
-	}
-	if s := f.app.Screen(); s != app.ScreenBrowse {
-		act, ok := opAction(s, ev)
-		return act, localNone, ok
-	}
-	if f.app.Dialog() == app.DialogNone && ev.Kind == keys.KeyEvent && ev.Key == keys.KeyRune && ev.Mod == 0 && ev.Rune == 'v' {
-		return app.Action{}, localView, true
-	}
-	act, ok = f.action(ev)
-	return act, localNone, ok
+func (f *Filer) resolve(ev keys.Event) (act app.Action, loc keymap.Local, ok bool) {
+	r := f.keys.Lookup(f.app.FocusPath(), ev)
+	return r.Action, r.Local, r.OK
 }
 
-// action は、キー入力を app の操作に変える（filer §7。割り当ては仮）。対応しないキーは false。
+// action は、キー入力を app の操作に変える（テスト用。tui の中だけの操作は false）。
 func (f *Filer) action(ev keys.Event) (app.Action, bool) {
-	act := func(k app.ActionKind) (app.Action, bool) { return app.Action{Kind: k}, true }
-	switch f.app.Dialog() {
-	case app.DialogHelp:
-		if ev.Kind == keys.KeyEvent {
-			return act(app.ActCancel)
-		}
-		return app.Action{}, false
-	case app.DialogExec:
-		// 確定は y だけ（Enter では確定しない）。貼り付けは受け付けない（filer U2）。
-		switch {
-		case ev.Kind != keys.KeyEvent:
-		case ev.Key == keys.KeyRune && ev.Mod == 0 && ev.Rune == 'y':
-			return act(app.ActYes)
-		case ev.Key == keys.KeyRune && ev.Mod == 0 && ev.Rune == 'n':
-			return act(app.ActNo)
-		case ev.Key == keys.KeyEsc:
-			return act(app.ActCancel)
-		}
-		return app.Action{}, false
-	case app.DialogPath:
-		return editAction(ev, true)
-	case app.DialogRename, app.DialogNewDir:
-		return editAction(ev, false)
-	}
-	if ev.Kind != keys.KeyEvent { // 貼り付けはコマンドとして解釈しない（tui §5）
-		return app.Action{}, false
-	}
-	if ev.Key == keys.KeyRune {
-		if ev.Mod == keys.ModCtrl && ev.Rune == 'r' {
-			return act(app.ActReload)
-		}
-		if ev.Mod&^keys.ModShift != 0 {
-			return app.Action{}, false
-		}
-		switch ev.Rune {
-		case 'k':
-			return act(app.ActUp)
-		case 'j':
-			return act(app.ActDown)
-		case 'h':
-			return act(app.ActParent)
-		case 'l':
-			return act(app.ActEnterDir)
-		case ' ':
-			return act(app.ActMark)
-		case 'a':
-			return act(app.ActMarkAll)
-		case '.':
-			return act(app.ActToggleHidden)
-		case 'g':
-			return act(app.ActGoPath)
-		case '=':
-			return act(app.ActSyncOther)
-		case '?':
-			return act(app.ActHelp)
-		case 'q':
-			return act(app.ActQuit)
-		case 'y':
-			return act(app.ActYank)
-		case 'p':
-			return act(app.ActPasteCopy)
-		case 'P':
-			return act(app.ActPasteMove)
-		case 'L':
-			return act(app.ActLastResult)
-		case 'd':
-			return act(app.ActTrash)
-		case 'D':
-			return act(app.ActPurge)
-		case 'r':
-			return act(app.ActRename)
-		case 'n':
-			return act(app.ActNewDir)
-		}
-		return app.Action{}, false
-	}
-	if ev.Mod != 0 {
-		return app.Action{}, false
-	}
-	switch ev.Key {
-	case keys.KeyUp:
-		return act(app.ActUp)
-	case keys.KeyDown:
-		return act(app.ActDown)
-	case keys.KeyPageUp:
-		return act(app.ActPageUp)
-	case keys.KeyPageDown:
-		return act(app.ActPageDown)
-	case keys.KeyHome:
-		return act(app.ActHome)
-	case keys.KeyEnd:
-		return act(app.ActEnd)
-	case keys.KeyEnter:
-		return act(app.ActEnter)
-	case keys.KeyBackspace:
-		return act(app.ActParent)
-	case keys.KeyTab:
-		return act(app.ActNextPane)
-	case keys.KeyLeft: // どちらの表示形式でも h と同じ（ペインの切り替えは Tab だけ。filer §7）
-		return act(app.ActParent)
-	case keys.KeyRight: // l と同じ
-		return act(app.ActEnterDir)
-	case keys.KeyEsc:
-		return act(app.ActCancel)
-	}
-	return app.Action{}, false
-}
-
-// editAction は、入力欄（パス、名前）のキーを操作に変える。貼り付けは入力欄に入れるだけで、コマンドとして解釈しない（tui §5。filer U2）。
-// firstLine なら貼り付けの最初の行だけを入れる（パスの入力）。そうでなければ改行を除いて入れる（名前。lineedit が取り除く。filer §8.7）。
-// 貼り付けの改行は、端末によって LF・CRLF・CR（Terminal.app・iTerm2 は LF を CR にして送る）のどれでも届く。
-func editAction(ev keys.Event, firstLine bool) (app.Action, bool) {
-	act := func(k app.ActionKind) (app.Action, bool) { return app.Action{Kind: k}, true }
-	switch ev.Kind {
-	case keys.PasteEvent:
-		line := ev.Text
-		if i := strings.IndexAny(line, "\r\n"); i >= 0 && firstLine {
-			line = line[:i]
-		}
-		return app.Action{Kind: app.ActInsert, Text: line}, true
-	case keys.KeyEvent:
-	default:
-		return app.Action{}, false
-	}
-	switch ev.Key {
-	case keys.KeyRune:
-		switch {
-		case ev.Mod == keys.ModCtrl && ev.Rune == 'a':
-			return act(app.ActLineHome)
-		case ev.Mod == keys.ModCtrl && ev.Rune == 'e':
-			return act(app.ActLineEnd)
-		case ev.Mod&^keys.ModShift == 0:
-			return app.Action{Kind: app.ActInsert, Text: string(ev.Rune)}, true
-		}
-	case keys.KeyBackspace:
-		return act(app.ActBackspace)
-	case keys.KeyDelete:
-		return act(app.ActDelete)
-	case keys.KeyLeft:
-		return act(app.ActLeft)
-	case keys.KeyRight:
-		return act(app.ActRight)
-	case keys.KeyHome:
-		return act(app.ActLineHome)
-	case keys.KeyEnd:
-		return act(app.ActLineEnd)
-	case keys.KeyEnter:
-		return act(app.ActSubmit)
-	case keys.KeyEsc:
-		return act(app.ActCancel)
-	}
-	return app.Action{}, false
+	act, loc, ok := f.resolve(ev)
+	return act, ok && loc == keymap.LocalNone
 }
 
 // ---- 描画 ----
