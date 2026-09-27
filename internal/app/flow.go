@@ -106,14 +106,15 @@ func (a *App) flowOf(id int) *flow {
 	return nil
 }
 
-// cancelOwned は、持ち主 id の作業を止める（filer §4。止める入口は 1 つ）。v0.1 では、流れの ctx だけ。
+// cancelOwned は、持ち主 id の作業を止める（filer §4。止める入口は 1 つ。removeOwned が呼ぶ）。v0.1 では、流れの ctx だけ。
 func (a *App) cancelOwned(id int) {
 	if f := a.flowOf(id); f != nil && f.cancel != nil {
 		f.cancel()
 	}
 }
 
-// dropFlow は、流れを終える。流れの部品をすべて下ろし、作業を止める（実行が戻った後に止めても何も起きない）。
+// dropFlow は、流れを終える。流れの部品をすべて下ろし、作業（計画・実行の ctx）を止める（実行が戻った後に止めても何も起きない）。
+// removeOwned が流れを ID で引いて止めるので、流れの並びから除くのはその後にする。
 func (a *App) dropFlow(f *flow) {
 	a.removeOwned(f.id)
 	a.flows = slices.DeleteFunc(a.flows, func(x *flow) bool { return x == f })
@@ -255,18 +256,20 @@ func (a *App) opTick(m opTick) []Cmd {
 }
 
 // Abort は、実行中のファイル操作を中止し、Execute が戻るのを最大 wait だけ待つ（シグナルで終わるとき。filer §10）。
+// どの流れも先に止めてから待つ（戻らない流れがあっても、ほかの流れを止め損ねないように）。
 func (a *App) Abort(wait time.Duration) {
+	for _, f := range a.flows {
+		a.cancelOwned(f.id)
+	}
 	deadline := time.After(wait)
 	for _, f := range a.flows {
-		if f.cancel != nil {
-			f.cancel()
+		if f.exec == nil {
+			continue
 		}
-		if f.exec != nil {
-			select {
-			case <-f.exec.done:
-			case <-deadline:
-				return
-			}
+		select {
+		case <-f.exec.done:
+		case <-deadline:
+			return
 		}
 	}
 }

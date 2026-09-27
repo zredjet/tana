@@ -458,7 +458,11 @@ func (p *fakePlan) Execute(ctx context.Context, opt fsops.ExecOptions) (*fsops.R
 
 // fakeHarness は、計画を偽物 fp にした harness（pane 0 は root、pane 1 は root/sub）。now は時計。
 func fakeHarness(t *testing.T, fp *fakePlan, now *time.Time) *harness {
-	root := tree(t)
+	return fakeHarnessAt(t, tree(t), fp, now)
+}
+
+// fakeHarnessAt は、フォルダ root（tree で作ったもの）で作る fakeHarness。
+func fakeHarnessAt(t *testing.T, root string, fp *fakePlan, now *time.Time) *harness {
 	return newHarness(t, func(c *Config) {
 		c.NewPlan = func(_ context.Context, req fsops.Request) (Plan, error) {
 			fp.req = req

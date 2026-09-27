@@ -112,10 +112,9 @@ func (a *App) Yanked() int { return len(a.yanked) }
 
 // ---- 覚える・貼り付け ----
 
-// targets は、操作中のペインの対象（マークした項目。なければカーソル行の項目。.. は除く。filer §7）のパスを返す。
+// selected は、ペインの操作の対象（マークした項目。なければカーソル行の項目。.. は除く。filer §7）のパスを返す。
 // パスは列挙で得た名前から作る（U4）。
-func (a *App) targets() []string {
-	p := a.cur()
+func (p *Pane) selected() []string {
 	var out []string
 	for _, i := range p.visible {
 		if it := p.items[i]; !it.Parent && p.Marked(it.Name) {
@@ -130,24 +129,23 @@ func (a *App) targets() []string {
 	return out
 }
 
-// yank は、対象を覚える（filer §7）。
-func (a *App) yank() {
-	t := a.targets()
+// yank は、ペイン p の対象を覚える（filer §7）。
+func (a *App) yank(p *Pane) {
+	t := p.selected()
 	if len(t) == 0 {
 		a.setMessage(msg.NothingToYank, false)
 		return
 	}
-	a.yanked, a.yankDir = t, a.cur().dir
+	a.yanked, a.yankDir = t, p.dir
 	a.setMessage(msg.Yanked(len(t)), false)
 }
 
-// paste は、覚えた項目を、操作中のペインのフォルダへコピー・移動する計画を作り始める（filer §8.1）。
-func (a *App) paste(op fsops.OpKind) []Cmd {
+// paste は、覚えた項目を、ペイン p のフォルダへコピー・移動する計画を作り始める（filer §8.1）。
+func (a *App) paste(p *Pane, op fsops.OpKind) []Cmd {
 	if len(a.yanked) == 0 {
 		a.setMessage(msg.NothingYanked, false)
 		return nil
 	}
-	p := a.cur()
 	if !p.loaded {
 		return nil
 	}

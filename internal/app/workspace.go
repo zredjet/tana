@@ -88,7 +88,7 @@ func (pc paneComp) commands() commandTable {
 	return t
 }
 
-// paneAction は、ペイン p の一覧を使う操作を行う。
+// paneAction は、ペイン p の一覧を使う操作を行う。どの操作も p に対して行う（操作中のペインを引き直さない）。
 func (a *App) paneAction(p *Pane, act Action) []Cmd {
 	switch act.Kind {
 	case ActUp:
@@ -104,9 +104,9 @@ func (a *App) paneAction(p *Pane, act Action) []Cmd {
 	case ActEnd:
 		p.move(len(p.visible))
 	case ActEnter:
-		return a.enter()
+		return a.enter(p)
 	case ActEnterDir:
-		return a.enterDir()
+		return a.enterDir(p)
 	case ActParent:
 		return a.parent(p)
 	case ActMark:
@@ -117,25 +117,25 @@ func (a *App) paneAction(p *Pane, act Action) []Cmd {
 	case ActMarkAll:
 		p.markAll()
 	case ActGoPath:
-		a.push(&pathComp{edit: lineedit.New(p.dir, len(p.dir))}, 0)
+		a.push(&pathComp{edit: lineedit.New(p.dir, len(p.dir)), pane: p.id}, 0)
 	case ActSyncOther:
 		if len(a.panes) > 1 && p.loaded {
 			return a.load(a.panes[(a.Active()+1)%len(a.panes)], p.dir, loadGo, "")
 		}
 	case ActYank:
-		a.yank()
+		a.yank(p)
 	case ActPasteCopy:
-		return a.paste(fsops.OpCopy)
+		return a.paste(p, fsops.OpCopy)
 	case ActPasteMove:
-		return a.paste(fsops.OpMove)
+		return a.paste(p, fsops.OpMove)
 	case ActTrash:
-		return a.trash()
+		return a.trash(p)
 	case ActPurge:
-		return a.purge()
+		return a.purge(p)
 	case ActRename:
-		a.rename()
+		a.rename(p)
 	case ActNewDir:
-		a.newDir()
+		a.newDir(p)
 	}
 	return nil
 }

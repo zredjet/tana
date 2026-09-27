@@ -20,7 +20,13 @@ import (
 func trashHarness(t *testing.T, fp *fakePlan, ops *[]fsops.OpKind, mod func(*Config)) (*harness, string) {
 	t.Helper()
 	root := tree(t)
-	h := newHarness(t, func(c *Config) {
+	return trashHarnessAt(t, root, fp, ops, mod), root
+}
+
+// trashHarnessAt は、フォルダ root（tree で作ったもの）で作る trashHarness。
+func trashHarnessAt(t *testing.T, root string, fp *fakePlan, ops *[]fsops.OpKind, mod func(*Config)) *harness {
+	t.Helper()
+	return newHarness(t, func(c *Config) {
 		c.NewPlan = func(ctx context.Context, req fsops.Request) (Plan, error) {
 			*ops = append(*ops, req.Op)
 			if req.Op == fsops.OpTrash {
@@ -33,7 +39,6 @@ func trashHarness(t *testing.T, fp *fakePlan, ops *[]fsops.OpKind, mod func(*Con
 			mod(c)
 		}
 	}, root, filepath.Join(root, "sub"))
-	return h, root
 }
 
 // trashResult は、Sources の名前ごとの結果を返す Execute（偽物）。results にない名前は完了にする。

@@ -481,9 +481,8 @@ func (a *App) loaded(m loaded) []Cmd {
 	return a.linkTarget(p)
 }
 
-// enter は、カーソル行の項目に入る・開く（filer §7）。
-func (a *App) enter() []Cmd {
-	p := a.cur()
+// enter は、ペイン p のカーソル行の項目に入る・開く（filer §7）。
+func (a *App) enter(p *Pane) []Cmd {
 	it, ok := p.current()
 	if !ok {
 		return nil
@@ -506,9 +505,8 @@ func (a *App) enter() []Cmd {
 	return a.startOpen(path, it.Name)
 }
 
-// enterDir は、カーソル行がフォルダ（リンク・ジャンクションのフォルダ、.. を含む）なら入る。ファイルでは何もしない（l・→）。
-func (a *App) enterDir() []Cmd {
-	p := a.cur()
+// enterDir は、ペイン p のカーソル行がフォルダ（リンク・ジャンクションのフォルダ、.. を含む）なら入る。ファイルでは何もしない（l・→）。
+func (a *App) enterDir(p *Pane) []Cmd {
 	it, ok := p.current()
 	if !ok || it.Err != nil {
 		return nil
@@ -646,6 +644,7 @@ func (PathView) Role() Role { return RolePath }
 type pathComp struct {
 	base
 	edit *lineedit.Editor
+	pane int // 始めたペインの ID（移動するペイン）
 }
 
 func (*pathComp) role() Role       { return RolePath }
@@ -656,10 +655,10 @@ func (c *pathComp) commands() commandTable {
 		ActSubmit: {GateFree, func(a *App, _ Action) []Cmd {
 			text := c.edit.Text()
 			a.pop()
-			if strings.TrimSpace(text) == "" {
+			p := a.paneOf(c.pane)
+			if p == nil || strings.TrimSpace(text) == "" {
 				return nil
 			}
-			p := a.cur()
 			return a.load(p, Resolve(p.dir, text), loadGo, "")
 		}},
 	})

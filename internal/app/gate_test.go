@@ -47,12 +47,7 @@ func gateCopy(t *testing.T, root string, hold bool) *harness {
 	t.Helper()
 	fp := &fakePlan{}
 	fp.exec = gateFailed(fp)
-	h := newHarness(t, func(c *Config) {
-		c.NewPlan = func(_ context.Context, req fsops.Request) (Plan, error) {
-			fp.req = req
-			return fp, nil
-		}
-	}, root, filepath.Join(root, "sub"))
+	h := fakeHarnessAt(t, root, fp, nil)
 	fp.conflicts = gateConflicts(root)
 	h.moveTo("a.txt")
 	h.do(ActMark) // a.txt（カーソルは b.txt へ）
@@ -62,20 +57,6 @@ func gateCopy(t *testing.T, root string, hold bool) *harness {
 	h.hold = hold
 	h.do(ActPasteCopy)
 	return h
-}
-
-// gateTrash は、フォルダ root で、ごみ箱の計画だけを偽物 fp にした harness（完全削除は本物の fsops。trashHarness と同じ）。
-func gateTrash(t *testing.T, root string, fp *fakePlan) *harness {
-	t.Helper()
-	return newHarness(t, func(c *Config) {
-		c.NewPlan = func(ctx context.Context, req fsops.Request) (Plan, error) {
-			if req.Op == fsops.OpTrash {
-				fp.req = req
-				return fp, nil
-			}
-			return newFsopsPlan(ctx, req)
-		}
-	}, root, filepath.Join(root, "sub"))
 }
 
 // gateStates は、門を確かめる画面と、その作り方。root は tree で作ったフォルダ。
@@ -153,14 +134,14 @@ var gateStates = []struct {
 	{"result-trash", ScreenResult, DialogNone, func(t *testing.T, root string) *harness {
 		fp := &fakePlan{}
 		fp.exec = trashResult(fp, map[string]fsops.ItemResult{"a.txt": {Outcome: fsops.OutcomeFailed, Err: unavailable()}})
-		h := gateTrash(t, root, fp)
+		h := trashHarnessAt(t, root, fp, new([]fsops.OpKind), nil)
 		h.moveTo("a.txt")
 		h.do(ActTrash)
 		h.confirm()
 		return h
 	}},
 	{"delete", ScreenDelete, DialogNone, func(t *testing.T, root string) *harness {
-		h := gateTrash(t, root, &fakePlan{})
+		h := trashHarnessAt(t, root, &fakePlan{}, new([]fsops.OpKind), nil)
 		h.moveTo("a.txt")
 		h.do(ActPurge)
 		return h

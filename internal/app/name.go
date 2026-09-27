@@ -73,9 +73,8 @@ func (c *nameComp) commands() commandTable {
 	})
 }
 
-// rename は、カーソル行の項目の名前の変更を始める。入力欄の初期値は今の名前（列挙で得たバイト列）で、カーソルは拡張子の前に置く（filer §8.7）。
-func (a *App) rename() {
-	p := a.cur()
+// rename は、ペイン p のカーソル行の項目の名前の変更を始める。入力欄の初期値は今の名前（列挙で得たバイト列）で、カーソルは拡張子の前に置く（filer §8.7）。
+func (a *App) rename(p *Pane) {
 	it, ok := p.current()
 	if !ok || it.Parent {
 		return
@@ -87,9 +86,8 @@ func (a *App) rename() {
 	a.push(&nameComp{rename: true, edit: lineedit.New(it.Name, cursor), path: p.pathOf(it), name: it.Name, dir: p.dir, pane: p.id}, 0)
 }
 
-// newDir は、操作中のペインのフォルダに新しいフォルダを作る入力欄を開く。
-func (a *App) newDir() {
-	p := a.cur()
+// newDir は、ペイン p のフォルダに新しいフォルダを作る入力欄を開く。
+func (a *App) newDir(p *Pane) {
 	if !p.loaded {
 		return
 	}

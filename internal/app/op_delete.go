@@ -11,24 +11,24 @@ import (
 // 完全削除（OpDelete）は、この確認の画面で、画面を描いた後に y を押した場合だけ実行する（U2）。
 // ごみ箱に入らない項目を、UI が自分から完全削除に切り替えることはしない（fsops I5 の UI 側）。
 
-// trash は、操作中のペインの対象をごみ箱へ入れる計画を作り始める（filer §8.2）。
-func (a *App) trash() []Cmd {
-	t := a.targets()
+// trash は、ペイン p の対象をごみ箱へ入れる計画を作り始める（filer §8.2）。
+func (a *App) trash(p *Pane) []Cmd {
+	t := p.selected()
 	if len(t) == 0 {
 		a.setMessage(msg.NoTarget, false)
 		return nil
 	}
-	return a.begin(fsops.Request{Op: fsops.OpTrash, Sources: t}, a.cur().dir, false)
+	return a.begin(fsops.Request{Op: fsops.OpTrash, Sources: t}, p.dir, false)
 }
 
-// purge は、操作中のペインの対象を完全に削除する計画を作り始める。計画ができたら、完全削除の確認を出す（filer §8.6）。
-func (a *App) purge() []Cmd {
-	t := a.targets()
+// purge は、ペイン p の対象を完全に削除する計画を作り始める。計画ができたら、完全削除の確認を出す（filer §8.6）。
+func (a *App) purge(p *Pane) []Cmd {
+	t := p.selected()
 	if len(t) == 0 {
 		a.setMessage(msg.NoTarget, false)
 		return nil
 	}
-	return a.begin(fsops.Request{Op: fsops.OpDelete, Sources: t}, a.cur().dir, false)
+	return a.begin(fsops.Request{Op: fsops.OpDelete, Sources: t}, p.dir, false)
 }
 
 // DeleteItem は、完全削除の確認に出す項目（名前と、ファイルかフォルダか、ファイルのサイズ。filer §8.6）。

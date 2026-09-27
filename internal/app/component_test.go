@@ -1,9 +1,15 @@
 package app
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"testing"
+
+	"github.com/zredjet/tana/internal/fsops"
+	"github.com/zredjet/tana/internal/msg"
 )
 
 // UI の骨格（filer §4）の性質のテスト。部品・役割を足すと、自動で対象になる（役割の数が合わなければ失敗する）。
@@ -199,4 +205,26 @@ func TestRunnerComponents(t *testing.T) {
 	if h.a.topRole() != RoleProgress {
 		t.Error("a second cancel question while stopping")
 	}
+}
+
+// TestPlanningCancelStopsPlan は、計画を作っている間に中止したら、NewPlan に渡した ctx を止めることを確かめる（filer U5、§4 の「持ち主と ID」）。
+// 止めないと、画面は閲覧に戻っても、fsops の走査が最後まで続く。
+func TestPlanningCancelStopsPlan(t *testing.T) {
+	t.Parallel()
+	root := tree(t)
+	var planErr error
+	h := newHarness(t, func(c *Config) {
+		c.NewPlan = func(ctx context.Context, req fsops.Request) (Plan, error) {
+			planErr = ctx.Err() // 計画の処理が動き始めたときに、もう止められているか
+			return nil, planErr
+		}
+	}, root, filepath.Join(root, "sub"))
+	h.hold = true
+	h.pasteInto("a.txt", 1, ActPasteCopy)
+	h.do(ActCancel) // 計画を作っている間に中止する
+	h.release()     // 計画の処理が動く
+	if !errors.Is(planErr, context.Canceled) {
+		t.Errorf("NewPlan's context after canceling the planning: %v, want canceled", planErr)
+	}
+	h.wantMessage(msg.Kind(fsops.KindCanceled))
 }

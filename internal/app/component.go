@@ -114,9 +114,10 @@ func (a *App) replaceOwned(owner int, c component) bool {
 	return false
 }
 
-// pop は、一番上の部品を下ろす。
+// pop は、一番上の部品を下ろす（下ろした部品を配列に残さない。結果や計画を持ち続けないように）。
 func (a *App) pop() {
 	if n := len(a.modals); n > 0 {
+		a.modals[n-1] = nil
 		a.modals = a.modals[:n-1]
 	}
 }
@@ -126,8 +127,9 @@ func (a *App) remove(m *mounted) {
 	a.modals = slices.DeleteFunc(a.modals, func(x *mounted) bool { return x == m })
 }
 
-// removeOwned は、持ち主 owner の部品をすべて下ろす。
+// removeOwned は、持ち主 owner の部品をすべて下ろし、持ち主の作業を止める（filer §4。持ち主がいなくなったら、その作業も止める）。
 func (a *App) removeOwned(owner int) {
+	a.cancelOwned(owner)
 	a.modals = slices.DeleteFunc(a.modals, func(x *mounted) bool { return x.owner == owner })
 }
 
@@ -189,7 +191,8 @@ func (a *App) settleFocus() {
 }
 
 // KeyPressed は、キー入力があったことを知らせる。メッセージ行を消す（filer §5.1）。
-// 道筋の一番内側の部品が消さないとき（計画を作成中の表示の間）は消さない。tui はキー入力のたびに呼ぶ（Do も呼ぶ）。
+// 道筋の一番内側の部品が消さないとき（計画を作成中の表示の間）は消さない。Do が呼ぶ。
+// 操作にならないキー入力でも消すため、tui もキー入力のたびに呼ぶ形にする（今の tui は Planning を見て ClearMessage を呼ぶ。フェーズ23で keymap に替えるときに、これに替える）。
 func (a *App) KeyPressed() {
 	if !a.path()[0].c.keepsMessage(a) {
 		a.ClearMessage()

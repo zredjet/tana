@@ -30,10 +30,12 @@ var actionNames = map[app.ActionKind]string{
 	app.ActPurge: "Purge", app.ActRename: "Rename", app.ActNewDir: "NewDir",
 }
 
-// matrixState は、行列の列（画面の状態）とその作り方。
+// matrixState は、行列の列（画面の状態）とその作り方。screen・dialog は、作り方が意図した画面になったかを確かめるための、今の app の画面とダイアログ。
 type matrixState struct {
-	name  string
-	build func(t *testing.T) *scene
+	name   string
+	screen app.Screen
+	dialog app.DialogKind
+	build  func(t *testing.T) *scene
 }
 
 // failedResult は、結果の画面を出す実行（1 項目が失敗する）。
@@ -48,32 +50,32 @@ func failedResult(plan **opPlan) func(context.Context, fsops.ExecOptions) (*fsop
 }
 
 var matrixStates = []matrixState{
-	{"browse", func(t *testing.T) *scene { return newScene(t) }},
-	{"planning", func(t *testing.T) *scene {
+	{"browse", app.ScreenBrowse, app.DialogNone, func(t *testing.T) *scene { return newScene(t) }},
+	{"planning", app.ScreenBrowse, app.DialogNone, func(t *testing.T) *scene {
 		sc, _ := newOpScene(t, fsops.OpCopy, nil, nil)
 		sc.keys(key(keys.KeyEsc)) // 確認をやめ、計画を作っている途中で止める
 		sc.hold = true
 		sc.keys(char('p'))
 		return sc
 	}},
-	{"help", func(t *testing.T) *scene { sc := newScene(t); sc.keys(char('?')); return sc }},
-	{"path", func(t *testing.T) *scene { sc := newScene(t); sc.keys(char('g')); return sc }},
-	{"rename", func(t *testing.T) *scene { sc := newScene(t); sc.moveTo("README.md"); sc.keys(char('r')); return sc }},
-	{"newdir", func(t *testing.T) *scene { sc := newScene(t); sc.keys(char('n')); return sc }},
-	{"exec", func(t *testing.T) *scene {
+	{"help", app.ScreenBrowse, app.DialogHelp, func(t *testing.T) *scene { sc := newScene(t); sc.keys(char('?')); return sc }},
+	{"path", app.ScreenBrowse, app.DialogPath, func(t *testing.T) *scene { sc := newScene(t); sc.keys(char('g')); return sc }},
+	{"rename", app.ScreenBrowse, app.DialogRename, func(t *testing.T) *scene { sc := newScene(t); sc.moveTo("README.md"); sc.keys(char('r')); return sc }},
+	{"newdir", app.ScreenBrowse, app.DialogNewDir, func(t *testing.T) *scene { sc := newScene(t); sc.keys(char('n')); return sc }},
+	{"exec", app.ScreenBrowse, app.DialogExec, func(t *testing.T) *scene {
 		sc := newScene(t)
 		sc.moveTo("setup.exe")
 		sc.keys(key(keys.KeyEnter))
 		return sc
 	}},
-	{"confirm", func(t *testing.T) *scene { sc, _ := newOpScene(t, fsops.OpCopy, nil, nil); return sc }},
-	{"conflicts", func(t *testing.T) *scene {
+	{"confirm", app.ScreenConfirm, app.DialogNone, func(t *testing.T) *scene { sc, _ := newOpScene(t, fsops.OpCopy, nil, nil); return sc }},
+	{"conflicts", app.ScreenConflicts, app.DialogNone, func(t *testing.T) *scene {
 		sc, _ := newOpScene(t, fsops.OpCopy, nil, nil)
 		sc.draw(80, 24)
 		sc.keys(key(keys.KeyEnter))
 		return sc
 	}},
-	{"progress", func(t *testing.T) *scene {
+	{"progress", app.ScreenProgress, app.DialogNone, func(t *testing.T) *scene {
 		sc, _ := newOpScene(t, fsops.OpCopy, nil, nil)
 		sc.draw(80, 24)
 		sc.keys(key(keys.KeyEnter))
@@ -82,7 +84,7 @@ var matrixStates = []matrixState{
 		sc.keys(key(keys.KeyEnter))
 		return sc
 	}},
-	{"cancelask", func(t *testing.T) *scene {
+	{"cancelask", app.ScreenProgress, app.DialogNone, func(t *testing.T) *scene {
 		sc, _ := newOpScene(t, fsops.OpCopy, nil, nil)
 		sc.draw(80, 24)
 		sc.keys(key(keys.KeyEnter))
@@ -91,7 +93,7 @@ var matrixStates = []matrixState{
 		sc.keys(key(keys.KeyEnter), key(keys.KeyEsc))
 		return sc
 	}},
-	{"result", func(t *testing.T) *scene {
+	{"result", app.ScreenResult, app.DialogNone, func(t *testing.T) *scene {
 		var plan *opPlan
 		sc, p := newOpScene(t, fsops.OpCopy, failedResult(&plan), nil)
 		plan = p
@@ -101,25 +103,11 @@ var matrixStates = []matrixState{
 		sc.keys(key(keys.KeyEnter))
 		return sc
 	}},
-	{"delete", func(t *testing.T) *scene {
+	{"delete", app.ScreenDelete, app.DialogNone, func(t *testing.T) *scene {
 		sc, _ := newOpScene(t, fsops.OpCopy, nil, nil)
 		sc.keys(key(keys.KeyEsc), key(keys.KeyDown), char('D')) // .. の次の項目を完全削除する
 		return sc
 	}},
-}
-
-// wantScreen は、状態の作り方が意図した画面になったかを確かめるための、今の app の画面とダイアログ。
-var wantScreen = map[string]struct {
-	screen app.Screen
-	dialog app.DialogKind
-}{
-	"browse": {app.ScreenBrowse, app.DialogNone}, "planning": {app.ScreenBrowse, app.DialogNone},
-	"help": {app.ScreenBrowse, app.DialogHelp}, "path": {app.ScreenBrowse, app.DialogPath},
-	"rename": {app.ScreenBrowse, app.DialogRename}, "newdir": {app.ScreenBrowse, app.DialogNewDir},
-	"exec": {app.ScreenBrowse, app.DialogExec}, "confirm": {app.ScreenConfirm, app.DialogNone},
-	"conflicts": {app.ScreenConflicts, app.DialogNone}, "progress": {app.ScreenProgress, app.DialogNone},
-	"cancelask": {app.ScreenProgress, app.DialogNone}, "result": {app.ScreenResult, app.DialogNone},
-	"delete": {app.ScreenDelete, app.DialogNone},
 }
 
 // matrixEvents は、行列の行（キー入力）。修飾キーは、割り当ての規則を見分けるのに足りる組み合わせにする
@@ -185,9 +173,8 @@ func TestKeyMatrix(t *testing.T) {
 	header := []string{"# event"}
 	for i, st := range matrixStates {
 		sc := st.build(t)
-		want := wantScreen[st.name]
-		if sc.a.Screen() != want.screen || sc.a.Dialog() != want.dialog {
-			t.Fatalf("%s: screen %v dialog %v, want %v %v", st.name, sc.a.Screen(), sc.a.Dialog(), want.screen, want.dialog)
+		if sc.a.Screen() != st.screen || sc.a.Dialog() != st.dialog {
+			t.Fatalf("%s: screen %v dialog %v, want %v %v", st.name, sc.a.Screen(), sc.a.Dialog(), st.screen, st.dialog)
 		}
 		scenes[i] = sc
 		header = append(header, st.name)
@@ -195,13 +182,13 @@ func TestKeyMatrix(t *testing.T) {
 	lines := []string{strings.Join(header, "\t")}
 	for _, ev := range matrixEvents() {
 		row := []string{ev.String()}
-		any := false
+		hit := false
 		for _, sc := range scenes {
 			c := cell(t, sc, ev)
-			any = any || c != "-"
+			hit = hit || c != "-"
 			row = append(row, c)
 		}
-		if any {
+		if hit {
 			lines = append(lines, strings.Join(row, "\t"))
 		}
 	}
