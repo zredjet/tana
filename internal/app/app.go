@@ -618,19 +618,13 @@ type HelpView struct{}
 
 func (HelpView) Role() Role { return RoleHelp }
 
-// helpComp は、ヘルプ。文字の入力（貼り付け）のほかのどの操作でも閉じる。
+// helpComp は、ヘルプ。Esc で閉じる（どのキーでも閉じるのは、tui の keymap がどのキーも Esc にするため。貼り付けでは閉じない）。
 type helpComp struct{ base }
 
 func (helpComp) role() Role     { return RoleHelp }
 func (helpComp) view(*App) View { return HelpView{} }
 func (helpComp) commands() commandTable {
-	t := commandTable{}
-	for k := ActUp; k <= ActNewDir; k++ {
-		if k != ActInsert { // 貼り付けでは閉じない
-			t[k] = command{GateFree, func(a *App, _ Action) []Cmd { a.pop(); return nil }}
-		}
-	}
-	return t
+	return commandTable{ActCancel: {GateFree, func(a *App, _ Action) []Cmd { a.pop(); return nil }}}
 }
 
 // PathView は、パスの入力（g）の内容。

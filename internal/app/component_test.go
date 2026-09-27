@@ -36,8 +36,6 @@ func TestGateDeclared(t *testing.T) {
 				continue
 			case RolePath, RoleRename, RoleNewDir: // 入力欄（打った文字を失わない。Enter は打った名前・パスで行う）
 				continue
-			case RoleHelp: // どの操作でも閉じるだけ（確定しない）
-				continue
 			}
 			if slices.Contains(commitKinds, k) && c.gate != GateAfterDraw {
 				t.Errorf("role %d: the confirming action %d must be AfterDraw (U2)", r, k)

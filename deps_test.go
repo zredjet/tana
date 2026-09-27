@@ -41,9 +41,13 @@ var directionRules = []directionRule{
 	{"internal/listing", []string{"internal/fsops", "golang.org/x/sys", "golang.org/x/text"}},
 	{"internal/app", []string{"internal/fsops", "internal/listing", "internal/msg", "internal/platform", "internal/lineedit", "internal/textwidth", "internal/textfmt",
 		"golang.org/x/sys", "golang.org/x/text"}},
+	// keymap は、キーの割り当ての表とキーの案内（filer §4 の「UI の骨格」）。keys・app・msg・fsops と、app が使うものだけを使う。
+	// term・screen・tui は import しない。
+	{"internal/keymap", []string{"internal/keys", "internal/app", "internal/msg", "internal/fsops", "internal/listing", "internal/platform",
+		"internal/lineedit", "internal/textwidth", "internal/textfmt", "golang.org/x/sys", "golang.org/x/text"}},
 	// tui は土台のパッケージを組み合わせ、app の状態を描く（filer §4）。term を通して x/sys を使う。
 	{"internal/tui", []string{"internal/term", "internal/keys", "internal/screen", "internal/lineedit", "internal/textwidth",
-		"internal/app", "internal/listing", "internal/msg", "internal/textfmt", "internal/platform", "internal/fsops",
+		"internal/app", "internal/keymap", "internal/listing", "internal/msg", "internal/textfmt", "internal/platform", "internal/fsops",
 		"golang.org/x/sys", "golang.org/x/text"}},
 }
 

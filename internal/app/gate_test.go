@@ -167,14 +167,8 @@ var gateWant = map[string]map[ActionKind]string{
 }
 
 func init() {
-	// ヘルプは、文字の入力（貼り付け）のほかのどの操作でも閉じる。
-	help := map[ActionKind]string{}
-	for k := ActUp; k <= ActNewDir; k++ {
-		if k != ActInsert {
-			help[k] = "free"
-		}
-	}
-	gateWant["help"] = help
+	// ヘルプは Esc で閉じる（どのキーも Esc にするのは tui の keymap。フェーズ23）。
+	gateWant["help"] = map[ActionKind]string{ActCancel: "free"}
 }
 
 // gateSig は、門で比べる状態（メッセージ行は除く。キー入力のたびに門より前で消すため）。
