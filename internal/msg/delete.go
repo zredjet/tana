@@ -46,6 +46,9 @@ func Place(dir string) string { return "場所: " + dir }
 // More は、出しきれなかった項目の数（「ほか 3 項目」）。
 func More(n int) string { return "ほか " + strconv.Itoa(n) + " 項目" }
 
+// MoreLines は、ダイアログの高さが足りないときに、切り詰めた行の数（キーの案内の行は残す）。
+func MoreLines(n int) string { return "ほか " + strconv.Itoa(n) + " 行" }
+
 // NameError は、名前の変更・フォルダの作成のエラーの文言（入力欄の下に出す）。
 // フォルダの作成のエラーは移動先の側（OnDest）だが、「コピー先・移動先で: 」は付けない（その画面で作ろうとしている場所なので）。
 func NameError(err error) string {

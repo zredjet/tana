@@ -2,9 +2,14 @@ package tui
 
 import (
 	"reflect"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/zredjet/tana/internal/app"
+	"github.com/zredjet/tana/internal/fsops"
+	"github.com/zredjet/tana/internal/keymap"
+	"github.com/zredjet/tana/internal/keys"
 	"github.com/zredjet/tana/internal/screen"
 )
 
@@ -49,5 +54,27 @@ func TestThemeComplete(t *testing.T) {
 		if v.Field(i).IsZero() {
 			t.Errorf("theme.%s has no default", v.Type().Field(i).Name)
 		}
+	}
+}
+
+// TestDialogKeepsKeys は、ダイアログの高さが画面に足りないときも、キーの案内の行（最後の行）を残すことを確かめる。
+// 残さないと、確定のキー（完全削除の y）が見えないまま、確定できる状態になる（U2）。本文は切り詰め、残りの行数を示す。
+func TestDialogKeepsKeys(t *testing.T) {
+	t.Parallel()
+	sc, plan := newOpScene(t, fsops.OpCopy, nil, nil)
+	for i := range 20 { // 警告の行で、完全削除の確認を 24 行に収まらなくする
+		plan.warnings = append(plan.warnings, &fsops.OpError{Kind: fsops.KindPermission, Path: colHome + "/w" + strconv.Itoa(i)})
+	}
+	sc.keys(key(keys.KeyEsc), key(keys.KeyDown), char('D'))
+	if sc.a.Screen() != app.ScreenDelete {
+		t.Fatalf("screen %v", sc.a.Screen())
+	}
+	s := sc.draw(80, 24)
+	out := render(s)
+	if !strings.Contains(out, keymap.DeleteGuide.Render()) {
+		t.Errorf("the delete keys are not on the screen:\n%s", out)
+	}
+	if !strings.Contains(out, "ほか ") || !strings.Contains(out, " 行") {
+		t.Errorf("no note of the cut lines:\n%s", out)
 	}
 }

@@ -72,7 +72,7 @@ func TestBrowseTextsWidth(t *testing.T) {
 		LabelDir, LabelJunction, LabelSymlink, LabelSpecial, LabelError,
 		NoTarget, TrashUnavailableSkip, TrashDialog, DeleteTitle,
 		DeleteQuestion, DeleteIrreversible, RenameTitle, RenameBusy("Esc"), NewDirTitle, NewDirBusy("Esc"),
-		DeleteLead(2, true), DeleteLead(2, false), Place("a"), More(3), NameFailed(true, ""), NameFailed(false, ""),
+		DeleteLead(2, true), DeleteLead(2, false), Place("a"), More(3), MoreLines(4), NameFailed(true, ""), NameFailed(false, ""),
 		GuideParent, GuideSwitch, GuideMark, GuideYank, GuidePaste, GuideView, GuideHelp, GuideQuit,
 		GuideExecYes, GuideRun, GuideToConflicts, GuideStop, GuideClose, GuideToPurge, GuideDeleteYes, GuideRename, GuideCreate,
 		GuideCancelYes, GuideContinue, GuideAbort, GuideForceQuit, GuideEnglish, GuideNewerOnly, GuideFold, GuideUnsetOnly,

@@ -24,9 +24,16 @@ type line struct {
 }
 
 // drawLinesIn は、領域 r に、題名 title の枠を描き、行を並べる（行を並べるダイアログ。領域は配置が決める）。
+// 最後の行はキーの案内。高さが足りないときも必ず残し、本文を切り詰めて、切った行の数を出す
+// （確定のキーが見えないまま、確定できる状態にしない。U2。フェーズ23で直した）。
 func (f *Filer) drawLinesIn(s *screen.Screen, r screen.Region, title string, lines []line) {
 	drawBox(s, r, boxDouble, title, f.th().bold)
 	in := screen.Region{X: r.X + 2, Y: r.Y + 1, W: r.W - 4, H: r.H - 2}
+	if len(lines) > in.H && in.H >= 2 {
+		keep := in.H - 2 // 本文のうち出す行（残りの 2 行は、切った行の数とキーの案内）
+		cut := len(lines) - 1 - keep
+		lines = append(append(lines[:keep:keep], line{text: msg.MoreLines(cut), st: f.th().dim}), lines[len(lines)-1])
+	}
 	for i, l := range lines {
 		s.Put(in, 0, i, l.text, l.st)
 	}
