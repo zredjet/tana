@@ -184,9 +184,9 @@ func (f *Filer) Draw(s *screen.Screen) {
 	}
 	if a.Planning() {
 		s.Fill(line(rows-2), screen.Style{})
-		s.Put(line(rows-2), 1, 0, msg.Planning, styleWarn)
+		s.Put(line(rows-2), 1, 0, msg.Planning(keymap.KeyName(app.RolePlanning, "cancel")), styleWarn)
 	}
-	s.Put(line(rows-1), 1, 0, msg.KeyGuide, screen.Style{Attr: screen.AttrDim})
+	s.Put(line(rows-1), 1, 0, keymap.MainGuide.Render(), screen.Style{Attr: screen.AttrDim})
 	switch a.Dialog() {
 	case app.DialogPath:
 		f.drawPathInput(s)
@@ -235,7 +235,7 @@ func drawFooter(s *screen.Screen, r screen.Region, x int, p *app.Pane, st screen
 	footer := ""
 	switch {
 	case p.Loading():
-		footer = msg.Loading
+		footer = msg.Loading(keymap.KeyName(app.RoleWorkspace, "cancel"))
 	case p.Loaded():
 		footer = msg.Items(p.Counts())
 	}
@@ -402,7 +402,7 @@ func dialogRegion(s *screen.Screen, w, h int) screen.Region {
 // drawPathInput は、パスの入力欄を描き、本物のカーソルを入力の位置に置く（IME の変換中の文字はここに出る。filer VU4）。
 func (f *Filer) drawPathInput(s *screen.Screen) {
 	r := dialogRegion(s, 76, 3)
-	drawBox(s, r, boxDouble, msg.PathInputTitle, screen.Style{})
+	drawBox(s, r, boxDouble, msg.PathInputTitle(keymap.KeyName(app.RolePath, "submit"), keymap.KeyName(app.RolePath, "cancel")), screen.Style{})
 	field := screen.Region{X: r.X + 2, Y: r.Y + 1, W: r.W - 4, H: 1}
 	e := f.app.PathEditor()
 	v := e.View(field.W)
@@ -415,9 +415,9 @@ func (f *Filer) drawPathInput(s *screen.Screen) {
 func (f *Filer) drawName(s *screen.Screen) {
 	a := f.app
 	v := a.NameDialog()
-	title, keys, busy := msg.RenameTitle, msg.RenameKeys, msg.RenameBusy
+	title, keys, busy := msg.RenameTitle, keymap.RenameGuide.Render(), msg.RenameBusy(keymap.KeyName(app.RoleRename, "cancel"))
 	if a.Dialog() == app.DialogNewDir {
-		title, keys, busy = msg.NewDirTitle, msg.NewDirKeys, msg.NewDirBusy
+		title, keys, busy = msg.NewDirTitle, keymap.NewDirGuide.Render(), msg.NewDirBusy(keymap.KeyName(app.RoleNewDir, "cancel"))
 	}
 	r := dialogRegion(s, 64, 9)
 	drawBox(s, r, boxDouble, title, screen.Style{Attr: screen.AttrBold})
@@ -451,17 +451,22 @@ func (f *Filer) drawExec(s *screen.Screen) {
 	drawBox(s, r, boxDouble, msg.ExecConfirm, screen.Style{Attr: screen.AttrBold})
 	in := screen.Region{X: r.X + 2, Y: r.Y + 1, W: r.W - 4, H: 3}
 	putName(s, screen.Region{X: in.X, Y: in.Y, W: in.W, H: 1}, textfmt.TruncName(f.app.ExecName(), in.W), screen.Style{})
-	s.Put(in, 0, 2, msg.ExecChoices, screen.Style{})
+	s.Put(in, 0, 2, keymap.ExecGuide.Render(), screen.Style{})
 }
 
 // drawHelp は、キー操作の一覧を描く。
 func (f *Filer) drawHelp(s *screen.Screen) {
-	r := dialogRegion(s, 72, len(msg.Help)+2)
+	// キーの欄はキーの表から作る（操作ごとにキーを空白 1 つ、操作の間は空白 2 つ）。説明はキーの欄の最も広いものの 2 桁後から。
+	keyW := 0
+	for _, h := range keymap.HelpRows {
+		keyW = max(keyW, textwidth.Width(h.Keys()))
+	}
+	r := dialogRegion(s, 76, len(keymap.HelpRows)+2)
 	drawBox(s, r, boxDouble, msg.HelpTitle, screen.Style{})
 	in := screen.Region{X: r.X + 2, Y: r.Y + 1, W: r.W - 4, H: r.H - 2}
-	for i, h := range msg.Help {
-		s.Put(in, 0, i, h[0], screen.Style{Attr: screen.AttrBold})
-		s.Put(in, 20, i, h[1], screen.Style{})
+	for i, h := range keymap.HelpRows {
+		s.Put(in, 0, i, h.Keys(), screen.Style{Attr: screen.AttrBold})
+		s.Put(in, keyW+2, i, h.Label, screen.Style{})
 	}
 }
 

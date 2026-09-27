@@ -11,6 +11,7 @@ import (
 
 	"github.com/zredjet/tana/internal/app"
 	"github.com/zredjet/tana/internal/fsops"
+	"github.com/zredjet/tana/internal/keymap"
 	"github.com/zredjet/tana/internal/keys"
 	"github.com/zredjet/tana/internal/msg"
 	"github.com/zredjet/tana/internal/textfmt"
@@ -328,7 +329,7 @@ func TestLeftoversFit(t *testing.T) {
 	sc.run(sc.a.Update(sc.delayed[len(sc.delayed)-1].Run())) // 1 秒ごとの見回り
 	s := sc.draw(80, 24)
 	const in = 64 - 4 // 進捗の画面の内側の幅（80 桁のとき）
-	for _, l := range append([]string{msg.Unresponsive}, msg.Leftovers(fsops.OpMove)...) {
+	for _, l := range append([]string{msg.Unresponsive(keymap.KeyName(app.RoleProgress, "force-quit"))}, msg.Leftovers(fsops.OpMove)...) {
 		for _, w := range textfmt.Wrap(l, in) {
 			found := false
 			for y := range 24 {

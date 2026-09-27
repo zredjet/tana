@@ -59,24 +59,26 @@ func TestError(t *testing.T) {
 
 // TestBrowseTextsWidth は、画面の文言に幅が曖昧な文字（conhost で 2 桁になる）を使っていないことを確かめる（filer §9.1）。
 func TestBrowseTextsWidth(t *testing.T) {
-	texts := []string{Loading, LoadCanceled, CannotOpenName, ExecConfirm, ExecChoices, PathInputTitle, TooSmall, HelpTitle,
+	// キーの案内とヘルプは、キーの名前と、ここのラベルから keymap が作る（keymap のテストでも確かめる）。
+	texts := []string{Loading("Esc"), LoadCanceled, CannotOpenName, ExecConfirm, PathInputTitle("Enter", "Esc"), TooSmall, HelpTitle,
 		CannotOpenDir(""), ShowingAncestor(""), Opened(""), OpenFailed(""), Items(1, 2, 3),
-		TypeParent, TypeDir, TypeJunction, TypeSymlink, TypeSpecial, UnitBytes, LinkArrow, KeyGuide, YankedIndicator(3),
-		Planning, NothingToYank, NothingYanked, DestNotFound, SpaceWarning, NothingRunnable, ConfirmKeys, ConfirmKeysConflict,
-		ConfirmKeysNone, UnsetIsSkip, InnerHidden, InnerCollapsed, CancelTitle, CancelQuestion,
-		CancelChoices, Canceling, Unresponsive, ProgressKeys, ResultKeys, NewerMark, MetadataWarning, Yanked(2),
-		EnglishTitle, NoEnglish, InsideKey(2, false), InsideKey(2, true),
-		ConflictKeys[0], ConflictKeys[1], ConflictRowTitle, ConflictRowKeys[0].Text, ConflictRowKeys[1].Text,
-		ConflictRowKeys[2].Text, ConflictRowKeys[3].Text, ConflictColumns[0], ConflictColumns[1], ConflictColumns[2], ConflictColumns[3],
+		TypeParent, TypeDir, TypeJunction, TypeSymlink, TypeSpecial, UnitBytes, LinkArrow, YankedIndicator(3),
+		Planning("Esc"), NothingToYank, NothingYanked, DestNotFound, SpaceWarning, NothingRunnable,
+		UnsetIsSkip, InnerHidden, InnerCollapsed, CancelTitle, CancelQuestion,
+		Canceling, Unresponsive("Q"), NewerMark, MetadataWarning, Yanked(2),
+		EnglishTitle("e"), NoEnglish, ConflictRowTitle, ConflictColumns[0], ConflictColumns[1], ConflictColumns[2], ConflictColumns[3],
 		ConflictHeader(fsops.OpCopy, "a", "b"), ResultTitle(fsops.OpMove, "x", "a", "b"), Done(fsops.OpCopy, 1, 2, true),
 		PaneIndicator(1, 2), PreviewEmpty, PreviewBinary, PreviewNotLocal,
 		LabelDir, LabelJunction, LabelSymlink, LabelSpecial, LabelError,
-		NoTarget, TrashUnavailableSkip, ConfirmKeysPurge, PurgeKey, TrashDialog, DeleteTitle, DeleteChoices, DeleteChoicesNone,
-		DeleteQuestion, DeleteIrreversible, RenameTitle, RenameKeys, RenameBusy, NewDirTitle, NewDirKeys, NewDirBusy,
-		DeleteLead(2, true), DeleteLead(2, false), Place("a"), More(3), NameFailed(true, ""), NameFailed(false, "")}
-	for _, h := range Help {
-		texts = append(texts, h[0], h[1])
-	}
+		NoTarget, TrashUnavailableSkip, TrashDialog, DeleteTitle,
+		DeleteQuestion, DeleteIrreversible, RenameTitle, RenameBusy("Esc"), NewDirTitle, NewDirBusy("Esc"),
+		DeleteLead(2, true), DeleteLead(2, false), Place("a"), More(3), NameFailed(true, ""), NameFailed(false, ""),
+		GuideParent, GuideSwitch, GuideMark, GuideYank, GuidePaste, GuideView, GuideHelp, GuideQuit,
+		GuideExecYes, GuideRun, GuideToConflicts, GuideStop, GuideClose, GuideToPurge, GuideDeleteYes, GuideRename, GuideCreate,
+		GuideCancelYes, GuideContinue, GuideAbort, GuideForceQuit, GuideEnglish, GuideNewerOnly, GuideFold, GuideUnsetOnly,
+		GuideConflictsAll, GuideInside(2, false), GuideInside(2, true),
+		HelpMove, HelpPage, HelpEnter, HelpParent, HelpEnterDir, HelpNextPane, HelpMark, HelpYank, HelpPaste, HelpTrash("Enter", "y"),
+		HelpName, HelpLast, HelpMarkAll, HelpGoPath, HelpSyncOther, HelpHidden, HelpView, HelpReload, HelpRedraw, HelpCancel, HelpQuit}
 	for op := fsops.OpCopy; op <= fsops.OpDelete; op++ {
 		texts = append(texts, Did(op), ConfirmSummary(op, 2, "a"), ResultTitle(op, "x", "a", ""))
 		texts = append(texts, CancelNotes(op)...)
@@ -188,21 +190,6 @@ func TestNameError(t *testing.T) {
 	}
 	if got := NameError(nil); got != Kind(fsops.KindUnknown) {
 		t.Errorf("NameError(nil) = %q", got)
-	}
-}
-
-// TestKeyGuideWidth は、キーの案内が 80 桁の画面に収まることを確かめる（1 桁目から描く）。
-func TestKeyGuideWidth(t *testing.T) {
-	w := 0
-	for _, r := range KeyGuide {
-		if r < 0x80 {
-			w++
-		} else {
-			w += 2 // 案内の日本語はすべて全角
-		}
-	}
-	if w > 78 {
-		t.Errorf("KeyGuide is %d columns wide", w)
 	}
 }
 

@@ -175,31 +175,34 @@ func Count(n int) string { return strconv.Itoa(n) + " 件" }
 
 // コピー・移動の流れの文言（filer §8.1〜§8.5）。
 const (
-	Planning            = "計画を作成中...（Esc で中止）"
-	NothingToYank       = "覚える項目がありません"
-	NothingYanked       = "覚えた項目がありません（y で覚えます）"
-	DestNotFound        = "コピー先のフォルダが見つかりません"
-	SpaceWarning        = "空き容量が足りない見込みです"
-	NothingRunnable     = "実行できる項目がありません"
-	ConfirmKeys         = "Enter 実行   Esc やめる"
-	ConfirmKeysConflict = "Enter 衝突の確認へ   Esc やめる"
-	ConfirmKeysNone     = "Esc 閉じる"
-	UnsetIsSkip         = "未選択はスキップします"
-	InnerHidden         = "マージを選ぶと表示します"
-	InnerCollapsed      = "Space で表示します"
-	CancelTitle         = "中止の確認"
-	CancelQuestion      = "中止しますか？"
-	CancelChoices       = "y 中止する   n 続ける"
-	Canceling           = "中止しています..."
-	Unresponsive        = "応答がありません。Q で終了できますが、次のものが残る場合があります:"
-	ProgressKeys        = "Esc 中止"
-	ForceQuitKey        = "Q 終了"
-	ResultKeys          = "e 英語の詳細   Enter 閉じる"
-	EnglishTitle        = "英語の詳細（ログと同じ。e で閉じる）"
-	NoEnglish           = "この行にはエラーがありません"
-	NewerMark           = "新"
-	MetadataWarning     = "一部の属性を引き継げませんでした"
+	NothingToYank   = "覚える項目がありません"
+	NothingYanked   = "覚えた項目がありません（y で覚えます）"
+	DestNotFound    = "コピー先のフォルダが見つかりません"
+	SpaceWarning    = "空き容量が足りない見込みです"
+	NothingRunnable = "実行できる項目がありません"
+	UnsetIsSkip     = "未選択はスキップします"
+	InnerHidden     = "マージを選ぶと表示します"
+	InnerCollapsed  = "Space で表示します"
+	CancelTitle     = "中止の確認"
+	CancelQuestion  = "中止しますか？"
+	Canceling       = "中止しています..."
+	NoEnglish       = "この行にはエラーがありません"
+	NewerMark       = "新"
+	MetadataWarning = "一部の属性を引き継げませんでした"
 )
+
+// Planning は、計画を作っている間の表示（filer §8.1）。esc は、中止するキー。
+func Planning(esc string) string { return "計画を作成中...（" + esc + " で中止）" }
+
+// Unresponsive は、中止しても応答がないときの説明（filer §8.4）。q は、終了するキー。
+func Unresponsive(q string) string {
+	return "応答がありません。" + q + " で終了できますが、次のものが残る場合があります:"
+}
+
+// EnglishTitle は、結果の画面の英語の詳細の題名（filer §8.5）。e は、閉じるキー。
+func EnglishTitle(e string) string {
+	return "英語の詳細（ログと同じ。" + e + " で閉じる）"
+}
 
 // CancelNotes は、中止の確認に添える説明（中止したら何が残るか）。
 func CancelNotes(op fsops.OpKind) []string {
@@ -299,25 +302,8 @@ func ConflictHeader(op fsops.OpKind, from, to string) string {
 // ConflictColumns は、衝突の一覧の見出し。
 var ConflictColumns = [4]string{"名前", "コピー元", "コピー先", "決定"}
 
-// ConflictRowTitle と ConflictRowKeys は、衝突の画面の「この行」のキーの案内。その行で使えない決定は暗く出す（filer §8.3）。
+// ConflictRowTitle は、衝突の画面の「この行」のキーの案内の前置き（案内は keymap が作る。その行で使えない決定は暗く出す。filer §8.3）。
 const ConflictRowTitle = "この行: "
-
-// ConflictKey は、1 行ずつの決定のキーと、その案内。
-type ConflictKey struct {
-	Decision fsops.Decision
-	Text     string
-}
-
-var ConflictRowKeys = []ConflictKey{
-	{fsops.DecisionSkip, "s スキップ"}, {fsops.DecisionOverwrite, "o 上書き"},
-	{fsops.DecisionAutoRename, "r 自動リネーム"}, {fsops.DecisionMerge, "m マージ"},
-}
-
-// ConflictKeys は、衝突の画面のキーの案内の残りの 2 行。
-var ConflictKeys = [2]string{
-	"すべて: S スキップ  O 上書き  N 新しいときだけ上書き  R 自動リネーム  M マージ",
-	"Enter 実行  Esc やめる  Space 展開・折りたたみ  u 未選択だけ表示",
-}
 
 // ProgressFiles は、進捗のファイル数とバイト数（「ファイル 26 / 58      597 MB / 1.3 GB」）。
 func ProgressFiles(done, total int, doneSize, totalSize string) string {
@@ -372,14 +358,6 @@ func ResultTitle(op fsops.OpKind, status string, from, to string) string {
 
 // OutcomeCount は、結果の件数の 1 つ（「失敗 1」）。
 func OutcomeCount(o fsops.Outcome, n int) string { return Outcome(o) + " " + strconv.Itoa(n) }
-
-// InsideKey は、カーソル行のフォルダの中の結果を、Space で表示・隠す案内（結果の画面のキーの案内。filer §8.5）。
-func InsideKey(n int, shown bool) string {
-	if shown {
-		return "Space 中の " + strconv.Itoa(n) + " 件を隠す"
-	}
-	return "Space 中の " + strconv.Itoa(n) + " 件を表示"
-}
 
 // SkippedInside は、フォルダの中の選択によるスキップの件数（「（選択によるスキップ 1 件）」）。
 func SkippedInside(n int) string {

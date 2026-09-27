@@ -7,6 +7,7 @@ import (
 
 	"github.com/zredjet/tana/internal/app"
 	"github.com/zredjet/tana/internal/fsops"
+	"github.com/zredjet/tana/internal/keymap"
 	"github.com/zredjet/tana/internal/listing"
 	"github.com/zredjet/tana/internal/msg"
 	"github.com/zredjet/tana/internal/screen"
@@ -79,18 +80,18 @@ func (f *Filer) drawConfirm(s *screen.Screen) {
 	for _, w := range v.Warnings {
 		lines = append(lines, line{text: "! " + w, st: styleWarn})
 	}
-	keys := msg.ConfirmKeys
+	keys := keymap.ConfirmGuide
 	switch {
 	case v.Runnable == 0:
 		lines = append(lines, line{text: msg.NothingRunnable, st: styleProblem})
-		keys = msg.ConfirmKeysNone
+		keys = keymap.ConfirmNoneGuide
 		if v.Untrashable > 0 {
-			keys = msg.ConfirmKeysPurge // ごみ箱に入らない項目は、利用者が選べば完全削除の確認へ（フェーズ20で決めた）
+			keys = keymap.ConfirmPurgeGuide // ごみ箱に入らない項目は、利用者が選べば完全削除の確認へ（フェーズ20で決めた）
 		}
 	case v.Conflicts > 0:
-		keys = msg.ConfirmKeysConflict
+		keys = keymap.ConfirmConflictsGuide
 	}
-	lines = append(lines, line{}, line{text: keys, st: styleBold})
+	lines = append(lines, line{}, line{text: keys.Render(), st: styleBold})
 	drawLines(s, w, msg.Op(v.Op), lines)
 }
 
@@ -179,16 +180,18 @@ func (f *Filer) drawConflicts(s *screen.Screen) {
 	}
 	s.Put(full, 0, rows-4, rule, styleDim)
 	// この行のキー: その行で使えない決定は暗くする（filer §8.3）。
-	lx := 1 + s.Put(full, 1, rows-3, msg.ConflictRowTitle, screen.Style{})
-	for _, k := range msg.ConflictRowKeys {
+	g := keymap.ConflictRowGuide
+	lx := 1 + s.Put(full, 1, rows-3, g.Prefix, screen.Style{})
+	for _, it := range g.Items {
+		c, _ := keymap.CommandByID(it.IDs[0])
 		st := screen.Style{}
-		if cur.ID == 0 || !cur.Allowed[k.Decision] {
+		if cur.ID == 0 || !cur.Allowed[c.Action.Decision] {
 			st = styleDim
 		}
-		lx += s.Put(full, lx, rows-3, k.Text, st) + 2
+		lx += s.Put(full, lx, rows-3, it.Text(), st) + textwidth.Width(g.Sep)
 	}
-	s.Put(full, 1, rows-2, msg.ConflictKeys[0], screen.Style{})
-	s.Put(full, 1, rows-1, msg.ConflictKeys[1], screen.Style{})
+	s.Put(full, 1, rows-2, keymap.ConflictAllGuide.Render(), screen.Style{})
+	s.Put(full, 1, rows-1, keymap.ConflictKeysGuide.Render(), screen.Style{})
 	if text, isErr := f.app.Message(); text != "" { // 使えない決定の理由などは、キーの案内の上に重ねて出す
 		st := screen.Style{}
 		if isErr {
@@ -270,7 +273,7 @@ func (f *Filer) drawProgress(s *screen.Screen) {
 	}
 	switch {
 	case p.Unresponsive:
-		for _, w := range textfmt.Wrap(msg.Unresponsive, in) {
+		for _, w := range textfmt.Wrap(msg.Unresponsive(keymap.KeyName(app.RoleProgress, "force-quit")), in) {
 			lines = append(lines, line{text: w, st: styleProblem})
 		}
 		for _, l := range msg.Leftovers(p.Op) {
@@ -278,11 +281,11 @@ func (f *Filer) drawProgress(s *screen.Screen) {
 				lines = append(lines, line{text: w})
 			}
 		}
-		lines = append(lines, line{text: msg.ForceQuitKey, st: styleBold})
+		lines = append(lines, line{text: keymap.ForceQuitGuide.Render(), st: styleBold})
 	case p.Canceling:
 		lines = append(lines, line{text: msg.Canceling, st: styleWarn})
 	default:
-		lines = append(lines, line{text: msg.ProgressKeys, st: styleBold})
+		lines = append(lines, line{text: keymap.ProgressGuide.Render(), st: styleBold})
 	}
 	drawLines(s, w, msg.Stage(p.Stage), lines)
 	if p.AskCancel {
@@ -290,7 +293,7 @@ func (f *Filer) drawProgress(s *screen.Screen) {
 		for _, l := range msg.CancelNotes(p.Op) {
 			lines = append(lines, line{text: l})
 		}
-		drawLines(s, 52, msg.CancelTitle, append(lines, line{}, line{text: msg.CancelChoices, st: styleBold}))
+		drawLines(s, 52, msg.CancelTitle, append(lines, line{}, line{text: keymap.CancelAskGuide.Render(), st: styleBold}))
 	}
 }
 
@@ -361,23 +364,24 @@ func (f *Filer) drawResult(s *screen.Screen) {
 	if paneH > 0 {
 		py := rows - 2 - paneH
 		s.Put(full, 0, py, rule, styleDim)
-		s.Put(full, 1, py+1, msg.EnglishTitle, styleBold)
+		s.Put(full, 1, py+1, msg.EnglishTitle(keymap.KeyName(app.RoleResult, "english")), styleBold)
 		for i, l := range english {
 			s.Put(full, 1, py+2+i, l, screen.Style{})
 		}
 	}
 	s.Put(full, 0, rows-2, rule, styleDim)
 	// Space で何が起きるかは、カーソル行に合わせて書く（中の結果がある行だけ）。
-	keysText := msg.ResultKeys
+	var items []keymap.Item
+	if v.Untrashable > 0 { // ごみ箱に入らなかった項目があれば、完全削除の確認へ進めることを案内する（filer §8.5）
+		items = append(items, keymap.ResultPurge)
+	}
 	if v.Cursor < len(v.Rows) {
 		if r := v.Rows[v.Cursor]; r.Expandable {
-			keysText = msg.InsideKey(r.Details, r.Expanded) + "   " + keysText
+			items = append(items, keymap.ResultInside.WithLabel(msg.GuideInside(r.Details, r.Expanded)))
 		}
 	}
-	if v.Untrashable > 0 { // ごみ箱に入らなかった項目があれば、完全削除の確認へ進めることを案内する（filer §8.5）
-		keysText = msg.PurgeKey + "   " + keysText
-	}
-	s.Put(full, 1, rows-1, keysText, screen.Style{})
+	items = append(items, keymap.ResultEnglish, keymap.ResultClose)
+	s.Put(full, 1, rows-1, keymap.Join(keymap.SepDialog, items...), screen.Style{})
 }
 
 // sizeUnit は、確認画面・進捗画面のサイズを単位付きで書く（6.1 GB、500 バイト。filer §9.4）。一覧の欄は 5 桁の textfmt.Size のまま。
@@ -461,11 +465,11 @@ func (f *Filer) drawDelete(s *screen.Screen) {
 	for _, w := range v.Warnings {
 		lines = append(lines, line{text: "! " + w, st: styleWarn})
 	}
-	keys := msg.DeleteChoices
+	keys := keymap.DeleteGuide
 	if v.Runnable == 0 {
 		lines = append(lines, line{text: msg.NothingRunnable, st: styleProblem})
-		keys = msg.DeleteChoicesNone
+		keys = keymap.DeleteNoneGuide
 	}
-	lines = append(lines, line{}, line{text: keys, st: styleBold})
+	lines = append(lines, line{}, line{text: keys.Render(), st: styleBold})
 	drawLines(s, w, msg.DeleteTitle, lines)
 }

@@ -12,23 +12,25 @@ import (
 const (
 	NoTarget             = "対象の項目がありません"
 	TrashUnavailableSkip = "ごみ箱に入らないため実行しません"
-	ConfirmKeysPurge     = "D 完全削除の確認へ   Esc やめる"
-	PurgeKey             = "D 完全削除の確認へ"
 	TrashDialog          = "Windows の確認ダイアログが開いている可能性があります（ほかのウィンドウを確認してください）。" +
 		"残すには「いいえ」を選んでください。「はい」は完全に削除します"
 	DeleteTitle        = "完全削除の確認"
-	DeleteChoices      = "y 完全に削除する   n・Esc・Enter やめる"
-	DeleteChoicesNone  = "n・Esc・Enter 閉じる"
 	DeleteQuestion     = "完全に削除しますか？ 元に戻せません。"
 	DeleteIrreversible = "元に戻せません。"
 
 	RenameTitle = "名前の変更"
-	RenameKeys  = "Enter 変更   Esc やめる"
-	RenameBusy  = "変更しています...（Esc で待つのをやめる）"
 	NewDirTitle = "新しいフォルダ"
-	NewDirKeys  = "Enter 作成   Esc やめる"
-	NewDirBusy  = "作成しています...（Esc で待つのをやめる）"
 )
+
+// RenameBusy は、名前の変更を待っている間の表示（filer §8.7）。esc は、待つのをやめるキー。
+func RenameBusy(esc string) string {
+	return "変更しています...（" + esc + " で待つのをやめる）"
+}
+
+// NewDirBusy は、フォルダの作成を待っている間の表示。
+func NewDirBusy(esc string) string {
+	return "作成しています...（" + esc + " で待つのをやめる）"
+}
 
 // DeleteLead は、完全削除の確認の 1 行目（filer §8.6）。ごみ箱に入らなかった項目から進んだときと、D キーで直接行うときで変える。
 func DeleteLead(n int, fromTrash bool) string {

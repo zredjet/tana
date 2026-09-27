@@ -10,6 +10,7 @@ import (
 
 	"github.com/zredjet/tana/internal/app"
 	"github.com/zredjet/tana/internal/fsops"
+	"github.com/zredjet/tana/internal/keymap"
 	"github.com/zredjet/tana/internal/msg"
 )
 
@@ -66,7 +67,7 @@ func vu7(t *testing.T, target string) {
 			// パスの入力欄を空にして、貼り付けで入れる。
 			f.send("g" + strings.Repeat("\x7f", 400) + "\x1b[200~" + target + "\x1b[201~\r")
 			entered = time.Now()
-		case step == 1 && strings.Contains(out, msg.Loading):
+		case step == 1 && strings.Contains(out, msg.Loading(keymap.KeyName(app.RoleWorkspace, "cancel"))):
 			step++
 			shown = time.Now()
 			f.send("\x1b")

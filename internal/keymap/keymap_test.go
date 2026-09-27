@@ -11,6 +11,7 @@ import (
 	"github.com/zredjet/tana/internal/fsops"
 	"github.com/zredjet/tana/internal/keys"
 	"github.com/zredjet/tana/internal/msg"
+	"github.com/zredjet/tana/internal/textwidth"
 )
 
 // events は、表を確かめるためのキー入力（特殊キー・文字のキーと修飾キーの組み合わせ、貼り付け、そのほか）。
@@ -256,40 +257,56 @@ func TestHelpKeys(t *testing.T) {
 	}
 }
 
-// TestGuidesMatchTexts は、表から作った案内が、フェーズ22までの文言と同じであることを確かめる（案内を表から作るように移すため）。
-func TestGuidesMatchTexts(t *testing.T) {
+// TestGuides は、表から作った案内を確かめる（フェーズ22までの文言と同じ。ゴールデンファイルにない案内も含める）。
+// 案内は 80 桁の画面の 1 桁目から描くので、78 桁に収め、幅が曖昧な文字（conhost で 2 桁になる。filer §9.1）を使わない。
+func TestGuides(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {
 		got, want string
 	}{
-		{MainGuide.Render(), msg.KeyGuide},
-		{ExecGuide.Render(), msg.ExecChoices},
-		{ConfirmGuide.Render(), msg.ConfirmKeys},
-		{ConfirmConflictsGuide.Render(), msg.ConfirmKeysConflict},
-		{ConfirmNoneGuide.Render(), msg.ConfirmKeysNone},
-		{ConfirmPurgeGuide.Render(), msg.ConfirmKeysPurge},
-		{DeleteGuide.Render(), msg.DeleteChoices},
-		{DeleteNoneGuide.Render(), msg.DeleteChoicesNone},
-		{RenameGuide.Render(), msg.RenameKeys},
-		{NewDirGuide.Render(), msg.NewDirKeys},
-		{CancelAskGuide.Render(), msg.CancelChoices},
-		{ProgressGuide.Render(), msg.ProgressKeys},
-		{ForceQuitGuide.Render(), msg.ForceQuitKey},
-		{ResultPurge.Text(), msg.PurgeKey},
-		{ResultInside.WithLabel(msg.GuideInside(2, false)).Text(), msg.InsideKey(2, false)},
-		{ResultInside.WithLabel(msg.GuideInside(2, true)).Text(), msg.InsideKey(2, true)},
-		{Join(SepDialog, ResultEnglish, ResultClose), msg.ResultKeys},
-		{ConflictAllGuide.Render(), msg.ConflictKeys[0]},
-		{ConflictKeysGuide.Render(), msg.ConflictKeys[1]},
+		{MainGuide.Render(), "h 親へ  Tab 切替  Space マーク  y 覚える  p 貼る  v 表示  ? ヘルプ  q 終了"},
+		{ExecGuide.Render(), "y 実行する   n やめる"},
+		{ConfirmGuide.Render(), "Enter 実行   Esc やめる"},
+		{ConfirmConflictsGuide.Render(), "Enter 衝突の確認へ   Esc やめる"},
+		{ConfirmNoneGuide.Render(), "Esc 閉じる"},
+		{ConfirmPurgeGuide.Render(), "D 完全削除の確認へ   Esc やめる"},
+		{DeleteGuide.Render(), "y 完全に削除する   n・Esc・Enter やめる"},
+		{DeleteNoneGuide.Render(), "n・Esc・Enter 閉じる"},
+		{RenameGuide.Render(), "Enter 変更   Esc やめる"},
+		{NewDirGuide.Render(), "Enter 作成   Esc やめる"},
+		{CancelAskGuide.Render(), "y 中止する   n 続ける"},
+		{ProgressGuide.Render(), "Esc 中止"},
+		{ForceQuitGuide.Render(), "Q 終了"},
+		{ResultPurge.Text(), "D 完全削除の確認へ"},
+		{ResultInside.WithLabel(msg.GuideInside(2, false)).Text(), "Space 中の 2 件を表示"},
+		{ResultInside.WithLabel(msg.GuideInside(2, true)).Text(), "Space 中の 2 件を隠す"},
+		{Join(SepDialog, ResultEnglish, ResultClose), "e 英語の詳細   Enter 閉じる"},
+		{ConflictRowGuide.Render(), "この行: s スキップ  o 上書き  r 自動リネーム  m マージ"},
+		{ConflictAllGuide.Render(), "すべて: S スキップ  O 上書き  N 新しいときだけ上書き  R 自動リネーム  M マージ"},
+		{ConflictKeysGuide.Render(), "Enter 実行  Esc やめる  Space 展開・折りたたみ  u 未選択だけ表示"},
 	} {
 		if tt.got != tt.want {
 			t.Errorf("guide %q, want %q", tt.got, tt.want)
 		}
 	}
-	for i, it := range ConflictRowGuide.Items {
-		c, _ := CommandByID(it.IDs[0])
-		if k := msg.ConflictRowKeys[i]; it.Text() != k.Text || c.Action.Decision != k.Decision {
-			t.Errorf("conflict row item %q (%v), want %q (%v)", it.Text(), c.Action.Decision, k.Text, k.Decision)
+	texts := []string{Join(SepDialog, ResultPurge, ResultInside.WithLabel(msg.GuideInside(99, false)), ResultEnglish, ResultClose)}
+	for _, g := range Guides {
+		texts = append(texts, g.Render())
+	}
+	for _, h := range HelpRows {
+		texts = append(texts, h.Keys(), h.Label)
+	}
+	for _, s := range texts {
+		if w := textwidth.Width(s); w > 78 {
+			t.Errorf("%q is %d columns wide (the screen is 80)", s, w)
+		}
+		if i := strings.IndexAny(s, "…→←↑↓○●※×①②③◆■□△▲"); i >= 0 {
+			t.Errorf("%q contains an ambiguous-width character at %d (filer §9.1)", s, i)
+		}
+	}
+	for i, d := range []fsops.Decision{fsops.DecisionSkip, fsops.DecisionOverwrite, fsops.DecisionAutoRename, fsops.DecisionMerge} {
+		if c, _ := CommandByID(ConflictRowGuide.Items[i].IDs[0]); c.Action.Kind != app.ActDecide || c.Action.Decision != d {
+			t.Errorf("conflict row item %d decides %+v, want %v (tui dims the decisions the row cannot use)", i, c.Action, d)
 		}
 	}
 }

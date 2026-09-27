@@ -4,15 +4,22 @@ import "strconv"
 
 // 閲覧の画面の文言（filer §5・§6・§7）。幅が曖昧な文字（…・→ など）は使わない（conhost で 2 桁になる。filer §9.1）。
 const (
-	Loading        = "読み込み中...（Esc で中止）"
 	LoadCanceled   = "読み込みを中止しました"
 	CannotOpenName = "この名前のファイルは開けません"
 	ExecConfirm    = "実行しますか"
-	ExecChoices    = "y 実行する   n やめる"
-	PathInputTitle = "移動先のパス（Enter で移動、Esc で中止）"
 	TooSmall       = "端末が小さすぎます"
 	HelpTitle      = "キー操作（何かキーを押すと閉じます）"
 )
+
+// 文の中のキーの名前は、keymap の表から渡す（割り当てを変えても、文がずれないように。filer §4）。
+
+// Loading は、読み込み中の表示（filer §6）。esc は、読み込みを中止するキー。
+func Loading(esc string) string { return "読み込み中...（" + esc + " で中止）" }
+
+// PathInputTitle は、パスの入力欄の題名。enter・esc は、移動するキーと中止するキー。
+func PathInputTitle(enter, esc string) string {
+	return "移動先のパス（" + enter + " で移動、" + esc + " で中止）"
+}
 
 // CannotOpenDir は、フォルダに入れなかったときの文言（filer §6）。reason は Error の文言。
 func CannotOpenDir(reason string) string { return "このフォルダを開けません: " + reason }
@@ -60,9 +67,6 @@ const (
 	LabelError    = "<ERR>" // 列挙はできたが調べられなかった項目
 )
 
-// KeyGuide は、画面の最下行のキーの案内（2 ペインと Yazi 風で同じ。filer §5.1・§5.3・§7）。80 桁に収める（ほかのキーはヘルプで示す）。
-const KeyGuide = "h 親へ  Tab 切替  Space マーク  y 覚える  p 貼る  v 表示  ? ヘルプ  q 終了"
-
 // YankedIndicator は、覚えている項目の数（状態行の右に出す）。
 func YankedIndicator(n int) string { return "覚えた項目 " + strconv.Itoa(n) }
 
@@ -75,31 +79,6 @@ const (
 	PreviewBinary   = "テキストではないファイルです"
 	PreviewNotLocal = "中身が手元にないファイルです（読むと取得が始まるので、プレビューしません）"
 )
-
-// Help は、ヘルプの画面の行（キー、説明）。
-var Help = [][2]string{
-	{"Up Down  j k", "カーソルの移動"},
-	{"PgUp PgDn Home End", "ページ単位の移動、先頭、末尾"},
-	{"Enter", "フォルダに入る。ファイルは関連付けで開く"},
-	{"h  Left  Backspace", "親のフォルダへ"},
-	{"l  Right", "フォルダに入る（ファイルでは何もしない）"},
-	{"Tab", "ペインの切り替え（Yazi 風では表示するペイン）"},
-	{"Space", "マークの切り替え"},
-	{"y", "対象を覚える（マークした項目か、カーソル行）"},
-	{"p  P", "覚えた項目を、このフォルダへコピー・移動"},
-	{"d  D", "ごみ箱へ（Enter で実行）・完全削除（y で確定）"},
-	{"r  n", "名前の変更・新しいフォルダ"},
-	{"L", "直前の操作の結果をもう一度見る"},
-	{"a", "すべてマークする・すべて外す"},
-	{"g", "パスを入力して移動（ドライブの切り替えも）"},
-	{"=", "反対側のペインを同じフォルダにする"},
-	{".", "隠しファイルの表示の切り替え"},
-	{"v", "表示形式の切り替え（2 ペイン・Yazi 風）"},
-	{"Ctrl+R", "再読み込み"},
-	{"Ctrl+L", "画面の描き直し（表示が崩れたとき）"},
-	{"Esc", "読み込みの中止"},
-	{"q", "終了"},
-}
 
 // 起動（cmd/tana）の文言。
 const (
