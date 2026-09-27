@@ -56,16 +56,16 @@ func TestYankPasteCopy(t *testing.T) {
 	h.wantMessage(msg.Yanked(1))
 	h.do(ActNextPane)
 	h.do(ActPasteCopy)
-	if h.a.Screen() != ScreenConfirm {
-		t.Fatalf("screen %v, want the confirmation", h.a.Screen())
+	if h.top() != RoleConfirm {
+		t.Fatalf("top %v, want the confirmation", h.top())
 	}
-	v := h.a.Confirm()
+	v := modal[ConfirmView](h)
 	if v.Op != fsops.OpCopy || v.Count != 1 || v.Runnable != 1 || v.Dest != filepath.Join(root, "sub") || v.Files != 1 || v.Bytes != 1 || v.Conflicts != 0 {
 		t.Errorf("Confirm = %+v", v)
 	}
 	h.confirm()
-	if h.a.Screen() != ScreenBrowse {
-		t.Fatalf("screen %v after execution, want the listing (no result screen when all done)", h.a.Screen())
+	if h.top() != RoleNone {
+		t.Fatalf("top %v after execution, want the listing (no result screen when all done)", h.top())
 	}
 	h.wantMessage(msg.Done(fsops.OpCopy, 1, 0, false))
 	if readFile(t, filepath.Join(root, "sub", "a.txt")) != "x" || !slices.Contains(h.names(1), "a.txt") {
@@ -101,14 +101,14 @@ func TestUnsetConflictSkips(t *testing.T) {
 	writeData(t, filepath.Join(root, "sub", "a.txt"), "old")
 	h := newHarness(t, nil, root, filepath.Join(root, "sub"))
 	h.pasteInto("a.txt", 1, ActPasteCopy)
-	if v := h.a.Confirm(); v.Conflicts != 1 || v.TopLvl != 1 {
+	if v := modal[ConfirmView](h); v.Conflicts != 1 || v.TopLvl != 1 {
 		t.Fatalf("Confirm = %+v", v)
 	}
 	h.confirm()
-	if h.a.Screen() != ScreenConflicts {
-		t.Fatalf("screen %v, want the conflicts", h.a.Screen())
+	if h.top() != RoleConflicts {
+		t.Fatalf("top %v, want the conflicts", h.top())
 	}
-	v := h.a.Conflicts()
+	v := modal[ConflictsView](h)
 	if v.Unset != 1 || len(v.Rows) != 1 || v.Rows[0].Decision != fsops.DecisionUnset {
 		t.Fatalf("Conflicts = %+v", v)
 	}
@@ -126,7 +126,7 @@ func TestSelfConflictAutoRename(t *testing.T) {
 	h := newHarness(t, nil, root)
 	h.pasteInto("a.txt", 0, ActPasteCopy)
 	h.confirm()
-	if rows := h.a.Conflicts().Rows; len(rows) != 1 || rows[0].Decision != fsops.DecisionAutoRename {
+	if rows := modal[ConflictsView](h).Rows; len(rows) != 1 || rows[0].Decision != fsops.DecisionAutoRename {
 		t.Fatalf("rows = %+v, want auto rename", rows)
 	}
 	h.confirm()
@@ -147,24 +147,24 @@ func TestTypeahead(t *testing.T) {
 		h.do(k) // 計画を作っている間に打たれたキー
 	}
 	h.release()
-	if h.a.Screen() != ScreenConfirm || h.a.Quit() {
-		t.Fatalf("screen %v, quit %v: keys during planning were not discarded", h.a.Screen(), h.a.Quit())
+	if h.top() != RoleConfirm || h.a.Quit() {
+		t.Fatalf("top %v, quit %v: keys during planning were not discarded", h.top(), h.a.Quit())
 	}
 	h.do(ActSubmit) // 確認画面を描く前に届いた Enter
-	if h.a.Screen() != ScreenConfirm {
+	if h.top() != RoleConfirm {
 		t.Fatal("the confirmation was accepted by a key typed before it was drawn (U2)")
 	}
 	h.confirm()
 	h.do(ActSubmit) // 衝突の画面を描く前に届いた Enter
-	if h.a.Screen() != ScreenConflicts {
+	if h.top() != RoleConflicts {
 		t.Fatal("the conflicts were accepted by a key typed before they were drawn (U2)")
 	}
 	h.do(ActInsert) // 貼り付けなどの文字は、確認画面の操作にならない
-	if h.a.Screen() != ScreenConflicts {
+	if h.top() != RoleConflicts {
 		t.Fatal("text input moved the conflicts screen")
 	}
 	h.act(Action{Kind: ActDecideAll, Decision: fsops.DecisionOverwrite}) // 衝突の画面を描く前に届いた O
-	if v := h.a.Conflicts(); v.Rows[0].Decision != fsops.DecisionUnset {
+	if v := modal[ConflictsView](h); v.Rows[0].Decision != fsops.DecisionUnset {
 		t.Fatalf("a decision key typed before the conflicts were drawn changed %v (U1, U2)", v.Rows[0].Decision)
 	}
 }
@@ -179,13 +179,13 @@ func TestPlanningCancel(t *testing.T) {
 	for _, c := range h.delayed {
 		h.run(h.a.Update(c.Run())) // 0.2 秒が過ぎた
 	}
-	if !h.a.Planning() {
+	if !modal[PlanningView](h).Slow {
 		t.Error("the planning notice is not shown after 0.2 s")
 	}
 	h.do(ActCancel)
 	h.release()
-	if h.a.Screen() != ScreenBrowse || h.a.Planning() {
-		t.Errorf("screen %v after canceling the planning", h.a.Screen())
+	if h.top() != RoleNone || modal[PlanningView](h).Slow {
+		t.Errorf("top %v after canceling the planning", h.top())
 	}
 	h.wantMessage(msg.Kind(fsops.KindCanceled))
 }
@@ -231,12 +231,12 @@ func TestConflictDecisions(t *testing.T) {
 	h.a.Drawn() // 衝突の画面を描いた（決定のキーは、描いた後にだけ効く）
 	names := func() []string {
 		var out []string
-		for _, r := range h.a.Conflicts().Rows {
+		for _, r := range modal[ConflictsView](h).Rows {
 			out = append(out, r.Name)
 		}
 		return out
 	}
-	v := h.a.Conflicts()
+	v := modal[ConflictsView](h)
 	if v.All != 5 || v.Top != 4 || v.Unset != 5 {
 		t.Fatalf("counts %d %d %d, want 5 conflicts (4 top-level) all unset", v.All, v.Top, v.Unset)
 	}
@@ -250,17 +250,17 @@ func TestConflictDecisions(t *testing.T) {
 	h.do(ActUp)
 	h.do(ActDown)
 	h.wantMessage("") // 次のキーでメッセージを消す
-	if r := h.a.Conflicts().Rows[4]; r.Decision != fsops.DecisionUnset || r.Allowed[fsops.DecisionOverwrite] {
+	if r := modal[ConflictsView](h).Rows[4]; r.Decision != fsops.DecisionUnset || r.Allowed[fsops.DecisionOverwrite] {
 		t.Errorf("x: %+v", r)
 	}
 	h.act(Action{Kind: ActDecideAll, Decision: fsops.DecisionMerge})
 	h.wantMessage(msg.NotChanged(4)) // マージを使えるのは d だけ
-	if got := names(); !slices.Equal(got, []string{"d", "in.txt", "f.txt", "same.txt", "x"}) || h.a.Conflicts().Rows[1].Depth != 1 {
+	if got := names(); !slices.Equal(got, []string{"d", "in.txt", "f.txt", "same.txt", "x"}) || modal[ConflictsView](h).Rows[1].Depth != 1 {
 		t.Fatalf("after merging d: %q", got)
 	}
 	h.do(ActHome)
 	h.do(ActToggle) // d を折りたたむ
-	if rows := h.a.Conflicts().Rows; rows[1].ID != 0 || rows[1].InnerHow != msg.InnerCollapsed {
+	if rows := modal[ConflictsView](h).Rows; rows[1].ID != 0 || rows[1].InnerHow != msg.InnerCollapsed {
 		t.Fatalf("collapsed: %+v", rows[1])
 	}
 	h.do(ActDown)
@@ -272,12 +272,12 @@ func TestConflictDecisions(t *testing.T) {
 	h.wantMessage(msg.NotChanged(2)) // d と x はファイル同士でない
 	want := map[string]fsops.Decision{"d": fsops.DecisionMerge, "in.txt": fsops.DecisionSkip, "f.txt": fsops.DecisionOverwrite,
 		"same.txt": fsops.DecisionSkip, "x": fsops.DecisionUnset} // same.txt は 1 秒の差なので同じとみなす
-	for _, r := range h.a.Conflicts().Rows {
+	for _, r := range modal[ConflictsView](h).Rows {
 		if r.Decision != want[r.Name] {
 			t.Errorf("%s: %v, want %v", r.Name, r.Decision, want[r.Name])
 		}
 	}
-	if r := h.a.Conflicts().Rows[2]; !r.SrcNewer || r.DstNewer {
+	if r := modal[ConflictsView](h).Rows[2]; !r.SrcNewer || r.DstNewer {
 		t.Errorf("f.txt newer marks: %+v", r)
 	}
 	h.do(ActUnsetOnly)
@@ -373,8 +373,8 @@ func TestDestNotFound(t *testing.T) {
 	}
 	h.do(ActNextPane)
 	h.do(ActPasteCopy)
-	if h.a.Screen() != ScreenBrowse {
-		t.Fatalf("screen %v", h.a.Screen())
+	if h.top() != RoleNone {
+		t.Fatalf("top %v", h.top())
 	}
 	h.wantMessage(msg.DestNotFound)
 }
@@ -397,23 +397,23 @@ func TestResultOnFailure(t *testing.T) {
 	h := newHarness(t, nil, root, ro)
 	h.pasteInto("a.txt", 1, ActPasteCopy)
 	h.confirm()
-	if h.a.Screen() != ScreenResult {
-		t.Fatalf("screen %v, want the result (U3)", h.a.Screen())
+	if h.top() != RoleResult {
+		t.Fatalf("top %v, want the result (U3)", h.top())
 	}
-	v := h.a.Result()
+	v := modal[ResultView](h)
 	if len(v.Rows) != 1 || v.Rows[0].Outcome != fsops.OutcomeFailed || v.Rows[0].Reason == "" {
 		t.Errorf("rows %+v", v.Rows)
 	}
 	h.do(ActSubmit) // 結果の画面を描く前に届いた Enter
-	if h.a.Screen() != ScreenResult {
+	if h.top() != RoleResult {
 		t.Fatal("the result was closed by a key typed before it was drawn (U3)")
 	}
 	h.confirm()
-	if h.a.Screen() != ScreenBrowse {
+	if h.top() != RoleNone {
 		t.Fatal("Enter did not close the result")
 	}
 	h.do(ActLastResult)
-	if h.a.Screen() != ScreenResult {
+	if h.top() != RoleResult {
 		t.Error("L did not show the last result again")
 	}
 }
@@ -513,8 +513,8 @@ func TestResultScreenRules(t *testing.T) {
 			h := fakeHarness(t, fp, nil)
 			h.pasteInto("a.txt", 1, ActPasteCopy)
 			h.confirm()
-			if got := h.a.Screen() == ScreenResult; got != tt.screen {
-				t.Fatalf("result screen %v, want %v", got, tt.screen)
+			if got := h.top() == RoleResult; got != tt.screen {
+				t.Fatalf("result top %v, want %v", got, tt.screen)
 			}
 			if !tt.screen {
 				h.wantMessage(tt.message)
@@ -543,7 +543,7 @@ func TestResultRows(t *testing.T) {
 	h.do(ActNextPane)
 	h.do(ActPasteCopy)
 	h.confirm()
-	v := h.a.Result()
+	v := modal[ResultView](h)
 	var got []fsops.Outcome
 	for _, r := range v.Rows {
 		got = append(got, r.Outcome)
@@ -556,18 +556,18 @@ func TestResultRows(t *testing.T) {
 	}
 	h.a.Drawn()
 	h.do(ActToggle)
-	v = h.a.Result()
+	v = modal[ResultView](h)
 	if len(v.Rows) != 4 || !v.Rows[1].Detail || v.Rows[1].Name != "in.txt" || v.Rows[1].Reason != msg.Kind(fsops.KindLocked) {
 		t.Fatalf("expanded rows %+v", v.Rows)
 	}
 	h.do(ActEnglish)
-	if v := h.a.Result(); !v.English || v.Rows[1].Reason != msg.Kind(fsops.KindLocked) || len(v.Rows[1].English) != 1 || v.Rows[1].English[0] != locked.Error() {
+	if v := modal[ResultView](h); !v.English || v.Rows[1].Reason != msg.Kind(fsops.KindLocked) || len(v.Rows[1].English) != 1 || v.Rows[1].English[0] != locked.Error() {
 		t.Errorf("English detail: shown %v, row %+v (want the Japanese reason kept and the English detail %q)", v.English, v.Rows[1], locked.Error())
 	}
-	if v := h.a.Result(); v.Rows[0].Details != 1 {
+	if v := modal[ResultView](h); v.Rows[0].Details != 1 {
 		t.Errorf("Details = %d, want 1", v.Rows[0].Details)
 	}
-	if c := h.a.Result().Counts; len(c) != 3 || c[0].Outcome != fsops.OutcomePartial {
+	if c := modal[ResultView](h).Counts; len(c) != 3 || c[0].Outcome != fsops.OutcomePartial {
 		t.Errorf("counts %+v", c)
 	}
 }
@@ -590,37 +590,37 @@ func TestProgressAndCancel(t *testing.T) {
 	h.pasteInto("a.txt", 1, ActPasteCopy)
 	h.hold = true
 	h.confirm()
-	if h.a.Screen() != ScreenProgress || len(h.held) != 1 {
-		t.Fatalf("screen %v, held %d", h.a.Screen(), len(h.held))
+	if h.top() != RoleProgress || len(h.held) != 1 {
+		t.Fatalf("top %v, held %d", h.top(), len(h.held))
 	}
 	result := make(chan any, 1)
 	go func() { result <- h.held[0].Run() }()
 	<-started
 	now = now.Add(2 * time.Second)
 	h.a.Refresh()
-	p := h.a.Progress()
+	p := modal[ProgressView](h)
 	if p.DoneFiles != 1 || p.Elapsed != 2*time.Second || p.Speed != 100 || p.Remaining != 8*time.Second {
 		t.Errorf("progress %+v", p)
 	}
 	h.do(ActQuit)
 	h.do(ActDown)
-	if h.a.Quit() || h.a.Screen() != ScreenProgress {
+	if h.a.Quit() || h.top() != RoleProgress {
 		t.Fatal("accepted another operation while running (filer §7)")
 	}
 	h.do(ActCancel)
 	h.do(ActYes) // 中止の確認を描く前に届いた y
-	if p := h.a.Progress(); !p.AskCancel || p.Canceling {
+	if p := modal[ProgressView](h); h.top() != RoleCancelAsk || p.Canceling {
 		t.Fatalf("canceled by a key typed before the question was drawn (U2): %+v", p)
 	}
 	h.a.Drawn()
 	h.do(ActYes)
-	if !h.a.Progress().Canceling {
+	if !modal[ProgressView](h).Canceling {
 		t.Fatal("y did not cancel")
 	}
 	h.hold = false
 	h.run(h.a.Update(<-result))
-	if h.a.Screen() != ScreenResult || h.a.Result().Status != fsops.StatusCanceled {
-		t.Errorf("screen %v after canceling, want the result (canceled)", h.a.Screen())
+	if h.top() != RoleResult || modal[ResultView](h).Status != fsops.StatusCanceled {
+		t.Errorf("top %v after canceling, want the result (canceled)", h.top())
 	}
 }
 
@@ -649,7 +649,7 @@ func TestUnresponsive(t *testing.T) {
 	tick := h.delayed[len(h.delayed)-1]
 	now = now.Add(5 * time.Second)
 	h.run(h.a.Update(tick.Run()))
-	if h.a.Progress().Unresponsive {
+	if modal[ProgressView](h).Unresponsive {
 		t.Fatal("unresponsive after 5 s")
 	}
 	h.do(ActForceQuit)
@@ -658,7 +658,7 @@ func TestUnresponsive(t *testing.T) {
 	}
 	now = now.Add(6 * time.Second)
 	h.run(h.a.Update(tick.Run()))
-	if !h.a.Progress().Unresponsive {
+	if !modal[ProgressView](h).Unresponsive {
 		t.Fatal("no unresponsive notice after 11 s")
 	}
 	h.do(ActForceQuit)
@@ -720,8 +720,8 @@ func TestPasteCancelsOpen(t *testing.T) {
 	h.do(ActPasteCopy)
 	h.run(check) // 操作の間に確認の結果が届く
 	h.confirm()
-	if h.a.Dialog() != DialogNone || len(h.opened) != 0 {
-		t.Errorf("dialog %v after the operation, opened %q: the pending open check was not canceled", h.a.Dialog(), h.opened)
+	if h.top() != RoleNone || len(h.opened) != 0 {
+		t.Errorf("top %v after the operation, opened %q: the pending open check was not canceled", h.top(), h.opened)
 	}
 }
 

@@ -31,12 +31,11 @@ var actionNames = map[app.ActionKind]string{
 	app.ActPurge: "Purge", app.ActRename: "Rename", app.ActNewDir: "NewDir",
 }
 
-// matrixState は、行列の列（画面の状態）とその作り方。screen・dialog は、作り方が意図した画面になったかを確かめるための、今の app の画面とダイアログ。
+// matrixState は、行列の列（画面の状態）とその作り方。role は、作り方が意図した画面になったかを確かめるための、一番上の重ねる部品の役割。
 type matrixState struct {
-	name   string
-	screen app.Screen
-	dialog app.DialogKind
-	build  func(t *testing.T) *scene
+	name  string
+	role  app.Role
+	build func(t *testing.T) *scene
 }
 
 // failedResult は、結果の画面を出す実行（1 項目が失敗する）。
@@ -51,32 +50,32 @@ func failedResult(plan **opPlan) func(context.Context, fsops.ExecOptions) (*fsop
 }
 
 var matrixStates = []matrixState{
-	{"browse", app.ScreenBrowse, app.DialogNone, func(t *testing.T) *scene { return newScene(t) }},
-	{"planning", app.ScreenBrowse, app.DialogNone, func(t *testing.T) *scene {
+	{"browse", app.RoleNone, func(t *testing.T) *scene { return newScene(t) }},
+	{"planning", app.RolePlanning, func(t *testing.T) *scene {
 		sc, _ := newOpScene(t, fsops.OpCopy, nil, nil)
 		sc.keys(key(keys.KeyEsc)) // 確認をやめ、計画を作っている途中で止める
 		sc.hold = true
 		sc.keys(char('p'))
 		return sc
 	}},
-	{"help", app.ScreenBrowse, app.DialogHelp, func(t *testing.T) *scene { sc := newScene(t); sc.keys(char('?')); return sc }},
-	{"path", app.ScreenBrowse, app.DialogPath, func(t *testing.T) *scene { sc := newScene(t); sc.keys(char('g')); return sc }},
-	{"rename", app.ScreenBrowse, app.DialogRename, func(t *testing.T) *scene { sc := newScene(t); sc.moveTo("README.md"); sc.keys(char('r')); return sc }},
-	{"newdir", app.ScreenBrowse, app.DialogNewDir, func(t *testing.T) *scene { sc := newScene(t); sc.keys(char('n')); return sc }},
-	{"exec", app.ScreenBrowse, app.DialogExec, func(t *testing.T) *scene {
+	{"help", app.RoleHelp, func(t *testing.T) *scene { sc := newScene(t); sc.keys(char('?')); return sc }},
+	{"path", app.RolePath, func(t *testing.T) *scene { sc := newScene(t); sc.keys(char('g')); return sc }},
+	{"rename", app.RoleRename, func(t *testing.T) *scene { sc := newScene(t); sc.moveTo("README.md"); sc.keys(char('r')); return sc }},
+	{"newdir", app.RoleNewDir, func(t *testing.T) *scene { sc := newScene(t); sc.keys(char('n')); return sc }},
+	{"exec", app.RoleExec, func(t *testing.T) *scene {
 		sc := newScene(t)
 		sc.moveTo("setup.exe")
 		sc.keys(key(keys.KeyEnter))
 		return sc
 	}},
-	{"confirm", app.ScreenConfirm, app.DialogNone, func(t *testing.T) *scene { sc, _ := newOpScene(t, fsops.OpCopy, nil, nil); return sc }},
-	{"conflicts", app.ScreenConflicts, app.DialogNone, func(t *testing.T) *scene {
+	{"confirm", app.RoleConfirm, func(t *testing.T) *scene { sc, _ := newOpScene(t, fsops.OpCopy, nil, nil); return sc }},
+	{"conflicts", app.RoleConflicts, func(t *testing.T) *scene {
 		sc, _ := newOpScene(t, fsops.OpCopy, nil, nil)
 		sc.draw(80, 24)
 		sc.keys(key(keys.KeyEnter))
 		return sc
 	}},
-	{"progress", app.ScreenProgress, app.DialogNone, func(t *testing.T) *scene {
+	{"progress", app.RoleProgress, func(t *testing.T) *scene {
 		sc, _ := newOpScene(t, fsops.OpCopy, nil, nil)
 		sc.draw(80, 24)
 		sc.keys(key(keys.KeyEnter))
@@ -85,7 +84,7 @@ var matrixStates = []matrixState{
 		sc.keys(key(keys.KeyEnter))
 		return sc
 	}},
-	{"cancelask", app.ScreenProgress, app.DialogNone, func(t *testing.T) *scene {
+	{"cancelask", app.RoleCancelAsk, func(t *testing.T) *scene {
 		sc, _ := newOpScene(t, fsops.OpCopy, nil, nil)
 		sc.draw(80, 24)
 		sc.keys(key(keys.KeyEnter))
@@ -94,7 +93,7 @@ var matrixStates = []matrixState{
 		sc.keys(key(keys.KeyEnter), key(keys.KeyEsc))
 		return sc
 	}},
-	{"result", app.ScreenResult, app.DialogNone, func(t *testing.T) *scene {
+	{"result", app.RoleResult, func(t *testing.T) *scene {
 		var plan *opPlan
 		sc, p := newOpScene(t, fsops.OpCopy, failedResult(&plan), nil)
 		plan = p
@@ -104,7 +103,7 @@ var matrixStates = []matrixState{
 		sc.keys(key(keys.KeyEnter))
 		return sc
 	}},
-	{"delete", app.ScreenDelete, app.DialogNone, func(t *testing.T) *scene {
+	{"delete", app.RoleDelete, func(t *testing.T) *scene {
 		sc, _ := newOpScene(t, fsops.OpCopy, nil, nil)
 		sc.keys(key(keys.KeyEsc), key(keys.KeyDown), char('D')) // .. の次の項目を完全削除する
 		return sc
@@ -174,8 +173,8 @@ func TestKeyMatrix(t *testing.T) {
 	header := []string{"# event"}
 	for i, st := range matrixStates {
 		sc := st.build(t)
-		if sc.a.Screen() != st.screen || sc.a.Dialog() != st.dialog {
-			t.Fatalf("%s: screen %v dialog %v, want %v %v", st.name, sc.a.Screen(), sc.a.Dialog(), st.screen, st.dialog)
+		if top(sc.a) != st.role {
+			t.Fatalf("%s: top %v, want %v", st.name, top(sc.a), st.role)
 		}
 		scenes[i] = sc
 		header = append(header, st.name)

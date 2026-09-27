@@ -51,12 +51,6 @@ type DeleteView struct {
 	Warnings        []string
 }
 
-// Delete は、完全削除の確認の内容を返す（ScreenDelete のとき）。
-func (a *App) Delete() DeleteView {
-	v, _ := ModalView[DeleteView](a)
-	return v
-}
-
 // deleteView は、流れ f の完全削除の確認の内容。
 func deleteView(f *flow) DeleteView {
 	op := f

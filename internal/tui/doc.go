@@ -2,9 +2,10 @@
 //
 // 2 つの部分からなる。
 //   - 土台: term・keys・screen を組み合わせたイベントループ（Loop）と、panic とシグナルからの復元（フェーズ16）。
-//   - ファイラーのメイン画面（Filer。フェーズ18）: app の状態を描き、キー入力を app の操作（app.Action）に変える。
+//   - ファイラーのメイン画面（Filer。フェーズ18・23）: app の状態を描き、キー入力を app の操作（app.Action）に変える。
 //     画面の状態は app が持ち、Filer は持たない（filer §4）。app の Cmd は Loop.Go で動かし、結果を Post で app に返す（filer §10）。
-//     ペインを横に並べる構成とキーの割り当ては、filer §15 で決めるまでの案。変えるときは Filer だけを変える。
+//     キーは keymap の表で、app.FocusPath に沿って解決する。作業場（2 ペインと Yazi 風。表示形式は Filer が持つ）を描き、
+//     その上に app.Modals を、役割ごとの配置と描き方の表（placement.go）で描く。配置の補助は layout.go、見た目は theme.go。
 //
 // # API
 //

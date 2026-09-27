@@ -51,12 +51,6 @@ type ConflictsView struct {
 	UnsetOnly       bool
 }
 
-// Conflicts は、衝突の画面の内容を返す（ScreenConflicts のとき）。
-func (a *App) Conflicts() ConflictsView {
-	v, _ := ModalView[ConflictsView](a)
-	return v
-}
-
 // conflictsView は、衝突の画面の内容。カーソルは、読むときに一覧の中に収める（決定で一覧が短くなったとき）。
 func (c *conflictsComp) conflictsView() ConflictsView {
 	f := c.f
@@ -144,8 +138,8 @@ func conflictByID(cs []fsops.Conflict, id fsops.ConflictID) (fsops.Conflict, boo
 	return cs[id-1], true
 }
 
-// SetConflictRows は、衝突の一覧を描いた行数を覚える（ページ単位の移動に使う）。
-func (a *App) SetConflictRows(n int) {
+// setConflictRows は、衝突の一覧を描いた行数を覚える（ページ単位の移動に使う）。
+func (a *App) setConflictRows(n int) {
 	for _, m := range a.modals {
 		if c, ok := m.c.(*conflictsComp); ok {
 			c.rows = n

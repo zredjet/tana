@@ -66,8 +66,8 @@ func TestDialogKeepsKeys(t *testing.T) {
 		plan.warnings = append(plan.warnings, &fsops.OpError{Kind: fsops.KindPermission, Path: colHome + "/w" + strconv.Itoa(i)})
 	}
 	sc.keys(key(keys.KeyEsc), key(keys.KeyDown), char('D'))
-	if sc.a.Screen() != app.ScreenDelete {
-		t.Fatalf("screen %v", sc.a.Screen())
+	if top(sc.a) != app.RoleDelete {
+		t.Fatalf("top %v", top(sc.a))
 	}
 	s := sc.draw(80, 24)
 	out := render(s)

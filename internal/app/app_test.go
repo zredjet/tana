@@ -457,18 +457,18 @@ func TestOpenExecutable(t *testing.T) {
 	h := newHarness(t, nil, root)
 	h.moveTo(name)
 	h.do(ActEnter)
-	if h.a.Dialog() != DialogExec || h.a.ExecName() != name {
-		t.Fatalf("dialog %v %q, want the exec confirmation", h.a.Dialog(), h.a.ExecName())
+	if h.top() != RoleExec || modal[ExecView](h).Name != name {
+		t.Fatalf("top %v %q, want the exec confirmation", h.top(), modal[ExecView](h).Name)
 	}
 	h.do(ActYes) // 描く前に届いた y（先行入力）
-	if len(h.opened) != 0 || h.a.Dialog() != DialogExec {
+	if len(h.opened) != 0 || h.top() != RoleExec {
 		t.Fatalf("confirmed by a key that came before the dialog was drawn (U2): opened %q", h.opened)
 	}
 	h.a.Drawn()
 	h.act(Action{Kind: ActInsert, Text: "y"}) // 貼り付け・文字の入力では確定しない
 	h.do(ActNo)
-	if len(h.opened) != 0 || h.a.Dialog() != DialogNone {
-		t.Fatalf("n: opened %q, dialog %v", h.opened, h.a.Dialog())
+	if len(h.opened) != 0 || h.top() != RoleNone {
+		t.Fatalf("n: opened %q, top %v", h.opened, h.top())
 	}
 	h.do(ActEnter)
 	h.a.Drawn()
@@ -497,23 +497,23 @@ func TestGoPath(t *testing.T) {
 	root := tree(t)
 	h := newHarness(t, nil, root)
 	h.do(ActGoPath)
-	if h.a.Dialog() != DialogPath || h.a.PathEditor().Text() != root {
-		t.Fatalf("dialog %v, text %q, want the path input with the current folder", h.a.Dialog(), h.a.PathEditor().Text())
+	if h.top() != RolePath || modal[PathView](h).Edit.Text() != root {
+		t.Fatalf("top %v, text %q, want the path input with the current folder", h.top(), modal[PathView](h).Edit.Text())
 	}
 	h.act(Action{Kind: ActInsert, Text: string(filepath.Separator) + "sub"})
 	h.do(ActSubmit)
-	if got := h.pane(0).Dir(); got != filepath.Join(root, "sub") || h.a.Dialog() != DialogNone {
-		t.Errorf("Dir = %q, dialog %v", got, h.a.Dialog())
+	if got := h.pane(0).Dir(); got != filepath.Join(root, "sub") || h.top() != RoleNone {
+		t.Errorf("Dir = %q, top %v", got, h.top())
 	}
 	h.do(ActGoPath)
 	h.act(Action{Kind: ActInsert, Text: "zzz"})
 	h.do(ActCancel)
-	if h.a.Dialog() != DialogNone || h.pane(0).Dir() != filepath.Join(root, "sub") {
+	if h.top() != RoleNone || h.pane(0).Dir() != filepath.Join(root, "sub") {
 		t.Error("Esc in the path input")
 	}
 	h.do(ActGoPath)
 	h.do(ActLineHome)
-	for range len(h.a.PathEditor().Text()) {
+	for range len(modal[PathView](h).Edit.Text()) {
 		h.do(ActDelete)
 	}
 	h.act(Action{Kind: ActInsert, Text: filepath.Join(root, "missing")})
@@ -867,7 +867,7 @@ func TestEnterDir(t *testing.T) {
 		h.moveTo("filelink")
 		h.do(ActEnterDir)
 	}
-	if len(h.opened) != 0 || h.pane(0).Dir() != root || h.a.Dialog() != DialogNone {
+	if len(h.opened) != 0 || h.pane(0).Dir() != root || h.top() != RoleNone {
 		t.Errorf("EnterDir on files: opened %q, Dir %q", h.opened, h.pane(0).Dir())
 	}
 	h.moveTo("sub")
@@ -938,4 +938,13 @@ func TestMessageClearedInDialog(t *testing.T) {
 	h.a.setMessage("届いた結果", true) // ダイアログを開いている間に届いた結果（作業用の goroutine から）
 	h.act(Action{Kind: ActInsert, Text: "x"})
 	h.wantMessage("")
+}
+
+// top は、一番上の重ねる部品の役割（なければ RoleNone）。
+func (h *harness) top() Role { return h.a.topRole() }
+
+// modal は、重ねた部品のうち、内容の型が T の一番上のもの（なければ零値）。
+func modal[T View](h *harness) T {
+	v, _ := ModalView[T](h.a)
+	return v
 }

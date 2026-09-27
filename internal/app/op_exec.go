@@ -22,15 +22,9 @@ type ProgressView struct {
 	Elapsed               time.Duration
 	Speed                 float64       // 毎秒のバイト数（0 なら分からない）
 	Remaining             time.Duration // 負なら分からない
-	AskCancel, Canceling  bool
+	Canceling             bool
 	Unresponsive          bool
 	TrashDialog           bool // ごみ箱へ移動中に進捗が変わらない。Windows の確認ダイアログが開いている可能性がある（filer §8.4）
-}
-
-// Progress は、進捗の画面の内容を返す（ScreenProgress のとき）。
-func (a *App) Progress() ProgressView {
-	v, _ := ModalView[ProgressView](a)
-	return v
 }
 
 // progress は、流れ f の進捗の内容（runner）。速度・残り時間・経過時間は UI が計算する（filer §8.4）。
@@ -73,12 +67,8 @@ type progressComp struct {
 
 func (*progressComp) role() Role { return RoleProgress }
 
-// view: 中止の確認を重ねている間も、その下に進捗を出す。
-func (c *progressComp) view(a *App) View {
-	v := c.r.progress(a)
-	v.AskCancel = a.topRole() == RoleCancelAsk
-	return v
-}
+// view: 中止の確認を重ねている間も、その下に進捗を出す（中止の確認は別の部品）。
+func (c *progressComp) view(a *App) View { return c.r.progress(a) }
 
 func (c *progressComp) commands() commandTable {
 	return commandTable{
@@ -302,14 +292,6 @@ type OutcomeCount struct {
 var outcomeOrder = []fsops.Outcome{fsops.OutcomeTrashUnconfirmed, fsops.OutcomeCopiedSourceKept, fsops.OutcomeFailed,
 	fsops.OutcomePartial, fsops.OutcomeSkipped, fsops.OutcomeDone}
 
-// Result は、結果の画面の内容を返す（ScreenResult のとき。直前の操作の結果）。
-func (a *App) Result() ResultView {
-	if a.last == nil {
-		return ResultView{}
-	}
-	return a.last.view()
-}
-
 // view は、結果の画面の内容。
 func (r *resultState) view() ResultView {
 	v := ResultView{Op: r.op, Status: r.res.Status, From: r.from, To: r.to, English: r.english, Untrashable: len(r.untrashable)}
@@ -399,8 +381,8 @@ func (r *resultState) reason(it fsops.ItemResult) string {
 	return strings.Join(parts, "。")
 }
 
-// SetResultRows は、結果の一覧を描いた行数を覚える（ページ単位の移動に使う）。
-func (a *App) SetResultRows(n int) {
+// setResultRows は、結果の一覧を描いた行数を覚える（ページ単位の移動に使う）。
+func (a *App) setResultRows(n int) {
 	if a.last != nil {
 		a.last.rows = n
 	}

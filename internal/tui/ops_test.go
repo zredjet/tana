@@ -97,8 +97,8 @@ func newOpScene(t *testing.T, op fsops.OpKind, exec func(ctx context.Context, op
 	} else {
 		sc.keys(char('p'))
 	}
-	if sc.a.Screen() != app.ScreenConfirm {
-		t.Fatalf("screen %v, want the confirmation", sc.a.Screen())
+	if top(sc.a) != app.RoleConfirm {
+		t.Fatalf("top %v, want the confirmation", top(sc.a))
 	}
 	return sc, plan
 }
@@ -109,8 +109,8 @@ func TestGoldenConfirmAndConflicts(t *testing.T) {
 	sc, _ := newOpScene(t, fsops.OpCopy, nil, nil)
 	golden(t, "op-confirm-80x24", sc.draw(80, 24))
 	sc.keys(key(keys.KeyEnter)) // 描いた後の Enter で、衝突の画面へ
-	if sc.a.Screen() != app.ScreenConflicts {
-		t.Fatalf("screen %v", sc.a.Screen())
+	if top(sc.a) != app.RoleConflicts {
+		t.Fatalf("top %v", top(sc.a))
 	}
 	golden(t, "op-conflicts-80x24", sc.draw(80, 24))
 
@@ -161,8 +161,8 @@ func TestGoldenProgress(t *testing.T) {
 	sc.draw(80, 24)
 	sc.hold = true
 	sc.keys(key(keys.KeyEnter)) // 衝突の画面で実行
-	if sc.a.Screen() != app.ScreenProgress || len(sc.held) != 1 {
-		t.Fatalf("screen %v, held %d", sc.a.Screen(), len(sc.held))
+	if top(sc.a) != app.RoleProgress || len(sc.held) != 1 {
+		t.Fatalf("top %v, held %d", top(sc.a), len(sc.held))
 	}
 	result := make(chan any, 1)
 	go func() { result <- sc.held[0].Run() }()
@@ -176,8 +176,8 @@ func TestGoldenProgress(t *testing.T) {
 	golden(t, "op-canceling-80x24", sc.draw(80, 24))
 	sc.hold = false
 	sc.run(sc.a.Update(<-result))
-	if sc.a.Screen() != app.ScreenResult {
-		t.Fatalf("screen %v after canceling", sc.a.Screen())
+	if top(sc.a) != app.RoleResult {
+		t.Fatalf("top %v after canceling", top(sc.a))
 	}
 }
 
@@ -203,8 +203,8 @@ func TestGoldenResult(t *testing.T) {
 	sc.keys(key(keys.KeyEnter))
 	sc.draw(80, 24)
 	sc.keys(key(keys.KeyEnter))
-	if sc.a.Screen() != app.ScreenResult {
-		t.Fatalf("screen %v", sc.a.Screen())
+	if top(sc.a) != app.RoleResult {
+		t.Fatalf("top %v", top(sc.a))
 	}
 	golden(t, "op-result-80x24", sc.draw(80, 24))
 	sc.keys(char(' '), char('e'))
@@ -252,10 +252,10 @@ func TestRunFilerCopy(t *testing.T) {
 		case step == 0 && a.Panes()[0].Loaded() && a.Panes()[1].Loaded():
 			step++
 			f.send("jy\tp") // hello.txt を覚え、右のペインに移って貼り付ける
-		case step == 1 && a.Screen() == app.ScreenConfirm:
+		case step == 1 && top(a) == app.RoleConfirm:
 			step++
 			f.send("\r") // 確認画面を描いた後の Enter
-		case step == 2 && a.Screen() == app.ScreenBrowse:
+		case step == 2 && top(a) == app.RoleNone:
 			if text, _ := a.Message(); text == msg.Done(fsops.OpCopy, 1, 0, false) {
 				step++
 				f.send("q")

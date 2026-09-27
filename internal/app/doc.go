@@ -16,5 +16,6 @@
 //   - 持ち主と ID: ファイル操作の流れ（flow.go）とペインは ID で引く。作業用の goroutine の結果は ID で届け先を決め、持ち主がいなければ捨てる。
 //     進捗と中止の確認の部品は、流れの型ではなく runner（止められる実行）だけを見る。
 //
-// Screen・Dialog・Planning などは、tui が今のキーの振り分けに使っている古い読み方で、道筋から求める（フェーズ23で keymap に置き換えて消す）。
+// tui が読むもの: 作業場のアクセサ（Panes・Active・Message・Preview など）、FocusPath（キーの表を引く順）、
+// Modals（重ねた部品の内容。View の型で描き方を選ぶ）。キーは tui の keymap が Action に変え、Action.Role の部品に届く。
 package app

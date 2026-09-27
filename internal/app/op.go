@@ -43,45 +43,6 @@ func newFsopsPlan(ctx context.Context, req fsops.Request) (Plan, error) {
 	return p, nil
 }
 
-// Screen は、ファイル操作の画面（ダイアログと違い、画面全体か中央に大きく出す）。
-type Screen int
-
-const (
-	ScreenBrowse    Screen = iota // 一覧（計画を作っている間も含む）
-	ScreenConfirm                 // 確認（filer §8.2）
-	ScreenConflicts               // 衝突の決定（filer §8.3）
-	ScreenProgress                // 進捗（filer §8.4）
-	ScreenResult                  // 結果（filer §8.5）
-	ScreenDelete                  // 完全削除の確認（filer §8.6）
-)
-
-// Screen は、いまのファイル操作の画面を返す（一番上の重ねる部品から求める。計画を作っている間とダイアログは ScreenBrowse）。
-func (a *App) Screen() Screen {
-	switch a.topRole() {
-	case RoleConfirm:
-		return ScreenConfirm
-	case RoleConflicts:
-		return ScreenConflicts
-	case RoleProgress, RoleCancelAsk:
-		return ScreenProgress
-	case RoleResult:
-		return ScreenResult
-	case RoleDelete:
-		return ScreenDelete
-	}
-	return ScreenBrowse
-}
-
-// Planning は、計画を作っていて 0.2 秒を超えた（「計画を作成中」を出す）かを返す。
-func (a *App) Planning() bool {
-	if m := a.top(); m != nil {
-		if c, ok := m.c.(*planningComp); ok {
-			return c.f.slow
-		}
-	}
-	return false
-}
-
 // PlanningView は、計画を作っている間の内容。
 type PlanningView struct {
 	Slow bool // 0.2 秒を超えた（「計画を作成中」を出す）
@@ -172,12 +133,6 @@ type ConfirmView struct {
 	Conflicts, TopLvl int
 	Warnings          []string
 	Untrashable       int // ごみ箱: 計画の時点でごみ箱に入らないと分かった項目の数（KindTrashUnavailable）
-}
-
-// Confirm は、確認画面の内容を返す（ScreenConfirm のとき）。
-func (a *App) Confirm() ConfirmView {
-	v, _ := ModalView[ConfirmView](a)
-	return v
 }
 
 // confirmView は、流れ f の確認画面の内容（filer §8.2）。

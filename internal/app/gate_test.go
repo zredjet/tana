@@ -62,53 +62,52 @@ func gateCopy(t *testing.T, root string, hold bool) *harness {
 // gateStates は、門を確かめる画面と、その作り方。root は tree で作ったフォルダ。
 // 描く前と後を比べる 2 つの harness は、同じ root で作る（状態を、パスを置き換えずにそのまま比べるため）。
 var gateStates = []struct {
-	name   string
-	screen Screen
-	dialog DialogKind
-	build  func(t *testing.T, root string) *harness
+	name  string
+	role  Role // 作った後の一番上の重ねる部品の役割
+	build func(t *testing.T, root string) *harness
 }{
-	{"help", ScreenBrowse, DialogHelp, func(t *testing.T, root string) *harness {
+	{"help", RoleHelp, func(t *testing.T, root string) *harness {
 		h := newHarness(t, nil, root)
 		h.do(ActHelp)
 		return h
 	}},
-	{"path", ScreenBrowse, DialogPath, func(t *testing.T, root string) *harness {
+	{"path", RolePath, func(t *testing.T, root string) *harness {
 		h := newHarness(t, nil, root)
 		h.do(ActGoPath)
 		return h
 	}},
-	{"rename", ScreenBrowse, DialogRename, func(t *testing.T, root string) *harness {
+	{"rename", RoleRename, func(t *testing.T, root string) *harness {
 		h := newHarness(t, nil, root)
 		h.moveTo("a.txt")
 		h.do(ActRename)
 		return h
 	}},
-	{"newdir", ScreenBrowse, DialogNewDir, func(t *testing.T, root string) *harness {
+	{"newdir", RoleNewDir, func(t *testing.T, root string) *harness {
 		h := newHarness(t, nil, root)
 		h.do(ActNewDir)
 		return h
 	}},
-	{"exec", ScreenBrowse, DialogExec, func(t *testing.T, root string) *harness {
+	{"exec", RoleExec, func(t *testing.T, root string) *harness {
 		h := newHarness(t, func(c *Config) { c.IsExecutable = func(string, bool) bool { return true } }, root)
 		h.moveTo("a.txt")
 		h.do(ActEnter)
 		return h
 	}},
-	{"planning", ScreenBrowse, DialogNone, func(t *testing.T, root string) *harness {
+	{"planning", RolePlanning, func(t *testing.T, root string) *harness {
 		h := gateCopy(t, root, true)
 		h.fire() // 0.2 秒が過ぎた（「計画を作成中」を出す。Planning で見分けられるように）
-		if !h.a.Planning() {
+		if !modal[PlanningView](h).Slow {
 			t.Fatal("no planning notice")
 		}
 		return h
 	}},
-	{"confirm", ScreenConfirm, DialogNone, func(t *testing.T, root string) *harness { return gateCopy(t, root, false) }},
-	{"conflicts", ScreenConflicts, DialogNone, func(t *testing.T, root string) *harness {
+	{"confirm", RoleConfirm, func(t *testing.T, root string) *harness { return gateCopy(t, root, false) }},
+	{"conflicts", RoleConflicts, func(t *testing.T, root string) *harness {
 		h := gateCopy(t, root, false)
 		h.confirm()
 		return h
 	}},
-	{"progress", ScreenProgress, DialogNone, func(t *testing.T, root string) *harness {
+	{"progress", RoleProgress, func(t *testing.T, root string) *harness {
 		h := gateCopy(t, root, false)
 		h.confirm()
 		h.a.Drawn()
@@ -116,7 +115,7 @@ var gateStates = []struct {
 		h.do(ActSubmit) // 実行は held に残す
 		return h
 	}},
-	{"cancelask", ScreenProgress, DialogNone, func(t *testing.T, root string) *harness {
+	{"cancelask", RoleCancelAsk, func(t *testing.T, root string) *harness {
 		h := gateCopy(t, root, false)
 		h.confirm()
 		h.a.Drawn()
@@ -125,13 +124,13 @@ var gateStates = []struct {
 		h.do(ActCancel)
 		return h
 	}},
-	{"result", ScreenResult, DialogNone, func(t *testing.T, root string) *harness {
+	{"result", RoleResult, func(t *testing.T, root string) *harness {
 		h := gateCopy(t, root, false)
 		h.confirm()
 		h.confirm()
 		return h
 	}},
-	{"result-trash", ScreenResult, DialogNone, func(t *testing.T, root string) *harness {
+	{"result-trash", RoleResult, func(t *testing.T, root string) *harness {
 		fp := &fakePlan{}
 		fp.exec = trashResult(fp, map[string]fsops.ItemResult{"a.txt": {Outcome: fsops.OutcomeFailed, Err: unavailable()}})
 		h := trashHarnessAt(t, root, fp, new([]fsops.OpKind), nil)
@@ -140,7 +139,7 @@ var gateStates = []struct {
 		h.confirm()
 		return h
 	}},
-	{"delete", ScreenDelete, DialogNone, func(t *testing.T, root string) *harness {
+	{"delete", RoleDelete, func(t *testing.T, root string) *harness {
 		h := trashHarnessAt(t, root, &fakePlan{}, new([]fsops.OpKind), nil)
 		h.moveTo("a.txt")
 		h.do(ActPurge)
@@ -172,36 +171,24 @@ func init() {
 }
 
 // gateSig は、門で比べる状態（メッセージ行は除く。キー入力のたびに門より前で消すため）。
+// 重ねた部品の内容をすべて書く（入力欄は、ポインタでなく文字列とカーソルの位置）。
 func gateSig(h *harness) string {
 	a := h.a
 	var b strings.Builder
-	fmt.Fprintf(&b, "screen=%v dialog=%v quit=%v planning=%v opened=%d active=%d held=%d", a.Screen(), a.Dialog(), a.Quit(), a.Planning(),
-		len(h.opened), a.Active(), len(h.held))
+	fmt.Fprintf(&b, "path=%v quit=%v opened=%d active=%d held=%d", a.FocusPath(), a.Quit(), len(h.opened), a.Active(), len(h.held))
 	for i, p := range a.Panes() {
 		_, marks, _ := p.Counts()
 		fmt.Fprintf(&b, " pane%d=%s:%d:%d", i, p.Dir(), p.Cursor(), marks)
 	}
-	switch a.Screen() {
-	case ScreenConfirm:
-		fmt.Fprintf(&b, " %+v", a.Confirm())
-	case ScreenConflicts:
-		fmt.Fprintf(&b, " %+v", a.Conflicts())
-	case ScreenProgress:
-		fmt.Fprintf(&b, " %+v", a.Progress())
-	case ScreenResult:
-		fmt.Fprintf(&b, " %+v", a.Result())
-	case ScreenDelete:
-		fmt.Fprintf(&b, " %+v", a.Delete())
-	}
-	switch a.Dialog() {
-	case DialogPath:
-		e := a.PathEditor()
-		fmt.Fprintf(&b, " edit=%q@%d", e.Text(), e.Cursor())
-	case DialogRename, DialogNewDir:
-		v := a.NameDialog()
-		fmt.Fprintf(&b, " edit=%q@%d err=%q busy=%v", v.Edit.Text(), v.Edit.Cursor(), v.Err, v.Busy)
-	case DialogExec:
-		b.WriteString(" exec=" + a.ExecName())
+	for _, v := range a.Modals() {
+		switch v := v.(type) {
+		case PathView:
+			fmt.Fprintf(&b, " path=%q@%d", v.Edit.Text(), v.Edit.Cursor())
+		case NameView:
+			fmt.Fprintf(&b, " name=%q@%d err=%q busy=%v", v.Edit.Text(), v.Edit.Cursor(), v.Err, v.Busy)
+		default:
+			fmt.Fprintf(&b, " %T%+v", v, v)
+		}
 	}
 	return b.String()
 }
@@ -222,8 +209,8 @@ func TestGateTable(t *testing.T) {
 			for k := ActUp; k <= ActNewDir; k++ {
 				root := tree(t)
 				before := st.build(t, root)
-				if before.a.Screen() != st.screen || before.a.Dialog() != st.dialog {
-					t.Fatalf("built screen %v dialog %v, want %v %v", before.a.Screen(), before.a.Dialog(), st.screen, st.dialog)
+				if before.top() != st.role {
+					t.Fatalf("built top %v, want %v", before.top(), st.role)
 				}
 				initB := gateSig(before)
 				before.act(gateAction(k))
@@ -276,8 +263,8 @@ func progressHarness(t *testing.T, now *time.Time) (h *harness, next chan struct
 	h.pasteInto("a.txt", 1, ActPasteCopy)
 	h.hold = true
 	h.confirm()
-	if h.a.Screen() != ScreenProgress || len(h.held) != 1 {
-		t.Fatalf("screen %v, held %d", h.a.Screen(), len(h.held))
+	if h.top() != RoleProgress || len(h.held) != 1 {
+		t.Fatalf("top %v, held %d", h.top(), len(h.held))
 	}
 	run := h.held[0]
 	h.held = nil
@@ -295,13 +282,13 @@ func TestRefreshWhileAsking(t *testing.T) {
 	<-sent
 	h.a.Refresh()
 	h.do(ActCancel) // 中止の確認
-	if !h.a.Progress().AskCancel {
+	if h.top() != RoleCancelAsk {
 		t.Fatal("no cancel question")
 	}
 	next <- struct{}{}
 	<-sent
 	h.a.Refresh()
-	if p := h.a.Progress(); p.DoneFiles != 2 || !p.AskCancel {
+	if p := modal[ProgressView](h); p.DoneFiles != 2 || h.top() != RoleCancelAsk {
 		t.Errorf("progress while asking: %+v, want 2 files done", p)
 	}
 }
@@ -319,7 +306,7 @@ func TestTickWhileAsking(t *testing.T) {
 	if len(h.delayed) != n+1 {
 		t.Errorf("delayed %d after a tick while asking, want %d (the next tick)", len(h.delayed), n+1)
 	}
-	if p := h.a.Progress(); p.Elapsed != 3*time.Second || !p.AskCancel {
+	if p := modal[ProgressView](h); p.Elapsed != 3*time.Second || h.top() != RoleCancelAsk {
 		t.Errorf("progress %+v, want 3 s elapsed while asking", p)
 	}
 }
@@ -330,20 +317,20 @@ func TestLastResultKeepsState(t *testing.T) {
 	h := gateCopy(t, tree(t), false)
 	h.confirm()
 	h.confirm()
-	if h.a.Screen() != ScreenResult {
-		t.Fatalf("screen %v", h.a.Screen())
+	if h.top() != RoleResult {
+		t.Fatalf("top %v", h.top())
 	}
 	h.do(ActToggle)  // 最初の項目の中を展開する
 	h.do(ActEnglish) // 英語の詳細
 	h.do(ActDown)
-	want := h.a.Result()
+	want := modal[ResultView](h)
 	h.a.Drawn()
 	h.do(ActSubmit)
-	if h.a.Screen() != ScreenBrowse {
-		t.Fatalf("screen %v after closing the result", h.a.Screen())
+	if h.top() != RoleNone {
+		t.Fatalf("top %v after closing the result", h.top())
 	}
 	h.do(ActLastResult)
-	if got := h.a.Result(); fmt.Sprintf("%+v", got) != fmt.Sprintf("%+v", want) {
+	if got := modal[ResultView](h); fmt.Sprintf("%+v", got) != fmt.Sprintf("%+v", want) {
 		t.Errorf("reopened result:\n got %+v\nwant %+v", got, want)
 	}
 }
@@ -355,12 +342,11 @@ func TestExecNotUnderOverlay(t *testing.T) {
 	for _, tt := range []struct {
 		name    string
 		overlay func(h *harness)
-		screen  Screen
-		dialog  DialogKind
+		role    Role // 残るべき一番上の部品
 	}{
-		{"help", func(h *harness) { h.do(ActHelp) }, ScreenBrowse, DialogHelp},
-		{"path", func(h *harness) { h.do(ActGoPath) }, ScreenBrowse, DialogPath},
-		{"last result", func(h *harness) { h.do(ActLastResult) }, ScreenResult, DialogNone},
+		{"help", func(h *harness) { h.do(ActHelp) }, RoleHelp},
+		{"path", func(h *harness) { h.do(ActGoPath) }, RolePath},
+		{"last result", func(h *harness) { h.do(ActLastResult) }, RoleResult},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -382,16 +368,16 @@ func TestExecNotUnderOverlay(t *testing.T) {
 			h.do(ActEnter) // 開く前の確認（実行ファイルか）は held に残る
 			tt.overlay(h)
 			h.release()
-			if h.a.Screen() != tt.screen || h.a.Dialog() != tt.dialog {
-				t.Fatalf("screen %v dialog %v, want the %s kept (the exec confirmation must not replace or hide under it)", h.a.Screen(), h.a.Dialog(), tt.name)
+			if h.top() != tt.role {
+				t.Fatalf("top %v, want the %s kept (the exec confirmation must not replace or hide under it)", h.top(), tt.name)
 			}
 			h.a.Drawn()
 			h.do(ActCancel) // ほかの画面を閉じる
-			if tt.screen == ScreenResult {
+			if tt.role == RoleResult {
 				h.do(ActSubmit)
 			}
-			if h.a.Screen() != ScreenBrowse || h.a.Dialog() != DialogNone || len(h.opened) != 0 {
-				t.Errorf("after closing: screen %v dialog %v opened %q, want nothing left", h.a.Screen(), h.a.Dialog(), h.opened)
+			if h.top() != RoleNone || h.top() != RoleNone || len(h.opened) != 0 {
+				t.Errorf("after closing: top %v opened %q, want nothing left", h.top(), h.opened)
 			}
 		})
 	}
@@ -408,8 +394,8 @@ func TestExecNotUnderOverlay(t *testing.T) {
 		h.do(ActHelp)
 		h.release()
 		h.release()
-		if h.a.Dialog() != DialogHelp {
-			t.Errorf("dialog %v, want the help kept", h.a.Dialog())
+		if h.top() != RoleHelp {
+			t.Errorf("top %v, want the help kept", h.top())
 		}
 	})
 }

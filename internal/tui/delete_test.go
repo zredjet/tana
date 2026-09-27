@@ -92,18 +92,18 @@ func TestGoldenTrash(t *testing.T) {
 	sc.keys(char(' '))
 	sc.moveTo("data.csv")
 	sc.keys(char(' '), char('d'))
-	if sc.a.Screen() != app.ScreenConfirm {
-		t.Fatalf("screen %v", sc.a.Screen())
+	if top(sc.a) != app.RoleConfirm {
+		t.Fatalf("top %v", top(sc.a))
 	}
 	golden(t, "trash-confirm-80x24", sc.draw(80, 24))
 	sc.keys(key(keys.KeyEnter))
-	if sc.a.Screen() != app.ScreenResult {
-		t.Fatalf("screen %v, want the result", sc.a.Screen())
+	if top(sc.a) != app.RoleResult {
+		t.Fatalf("top %v, want the result", top(sc.a))
 	}
 	golden(t, "trash-result-80x24", sc.draw(80, 24))
 	sc.keys(char('D'))
-	if sc.a.Screen() != app.ScreenDelete {
-		t.Fatalf("screen %v, want the deletion confirmation", sc.a.Screen())
+	if top(sc.a) != app.RoleDelete {
+		t.Fatalf("top %v, want the deletion confirmation", top(sc.a))
 	}
 	golden(t, "delete-from-trash-80x24", sc.draw(80, 24))
 }
@@ -119,8 +119,8 @@ func TestGoldenTrashNone(t *testing.T) {
 	sc.keys(char(' '), char('d'))
 	golden(t, "trash-none-80x24", sc.draw(80, 24))
 	sc.keys(char('D'))
-	if sc.a.Screen() != app.ScreenDelete || !sc.a.Delete().FromTrash {
-		t.Fatalf("screen %v, want the deletion confirmation from the trash", sc.a.Screen())
+	if top(sc.a) != app.RoleDelete || !modal[app.DeleteView](sc.a).FromTrash {
+		t.Fatalf("top %v, want the deletion confirmation from the trash", top(sc.a))
 	}
 }
 
@@ -130,8 +130,8 @@ func TestGoldenDelete(t *testing.T) {
 	t.Parallel()
 	sc := deleteScene(t, &listPlan{}, nil)
 	sc.keys(char('a'), char('D'))
-	if sc.a.Screen() != app.ScreenDelete {
-		t.Fatalf("screen %v", sc.a.Screen())
+	if top(sc.a) != app.RoleDelete {
+		t.Fatalf("top %v", top(sc.a))
 	}
 	golden(t, "delete-80x24", sc.draw(80, 24))
 	sc.keys(key(keys.KeyEsc), char('a')) // マークを外す
@@ -162,17 +162,17 @@ func TestDeleteKeys(t *testing.T) {
 	})
 	sc.moveTo("README.md")
 	sc.keys(char('D'), char('y')) // 描く前の y
-	if sc.a.Screen() != app.ScreenDelete {
-		t.Fatalf("screen %v", sc.a.Screen())
+	if top(sc.a) != app.RoleDelete {
+		t.Fatalf("top %v", top(sc.a))
 	}
 	sc.draw(80, 24)
 	sc.keys(paste("y"), paste("\r")) // 貼り付けはコマンドとして解釈しない（tui §5）
-	if sc.a.Screen() != app.ScreenDelete || ran {
+	if top(sc.a) != app.RoleDelete || ran {
 		t.Fatal("a paste confirmed or closed the deletion (U2)")
 	}
 	sc.keys(key(keys.KeyEnter)) // Enter はやめる
-	if sc.a.Screen() != app.ScreenBrowse || ran {
-		t.Fatalf("Enter: screen %v, ran %v", sc.a.Screen(), ran)
+	if top(sc.a) != app.RoleNone || ran {
+		t.Fatalf("Enter: top %v, ran %v", top(sc.a), ran)
 	}
 	sc.keys(char('D'))
 	sc.draw(80, 24)
@@ -224,13 +224,13 @@ func TestGoldenName(t *testing.T) {
 		sc.keys(char(r))
 	}
 	sc.keys(key(keys.KeyEnter))
-	if sc.a.Dialog() != app.DialogRename || sc.a.NameDialog().Err != msg.Kind(fsops.KindExist) {
-		t.Fatalf("dialog %v, error %q", sc.a.Dialog(), sc.a.NameDialog().Err)
+	if top(sc.a) != app.RoleRename || modal[app.NameView](sc.a).Err != msg.Kind(fsops.KindExist) {
+		t.Fatalf("top %v, error %q", top(sc.a), modal[app.NameView](sc.a).Err)
 	}
 	golden(t, "rename-80x24", sc.draw(80, 24))
 	sc.keys(key(keys.KeyEsc), char('n'))
 	sc.keys(paste("新しい\nフォルダ")) // 改行を除いて入れる
-	if got := sc.a.NameDialog().Edit.Text(); got != "新しいフォルダ" {
+	if got := modal[app.NameView](sc.a).Edit.Text(); got != "新しいフォルダ" {
 		t.Errorf("pasted %q", got)
 	}
 	golden(t, "newdir-80x24", sc.draw(80, 24))
@@ -257,10 +257,10 @@ func TestRunFilerDelete(t *testing.T) {
 		case step == 0 && a.Panes()[0].Loaded():
 			step++
 			f.send("jD") // old.txt（.. の次）
-		case step == 1 && a.Screen() == app.ScreenDelete:
+		case step == 1 && top(a) == app.RoleDelete:
 			step++
 			f.send("y") // 確認を描いた後の y
-		case step == 2 && a.Screen() == app.ScreenBrowse:
+		case step == 2 && top(a) == app.RoleNone:
 			if text, _ := a.Message(); text == msg.Done(fsops.OpDelete, 1, 0, false) {
 				step++
 				f.send("q")

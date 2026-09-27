@@ -66,18 +66,6 @@ func DefaultConfig(dirs []string) Config {
 	}
 }
 
-// DialogKind は、開いているダイアログの種類。
-type DialogKind int
-
-const (
-	DialogNone   DialogKind = iota
-	DialogPath              // パスの入力（g）
-	DialogExec              // 実行ファイルを開く前の確認（filer §7）
-	DialogHelp              // ヘルプ
-	DialogRename            // 名前の変更（filer §8.7）
-	DialogNewDir            // 新しいフォルダ（filer §8.7）
-)
-
 // App は、画面の状態。
 type App struct {
 	cfg        Config
@@ -164,43 +152,6 @@ func (a *App) ShowHidden() bool { return a.showHidden }
 
 // Message は、メッセージ行の文言と、それがエラーかを返す。
 func (a *App) Message() (text string, isErr bool) { return a.message, a.messageErr }
-
-// Dialog は、開いているダイアログの種類を返す（一番上の重ねる部品から求める）。
-func (a *App) Dialog() DialogKind {
-	switch a.topRole() {
-	case RoleHelp:
-		return DialogHelp
-	case RolePath:
-		return DialogPath
-	case RoleExec:
-		return DialogExec
-	case RoleRename:
-		return DialogRename
-	case RoleNewDir:
-		return DialogNewDir
-	}
-	return DialogNone
-}
-
-// PathEditor は、パスの入力欄を返す（DialogPath のとき）。
-func (a *App) PathEditor() *lineedit.Editor {
-	if v, ok := ModalView[PathView](a); ok {
-		return v.Edit
-	}
-	return nil
-}
-
-// NameDialog は、名前の変更・新しいフォルダの画面の内容を返す（DialogRename・DialogNewDir のとき）。
-func (a *App) NameDialog() NameView {
-	v, _ := ModalView[NameView](a)
-	return v
-}
-
-// ExecName は、実行の確認で表示する名前を返す（DialogExec のとき）。
-func (a *App) ExecName() string {
-	v, _ := ModalView[ExecView](a)
-	return v.Name
-}
 
 // Now は、日時の表示に使う現在の時刻を返す。
 func (a *App) Now() time.Time { return a.cfg.Now() }

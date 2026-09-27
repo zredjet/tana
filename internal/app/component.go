@@ -236,9 +236,9 @@ func (a *App) Modals() []View {
 func (a *App) SetListRows(r Role, n int) {
 	switch r {
 	case RoleConflicts:
-		a.SetConflictRows(n)
+		a.setConflictRows(n)
 	case RoleResult:
-		a.SetResultRows(n)
+		a.setResultRows(n)
 	}
 }
 

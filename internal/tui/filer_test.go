@@ -14,6 +14,7 @@ import (
 
 	"github.com/zredjet/tana/internal/app"
 	"github.com/zredjet/tana/internal/fsops"
+	"github.com/zredjet/tana/internal/keymap"
 	"github.com/zredjet/tana/internal/keys"
 	"github.com/zredjet/tana/internal/msg"
 	"github.com/zredjet/tana/internal/screen"
@@ -331,8 +332,8 @@ func TestGoldenDialogs(t *testing.T) {
 
 	sc.moveTo("setup.exe")
 	sc.keys(key(keys.KeyEnter))
-	if sc.a.Dialog() != app.DialogExec {
-		t.Fatalf("dialog %v, want the exec confirmation", sc.a.Dialog())
+	if top(sc.a) != app.RoleExec {
+		t.Fatalf("top %v, want the exec confirmation", top(sc.a))
 	}
 	golden(t, "exec-80x24", sc.draw(80, 24))
 	sc.keys(char('n'))
@@ -391,12 +392,12 @@ func TestKeyMap(t *testing.T) {
 		{char('y'), app.ActYank}, {char('p'), app.ActPasteCopy}, {char('P'), app.ActPasteMove}, {char('L'), app.ActLastResult},
 		{char('h'), app.ActParent}, {char('l'), app.ActEnterDir},
 	} {
-		if act, ok := sc.f.action(tt.ev); !ok || act.Kind != tt.want {
+		if act, ok := sc.action(tt.ev); !ok || act.Kind != tt.want {
 			t.Errorf("%v: %v %v, want %v", tt.ev, act.Kind, ok, tt.want)
 		}
 	}
 	for _, ev := range []keys.Event{paste("q"), paste("D"), paste("\r"), ctrl('c'), char('x'), char('c'), char('m'), {Kind: keys.UnknownEvent, Raw: "\x1b[?1c"}} {
-		if act, ok := sc.f.action(ev); ok {
+		if act, ok := sc.action(ev); ok {
 			t.Errorf("%v: %v, want no action", ev, act)
 		}
 	}
@@ -410,7 +411,7 @@ func TestPastePath(t *testing.T) {
 	for _, tt := range []struct{ text, want string }{
 		{"C:\\x\nnext", "C:\\x"}, {"/a b\r\nnext", "/a b"}, {"/tmp\rnext", "/tmp"}, {"one", "one"}, {"\rnext", ""},
 	} {
-		act, ok := sc.f.action(paste(tt.text))
+		act, ok := sc.action(paste(tt.text))
 		if !ok || act.Kind != app.ActInsert || act.Text != tt.want {
 			t.Errorf("paste %q: %v %q %v, want insert %q", tt.text, act.Kind, act.Text, ok, tt.want)
 		}
@@ -611,10 +612,10 @@ func TestGoldenColumns(t *testing.T) {
 func TestColumnsKeys(t *testing.T) {
 	t.Parallel()
 	sc := newColumnsScene(t)
-	if act, _ := sc.f.action(key(keys.KeyLeft)); act.Kind != app.ActParent {
+	if act, _ := sc.action(key(keys.KeyLeft)); act.Kind != app.ActParent {
 		t.Errorf("Left in columns: %v, want ActParent", act.Kind)
 	}
-	if act, _ := sc.f.action(key(keys.KeyRight)); act.Kind != app.ActEnterDir {
+	if act, _ := sc.action(key(keys.KeyRight)); act.Kind != app.ActEnterDir {
 		t.Errorf("Right in columns: %v, want ActEnterDir", act.Kind)
 	}
 	sc.moveTo("写真")
@@ -632,11 +633,11 @@ func TestColumnsKeys(t *testing.T) {
 	if again := render(sc.draw(80, 24)); again != panes {
 		t.Error("switching the view twice changed the two-pane screen")
 	}
-	if act, _ := sc.f.action(key(keys.KeyLeft)); act.Kind != app.ActParent {
+	if act, _ := sc.action(key(keys.KeyLeft)); act.Kind != app.ActParent {
 		t.Errorf("Left in panes: %v, want ActParent (the same as in columns)", act.Kind)
 	}
 	sc.keys(char('g'), char('v')) // 入力欄では v は文字
-	if got := sc.a.PathEditor().Text(); !strings.HasSuffix(got, "v") || sc.f.view != viewPanes {
+	if got := modal[app.PathView](sc.a).Edit.Text(); !strings.HasSuffix(got, "v") || sc.f.view != viewPanes {
 		t.Errorf("v in the path input: %q, view %v", got, sc.f.view)
 	}
 }
@@ -660,7 +661,7 @@ func TestRedrawKey(t *testing.T) {
 		t.Fatalf("second flush without changes wrote %q", out)
 	}
 	sc.keys(char('g'), ctrl('l'))
-	if sc.a.Dialog() != app.DialogPath {
+	if top(sc.a) != app.RolePath {
 		t.Fatal("Ctrl+L closed the path input")
 	}
 	flush()
@@ -714,8 +715,8 @@ func TestPlanningKeys(t *testing.T) {
 	open := sc.held[0]
 	sc.held = nil
 	sc.keys(key(keys.KeyTab), char('p')) // 計画を作り始める（計画の処理は held に残る）
-	if sc.a.Screen() != app.ScreenBrowse || sc.a.Planning() || len(sc.held) != 1 {
-		t.Fatalf("screen %v planning %v held %d, want planning (not slow yet)", sc.a.Screen(), sc.a.Planning(), len(sc.held))
+	if top(sc.a) != app.RolePlanning || modal[app.PlanningView](sc.a).Slow || len(sc.held) != 1 {
+		t.Fatalf("top %v slow %v held %d, want planning (not slow yet)", top(sc.a), modal[app.PlanningView](sc.a).Slow, len(sc.held))
 	}
 	view := sc.f.view
 	sc.run(sc.a.Update(open.Run())) // 計画を作っている間に届いた結果
@@ -728,7 +729,7 @@ func TestPlanningKeys(t *testing.T) {
 		t.Error("v did not switch the view while planning")
 	}
 	sc.fire() // 0.2 秒が過ぎた（「計画を作成中」を出す）
-	if !sc.a.Planning() {
+	if !modal[app.PlanningView](sc.a).Slow {
 		t.Fatal("the planning notice is not shown")
 	}
 	sc.run(sc.a.Update(open.Run()))
@@ -755,4 +756,24 @@ func TestMessageClearedByAnyKey(t *testing.T) {
 			t.Errorf("%v: message %q remains", ev, text)
 		}
 	}
+}
+
+// top は、一番上の重ねる部品の役割（なければ RoleNone）。
+func top(a *app.App) app.Role {
+	if m := a.Modals(); len(m) > 0 {
+		return m[len(m)-1].Role()
+	}
+	return app.RoleNone
+}
+
+// modal は、重ねた部品のうち、内容の型が T の一番上のもの（なければ零値）。
+func modal[T app.View](a *app.App) T {
+	v, _ := app.ModalView[T](a)
+	return v
+}
+
+// action は、キー入力を app の操作に変える（tui の中だけの操作は false）。
+func (sc *scene) action(ev keys.Event) (app.Action, bool) {
+	act, loc, ok := sc.f.resolve(ev)
+	return act, ok && loc == keymap.LocalNone
 }

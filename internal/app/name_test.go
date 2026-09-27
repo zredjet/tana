@@ -43,17 +43,17 @@ func TestRenameUnchanged(t *testing.T) {
 	for _, n := range names {
 		h.moveTo(n)
 		h.do(ActRename)
-		if h.a.Dialog() != DialogRename {
-			t.Fatalf("%q: dialog %v", n, h.a.Dialog())
+		if h.top() != RoleRename {
+			t.Fatalf("%q: top %v", n, h.top())
 		}
-		v := h.a.NameDialog()
+		v := modal[NameView](h)
 		if v.Edit.Text() != n || v.Name != n || v.Edit.Cursor() != len(n)-len(".txt") {
 			t.Errorf("%q: editor %q cursor %d, name %q (want the enumerated bytes, the cursor before the extension)", n, v.Edit.Text(), v.Edit.Cursor(), v.Name)
 		}
 		h.do(ActLeft)
 		h.do(ActRight) // カーソルを動かすだけでは変更にならない
 		h.do(ActSubmit)
-		if h.a.Dialog() != DialogNone {
+		if h.top() != RoleNone {
 			t.Errorf("%q: the dialog stays open after Enter without a change", n)
 		}
 		if !exists(t, filepath.Join(root, n)) {
@@ -82,7 +82,7 @@ func TestRenameFromEnumeratedName(t *testing.T) {
 	if len(calls) != 1 || calls[0] != (renameCall{filepath.Join(root, old), want}) {
 		t.Fatalf("calls %q", calls)
 	}
-	if h.a.Dialog() != DialogNone {
+	if h.top() != RoleNone {
 		t.Error("the dialog stays open after renaming")
 	}
 	if !slices.Contains(h.names(0), want) || h.cursorName(0) != want {
@@ -101,25 +101,25 @@ func TestRenameErrors(t *testing.T) {
 	h.do(ActDelete)
 	h.act(Action{Kind: ActInsert, Text: "b"}) // b.txt はある
 	h.do(ActSubmit)
-	if h.a.Dialog() != DialogRename {
+	if h.top() != RoleRename {
 		t.Fatal("the dialog was closed on an error")
 	}
-	if v := h.a.NameDialog(); v.Err != msg.Kind(fsops.KindExist) || v.Edit.Text() != "b.txt" {
+	if v := modal[NameView](h); v.Err != msg.Kind(fsops.KindExist) || v.Edit.Text() != "b.txt" {
 		t.Errorf("error %q, text %q", v.Err, v.Edit.Text())
 	}
 	if readFile(t, filepath.Join(root, "b.txt")) != "x" || !exists(t, filepath.Join(root, "a.txt")) {
 		t.Error("the files changed")
 	}
 	h.act(Action{Kind: ActInsert, Text: "/"}) // 区切りを含む名前
-	if v := h.a.NameDialog(); v.Err != "" {
+	if v := modal[NameView](h); v.Err != "" {
 		t.Errorf("the error remains after editing: %q", v.Err)
 	}
 	h.do(ActSubmit)
-	if v := h.a.NameDialog(); v.Err != msg.Kind(fsops.KindInvalidName) {
+	if v := modal[NameView](h); v.Err != msg.Kind(fsops.KindInvalidName) {
 		t.Errorf("error %q, want %q", v.Err, msg.Kind(fsops.KindInvalidName))
 	}
 	h.do(ActCancel)
-	if h.a.Dialog() != DialogNone || !exists(t, filepath.Join(root, "a.txt")) {
+	if h.top() != RoleNone || !exists(t, filepath.Join(root, "a.txt")) {
 		t.Error("Esc")
 	}
 }
@@ -138,7 +138,7 @@ func TestRenameCaseOnly(t *testing.T) {
 	if got := h.names(0); !slices.Contains(got, "A.txt") || slices.Contains(got, "a.txt") {
 		t.Errorf("names %q, want A.txt instead of a.txt", got)
 	}
-	if v := h.a.NameDialog(); h.a.Dialog() != DialogNone {
+	if v := modal[NameView](h); h.top() != RoleNone {
 		t.Errorf("dialog open: %q", v.Err)
 	}
 }
@@ -150,7 +150,7 @@ func TestRenameParentOrEmpty(t *testing.T) {
 	h := newHarness(t, nil, root)
 	h.do(ActHome)
 	h.do(ActRename)
-	if h.a.Dialog() != DialogNone {
+	if h.top() != RoleNone {
 		t.Error("rename started on ..")
 	}
 }
@@ -162,10 +162,10 @@ func TestNewDir(t *testing.T) {
 	root := tree(t)
 	h := newHarness(t, nil, root)
 	h.do(ActNewDir)
-	if h.a.Dialog() != DialogNewDir {
-		t.Fatalf("dialog %v", h.a.Dialog())
+	if h.top() != RoleNewDir {
+		t.Fatalf("top %v", h.top())
 	}
-	if v := h.a.NameDialog(); v.Dir != root || v.Edit.Text() != "" {
+	if v := modal[NameView](h); v.Dir != root || v.Edit.Text() != "" {
 		t.Errorf("NameDialog = %+v", v)
 	}
 	h.act(Action{Kind: ActInsert, Text: "新しいフォルダ"})
@@ -173,14 +173,14 @@ func TestNewDir(t *testing.T) {
 	if fi, err := os.Stat(filepath.Join(root, "新しいフォルダ")); err != nil || !fi.IsDir() {
 		t.Fatalf("not created: %v", err)
 	}
-	if h.a.Dialog() != DialogNone || h.cursorName(0) != "新しいフォルダ" {
-		t.Errorf("dialog %v, cursor %q", h.a.Dialog(), h.cursorName(0))
+	if h.top() != RoleNone || h.cursorName(0) != "新しいフォルダ" {
+		t.Errorf("top %v, cursor %q", h.top(), h.cursorName(0))
 	}
 	h.do(ActNewDir)
 	h.act(Action{Kind: ActInsert, Text: "sub"})
 	h.do(ActSubmit)
-	if v := h.a.NameDialog(); h.a.Dialog() != DialogNewDir || v.Err != msg.Kind(fsops.KindExist) {
-		t.Errorf("dialog %v, error %q (want %q without the destination prefix)", h.a.Dialog(), v.Err, msg.Kind(fsops.KindExist))
+	if v := modal[NameView](h); h.top() != RoleNewDir || v.Err != msg.Kind(fsops.KindExist) {
+		t.Errorf("top %v, error %q (want %q without the destination prefix)", h.top(), v.Err, msg.Kind(fsops.KindExist))
 	}
 }
 
@@ -195,16 +195,16 @@ func TestNameAsync(t *testing.T) {
 	h.act(Action{Kind: ActInsert, Text: "z"})
 	h.hold = true
 	h.do(ActSubmit)
-	if v := h.a.NameDialog(); !v.Busy || len(h.held) != 1 {
+	if v := modal[NameView](h); !v.Busy || len(h.held) != 1 {
 		t.Fatalf("busy %v, held %d", v.Busy, len(h.held))
 	}
 	h.act(Action{Kind: ActInsert, Text: "q"})
 	h.do(ActSubmit)
-	if v := h.a.NameDialog(); v.Edit.Text() != "az.txt" || len(h.held) != 1 {
+	if v := modal[NameView](h); v.Edit.Text() != "az.txt" || len(h.held) != 1 {
 		t.Errorf("input accepted while busy: %q, held %d", v.Edit.Text(), len(h.held))
 	}
 	h.do(ActCancel)
-	if h.a.Dialog() != DialogNone {
+	if h.top() != RoleNone {
 		t.Fatal("Esc did not stop waiting")
 	}
 	h.release()

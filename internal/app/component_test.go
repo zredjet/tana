@@ -183,11 +183,11 @@ func TestRunnerComponents(t *testing.T) {
 	r := &fakeRunner{}
 	h.a.push(&progressComp{r: r}, r.ownerID())
 	h.a.settleFocus()
-	if v := h.a.Progress(); v.DoneFiles != 3 {
+	if v := modal[ProgressView](h); v.DoneFiles != 3 {
 		t.Fatalf("progress %+v", v)
 	}
 	h.do(ActCancel)
-	if !h.a.Progress().AskCancel || h.a.topRole() != RoleCancelAsk {
+	if h.top() != RoleCancelAsk {
 		t.Fatal("no cancel question over the runner's progress")
 	}
 	h.do(ActYes) // 描く前の y

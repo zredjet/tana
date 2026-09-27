@@ -111,12 +111,6 @@ func (f *Filer) resolve(ev keys.Event) (act app.Action, loc keymap.Local, ok boo
 	return r.Action, r.Local, r.OK
 }
 
-// action は、キー入力を app の操作に変える（テスト用。tui の中だけの操作は false）。
-func (f *Filer) action(ev keys.Event) (app.Action, bool) {
-	act, loc, ok := f.resolve(ev)
-	return act, ok && loc == keymap.LocalNone
-}
-
 // ---- 描画 ----
 
 // box は枠の文字（罫線は 4 端末とも 1 桁だった。filer §9.1）。

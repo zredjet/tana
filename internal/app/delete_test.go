@@ -91,10 +91,10 @@ func TestTrashFlow(t *testing.T) {
 	h, root := trashHarness(t, fp, &ops, nil)
 	h.moveTo("a.txt")
 	h.do(ActTrash)
-	if h.a.Screen() != ScreenConfirm {
-		t.Fatalf("screen %v, want the confirmation", h.a.Screen())
+	if h.top() != RoleConfirm {
+		t.Fatalf("top %v, want the confirmation", h.top())
 	}
-	v := h.a.Confirm()
+	v := modal[ConfirmView](h)
 	if v.Op != fsops.OpTrash || v.Count != 1 || v.Runnable != 1 || v.Untrashable != 0 || v.Dest != "" {
 		t.Errorf("Confirm = %+v", v)
 	}
@@ -119,25 +119,25 @@ func TestTrashNeverPurges(t *testing.T) {
 	h.markNames("a.txt", "b.txt")
 	h.do(ActTrash)
 	h.confirm()
-	if h.a.Screen() != ScreenResult {
-		t.Fatalf("screen %v, want the result (U3)", h.a.Screen())
+	if h.top() != RoleResult {
+		t.Fatalf("top %v, want the result (U3)", h.top())
 	}
 	if !exists(t, filepath.Join(root, "a.txt")) || !slices.Equal(ops, []fsops.OpKind{fsops.OpTrash}) {
 		t.Fatalf("the item that did not go to the trash was deleted or a deletion was planned without asking (I5, U2): plans %v", ops)
 	}
-	if v := h.a.Result(); v.Untrashable != 1 {
+	if v := modal[ResultView](h); v.Untrashable != 1 {
 		t.Errorf("Untrashable = %d, want 1", v.Untrashable)
 	}
 	h.do(ActPurge) // 結果の画面を描く前に届いた D
-	if h.a.Screen() != ScreenResult || len(ops) != 1 {
-		t.Fatalf("D typed before the result was drawn went on (screen %v, plans %v)", h.a.Screen(), ops)
+	if h.top() != RoleResult || len(ops) != 1 {
+		t.Fatalf("D typed before the result was drawn went on (top %v, plans %v)", h.top(), ops)
 	}
 	h.a.Drawn()
 	h.do(ActPurge)
-	if h.a.Screen() != ScreenDelete {
-		t.Fatalf("screen %v, want the deletion confirmation", h.a.Screen())
+	if h.top() != RoleDelete {
+		t.Fatalf("top %v, want the deletion confirmation", h.top())
 	}
-	v := h.a.Delete()
+	v := modal[DeleteView](h)
 	if !v.FromTrash || v.Count != 1 || len(v.Items) != 1 || v.Items[0].Name != "a.txt" || v.Dir != root {
 		t.Fatalf("Delete = %+v", v)
 	}
@@ -167,18 +167,18 @@ func TestPurgeTargets(t *testing.T) {
 	h.markNames("sub", "a.txt", "b.txt")
 	h.do(ActTrash)
 	h.confirm()
-	if v := h.a.Result(); v.Untrashable != 1 {
+	if v := modal[ResultView](h); v.Untrashable != 1 {
 		t.Fatalf("Untrashable = %d, want 1 (only a.txt)", v.Untrashable)
 	}
 	h.a.Drawn()
 	h.do(ActPurge)
-	v := h.a.Delete()
+	v := modal[DeleteView](h)
 	if len(v.Items) != 1 || v.Items[0].Name != "a.txt" {
 		t.Fatalf("deletion targets %+v, want only a.txt", v.Items)
 	}
 	h.do(ActCancel)
-	if h.a.Screen() != ScreenBrowse || !exists(t, filepath.Join(root, "a.txt")) {
-		t.Errorf("Esc: screen %v", h.a.Screen())
+	if h.top() != RoleNone || !exists(t, filepath.Join(root, "a.txt")) {
+		t.Errorf("Esc: top %v", h.top())
 	}
 }
 
@@ -195,23 +195,23 @@ func TestTrashAllUnavailable(t *testing.T) {
 	h, root := trashHarness(t, fp, &ops, nil)
 	h.markNames("a.txt", "b.txt")
 	h.do(ActTrash)
-	v := h.a.Confirm()
+	v := modal[ConfirmView](h)
 	if v.Runnable != 0 || v.Untrashable != 1 || len(v.NotRunnable) != 2 || v.NotRunnable[0].Reason != msg.TrashUnavailableSkip {
 		t.Fatalf("Confirm = %+v", v)
 	}
 	h.do(ActPurge) // 確認画面を描く前に届いた D
-	if h.a.Screen() != ScreenConfirm {
-		t.Fatalf("D typed before the confirmation was drawn went on (screen %v)", h.a.Screen())
+	if h.top() != RoleConfirm {
+		t.Fatalf("D typed before the confirmation was drawn went on (top %v)", h.top())
 	}
 	h.confirm() // Enter は何もしない
-	if h.a.Screen() != ScreenConfirm {
-		t.Fatalf("screen %v after Enter", h.a.Screen())
+	if h.top() != RoleConfirm {
+		t.Fatalf("top %v after Enter", h.top())
 	}
 	h.do(ActPurge)
-	if h.a.Screen() != ScreenDelete {
-		t.Fatalf("screen %v, want the deletion confirmation", h.a.Screen())
+	if h.top() != RoleDelete {
+		t.Fatalf("top %v, want the deletion confirmation", h.top())
 	}
-	if v := h.a.Delete(); !v.FromTrash || len(v.Items) != 1 || v.Items[0].Name != "a.txt" {
+	if v := modal[DeleteView](h); !v.FromTrash || len(v.Items) != 1 || v.Items[0].Name != "a.txt" {
 		t.Fatalf("Delete = %+v, want only a.txt (b.txt was not found, not untrashable)", v)
 	}
 	if !slices.Equal(ops, []fsops.OpKind{fsops.OpTrash, fsops.OpDelete}) {
@@ -237,25 +237,25 @@ func TestPurgeKeys(t *testing.T) {
 		h.do(k) // 計画を作っている間に打たれたキー
 	}
 	h.release()
-	if h.a.Screen() != ScreenDelete {
-		t.Fatalf("screen %v, want the deletion confirmation", h.a.Screen())
+	if h.top() != RoleDelete {
+		t.Fatalf("top %v, want the deletion confirmation", h.top())
 	}
 	h.do(ActYes) // 確認を描く前に届いた y
 	h.act(Action{Kind: ActInsert, Text: "y"})
-	if h.a.Screen() != ScreenDelete || !exists(t, a) {
+	if h.top() != RoleDelete || !exists(t, a) {
 		t.Fatal("deleted by a key typed before the confirmation was drawn (U2)")
 	}
 	h.a.Drawn()
 	h.act(Action{Kind: ActInsert, Text: "y"}) // 貼り付け（tui は貼り付けを ActYes にしない。ここでは文字の操作が確定しないことを見る）
-	if h.a.Screen() != ScreenDelete {
+	if h.top() != RoleDelete {
 		t.Fatal("text input moved the deletion confirmation")
 	}
 	for _, k := range []ActionKind{ActSubmit, ActNo, ActCancel} {
 		h.do(ActPurge)
 		h.a.Drawn()
 		h.do(k)
-		if h.a.Screen() != ScreenBrowse || !exists(t, a) {
-			t.Fatalf("%v: screen %v, exists %v (want canceled)", k, h.a.Screen(), exists(t, a))
+		if h.top() != RoleNone || !exists(t, a) {
+			t.Fatalf("%v: top %v, exists %v (want canceled)", k, h.top(), exists(t, a))
 		}
 	}
 	h.do(ActPurge)
@@ -277,7 +277,7 @@ func TestPurgeView(t *testing.T) {
 	h := newHarness(t, nil, root)
 	h.markNames("sub", "a.txt")
 	h.do(ActPurge)
-	v := h.a.Delete()
+	v := modal[DeleteView](h)
 	if v.FromTrash || v.Dir != root || v.Count != 2 || v.Runnable != 2 || v.Files != 2 || v.Bytes != 2 {
 		t.Errorf("Delete = %+v", v)
 	}
@@ -297,13 +297,13 @@ func TestPurgeNothingRunnable(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.do(ActPurge)
-	if v := h.a.Delete(); v.Runnable != 0 || len(v.NotRunnable) != 1 {
+	if v := modal[DeleteView](h); v.Runnable != 0 || len(v.NotRunnable) != 1 {
 		t.Fatalf("Delete = %+v", v)
 	}
 	h.a.Drawn()
 	h.do(ActYes)
-	if h.a.Screen() != ScreenDelete {
-		t.Errorf("screen %v: executed a plan with nothing to run", h.a.Screen())
+	if h.top() != RoleDelete {
+		t.Errorf("top %v: executed a plan with nothing to run", h.top())
 	}
 }
 
@@ -335,17 +335,17 @@ func TestTrashDialogHint(t *testing.T) {
 		<-started
 		h.a.Refresh()
 		now = now.Add(2 * time.Second)
-		if h.a.Progress().TrashDialog {
+		if modal[ProgressView](h).TrashDialog {
 			t.Errorf("mayAsk %v: hint after 2 s", mayAsk)
 		}
 		now = now.Add(time.Second)
-		if got := h.a.Progress().TrashDialog; got != mayAsk {
+		if got := modal[ProgressView](h).TrashDialog; got != mayAsk {
 			t.Errorf("mayAsk %v: hint after 3 s = %v", mayAsk, got)
 		}
 		close(release)
 		<-done
 		h.a.Refresh() // 進捗が変わった
-		if h.a.Progress().TrashDialog {
+		if modal[ProgressView](h).TrashDialog {
 			t.Errorf("mayAsk %v: hint remains after the progress changed", mayAsk)
 		}
 	}
@@ -383,8 +383,8 @@ func TestNoTarget(t *testing.T) {
 	for _, k := range []ActionKind{ActTrash, ActPurge} {
 		h.do(k)
 		h.wantMessage(msg.NoTarget)
-		if h.a.Screen() != ScreenBrowse {
-			t.Errorf("%v: screen %v", k, h.a.Screen())
+		if h.top() != RoleNone {
+			t.Errorf("%v: top %v", k, h.top())
 		}
 	}
 }
