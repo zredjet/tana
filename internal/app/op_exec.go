@@ -269,9 +269,9 @@ func (a *App) afterOperation(req fsops.Request, res *fsops.Result) []Cmd {
 		})
 	}
 	var cmds []Cmd
-	for i, p := range a.panes {
+	for _, p := range a.panes {
 		if p.loaded && affected(p.dir, req) {
-			cmds = append(cmds, a.load(i, p.dir, loadReload, "")...)
+			cmds = append(cmds, a.load(p, p.dir, loadReload, "")...)
 		}
 	}
 	return cmds

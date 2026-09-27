@@ -18,7 +18,7 @@ func (a *App) trash() []Cmd {
 		a.setMessage(msg.NoTarget, false)
 		return nil
 	}
-	return a.begin(fsops.Request{Op: fsops.OpTrash, Sources: t}, a.panes[a.active].dir, false)
+	return a.begin(fsops.Request{Op: fsops.OpTrash, Sources: t}, a.cur().dir, false)
 }
 
 // purge は、操作中のペインの対象を完全に削除する計画を作り始める。計画ができたら、完全削除の確認を出す（filer §8.6）。
@@ -28,7 +28,7 @@ func (a *App) purge() []Cmd {
 		a.setMessage(msg.NoTarget, false)
 		return nil
 	}
-	return a.begin(fsops.Request{Op: fsops.OpDelete, Sources: t}, a.panes[a.active].dir, false)
+	return a.begin(fsops.Request{Op: fsops.OpDelete, Sources: t}, a.cur().dir, false)
 }
 
 // DeleteItem は、完全削除の確認に出す項目（名前と、ファイルかフォルダか、ファイルのサイズ。filer §8.6）。

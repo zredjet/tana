@@ -420,3 +420,32 @@ func TestExecNotUnderOverlay(t *testing.T) {
 		}
 	})
 }
+
+// TestPaneResultsByID は、作業用の goroutine の結果が、並びの番号ではなくペインの ID で届くことを確かめる（filer §4）。
+// ペインの並びが変わっても別のペインに届かず、なくなったペイン宛ての結果は捨てる。
+func TestPaneResultsByID(t *testing.T) {
+	t.Parallel()
+	root := tree(t)
+	other := filepath.Join(root, "other")
+	mkdir(t, other)
+	h := newHarness(t, nil, root, other)
+	h.moveTo("sub")
+	h.hold = true
+	h.do(ActEnter) // ペイン 0 で sub に入る（読み込みは held に残す）
+	h.a.panes[0], h.a.panes[1] = h.a.panes[1], h.a.panes[0]
+	h.release()
+	if got := h.pane(1).Dir(); got != filepath.Join(root, "sub") {
+		t.Errorf("the pane that entered sub shows %q", got)
+	}
+	if got := h.pane(0).Dir(); got != other {
+		t.Errorf("the other pane shows %q, want %q unchanged", got, other)
+	}
+	h.hold = true
+	h.do(ActParent)           // sub のペインで親へ（読み込みは held に残す）
+	h.a.panes = h.a.panes[:1] // 読み込みを始めたペインがなくなった
+	h.a.active = h.a.panes[0].id
+	h.release()
+	if got := h.pane(0).Dir(); got != other {
+		t.Errorf("a result for a removed pane changed another pane: %q", got)
+	}
+}

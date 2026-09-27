@@ -62,7 +62,6 @@ type operation struct {
 	gen       int
 	req       fsops.Request
 	from      string // 項目のあったフォルダ（覚えたときのフォルダ。見出しに出す）
-	pane      int    // 始めたペイン
 	fromTrash bool   // 完全削除: ごみ箱に入らなかった項目から進んだ（filer §8.6）
 	screen    Screen
 	frame     int // この画面を出したときの a.frames。描いた後に届いたキーでだけ確定する（filer U2）
@@ -132,16 +131,16 @@ func (a *App) Yanked() int { return len(a.yanked) }
 // targets は、操作中のペインの対象（マークした項目。なければカーソル行の項目。.. は除く。filer §7）のパスを返す。
 // パスは列挙で得た名前から作る（U4）。
 func (a *App) targets() []string {
-	p := a.panes[a.active]
+	p := a.cur()
 	var out []string
 	for _, i := range p.visible {
 		if it := p.items[i]; !it.Parent && p.Marked(it.Name) {
-			out = append(out, filepath.Join(p.dir, it.Name))
+			out = append(out, p.pathOf(it))
 		}
 	}
 	if len(out) == 0 {
 		if it, ok := p.current(); ok && !it.Parent {
-			out = append(out, filepath.Join(p.dir, it.Name))
+			out = append(out, p.pathOf(it))
 		}
 	}
 	return out
@@ -154,7 +153,7 @@ func (a *App) yank() {
 		a.setMessage(msg.NothingToYank, false)
 		return
 	}
-	a.yanked, a.yankDir = t, a.panes[a.active].dir
+	a.yanked, a.yankDir = t, a.cur().dir
 	a.setMessage(msg.Yanked(len(t)), false)
 }
 
@@ -164,7 +163,7 @@ func (a *App) paste(op fsops.OpKind) []Cmd {
 		a.setMessage(msg.NothingYanked, false)
 		return nil
 	}
-	p := a.panes[a.active]
+	p := a.cur()
 	if !p.loaded {
 		return nil
 	}
@@ -175,10 +174,9 @@ func (a *App) paste(op fsops.OpKind) []Cmd {
 // fromTrash は、完全削除を、ごみ箱に入らなかった項目から始めたこと（filer §8.6）。
 func (a *App) begin(req fsops.Request, from string, fromTrash bool) []Cmd {
 	a.opening = 0 // 関連付けで開く前の確認をやめる（操作の後に古い「実行しますか」を出さない）
-	a.gen++
-	gen := a.gen
+	gen := a.newID()
 	ctx, cancel := context.WithCancel(context.Background())
-	a.op = &operation{gen: gen, req: req, from: from, pane: a.active, fromTrash: fromTrash, cancel: cancel, planning: true,
+	a.op = &operation{gen: gen, req: req, from: from, fromTrash: fromTrash, cancel: cancel, planning: true,
 		collapsed: map[fsops.ConflictID]bool{}}
 	newPlan := a.cfg.NewPlan
 	return []Cmd{

@@ -15,7 +15,7 @@ import (
 type named struct {
 	gen    int
 	rename bool   // 名前の変更（偽ならフォルダの作成）
-	pane   int    // 始めたペイン
+	pane   int    // 始めたペインの ID
 	dir    string // 項目のあるフォルダ、フォルダを作った場所
 	path   string // 名前の変更: 変えた項目の元のパス
 	name   string // 新しい名前
@@ -24,7 +24,7 @@ type named struct {
 
 // rename は、カーソル行の項目の名前の変更を始める。入力欄の初期値は今の名前（列挙で得たバイト列）で、カーソルは拡張子の前に置く（filer §8.7）。
 func (a *App) rename() {
-	p := a.panes[a.active]
+	p := a.cur()
 	it, ok := p.current()
 	if !ok || it.Parent {
 		return
@@ -33,17 +33,17 @@ func (a *App) rename() {
 	if ext := filepath.Ext(it.Name); !it.IsDir() && ext != it.Name { // .bashrc のように . で始まる名前は、全体が名前
 		cursor -= len(ext)
 	}
-	a.dialog = dialog{kind: DialogRename, edit: lineedit.New(it.Name, cursor), path: filepath.Join(p.dir, it.Name), name: it.Name,
-		dir: p.dir, pane: a.active}
+	a.dialog = dialog{kind: DialogRename, edit: lineedit.New(it.Name, cursor), path: p.pathOf(it), name: it.Name,
+		dir: p.dir, pane: p.id}
 }
 
 // newDir は、操作中のペインのフォルダに新しいフォルダを作る入力欄を開く。
 func (a *App) newDir() {
-	p := a.panes[a.active]
+	p := a.cur()
 	if !p.loaded {
 		return
 	}
-	a.dialog = dialog{kind: DialogNewDir, edit: lineedit.New("", 0), dir: p.dir, pane: a.active}
+	a.dialog = dialog{kind: DialogNewDir, edit: lineedit.New("", 0), dir: p.dir, pane: p.id}
 }
 
 // doName は、名前の変更・新しいフォルダの入力欄の操作を行う。
@@ -78,9 +78,8 @@ func (a *App) submitName() []Cmd {
 		a.dialog = dialog{}
 		return nil
 	}
-	a.gen++
-	d.busy = a.gen
-	m := named{gen: a.gen, rename: d.kind == DialogRename, pane: d.pane, dir: d.dir, path: d.path, name: d.edit.Text()}
+	d.busy = a.newID()
+	m := named{gen: d.busy, rename: d.kind == DialogRename, pane: d.pane, dir: d.dir, path: d.path, name: d.edit.Text()}
 	if m.rename {
 		rename := a.cfg.Rename
 		return []Cmd{{Run: func() any { m.err = rename(m.path, m.name); return m }}}
@@ -110,17 +109,17 @@ func (a *App) named(m named) []Cmd {
 	}
 	var cmds []Cmd
 	dir, old := filepath.Clean(m.dir), filepath.Clean(m.path)
-	for i, p := range a.panes {
+	for _, p := range a.panes {
 		pd := filepath.Clean(p.dir)
 		inside := m.rename && (pd == old || strings.HasPrefix(pd, old+string(filepath.Separator))) // 名前を変えたフォルダそのものか、その中
 		if !p.loaded || pd != dir && !inside {
 			continue
 		}
 		f := ""
-		if i == m.pane && pd == dir {
+		if p.id == m.pane && pd == dir {
 			f = focus // 始めたペインでは、カーソルを新しい名前に置く
 		}
-		cmds = append(cmds, a.load(i, p.dir, loadReload, f)...)
+		cmds = append(cmds, a.load(p, p.dir, loadReload, f)...)
 	}
 	return cmds
 }

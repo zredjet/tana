@@ -38,7 +38,7 @@ func (a *App) SetNeeds(n Needs) []Cmd {
 // follow は、操作や結果の反映の後で、操作中のペインについて足りないもの（リンク先、親フォルダの一覧、プレビュー）を読む処理を返す。
 // どれも、読んだもの・読んでいる途中のものがあれば何もしない。
 func (a *App) follow() []Cmd {
-	cmds := a.linkTarget(a.active)
+	cmds := a.linkTarget(a.cur())
 	cmds = append(cmds, a.scheduleParent()...)
 	return append(cmds, a.schedulePreview()...)
 }
@@ -53,7 +53,7 @@ type parentList struct {
 	done    bool
 }
 
-// parentRead は、親フォルダの一覧の読み取りの結果。
+// parentRead は、親フォルダの一覧の読み取りの結果。pane はペインの ID。
 type parentRead struct {
 	pane, listGen int
 	forDir        string
@@ -71,8 +71,7 @@ func (p *Pane) Parent() (items []listing.Item, current string, err error, ok boo
 }
 
 func (a *App) scheduleParent() []Cmd {
-	i := a.active
-	p := a.panes[i]
+	p := a.cur()
 	if !a.needs.Parent || !p.loaded || p.load != nil || listing.IsRoot(p.dir) {
 		return nil
 	}
@@ -85,7 +84,7 @@ func (a *App) scheduleParent() []Cmd {
 		next.items, next.err, next.done = p.parent.items, p.parent.err, p.parent.done
 	}
 	p.parent = next
-	dir, gen, readDir, dotHidden := p.dir, p.listGen, a.cfg.ReadDir, a.cfg.DotFilesHidden
+	dir, gen, readDir, dotHidden, i := p.dir, p.listGen, a.cfg.ReadDir, a.cfg.DotFilesHidden, p.id
 	return []Cmd{{Run: func() any {
 		parent := filepath.Dir(dir)
 		entries, err := readDir(parent)
@@ -98,8 +97,8 @@ func (a *App) scheduleParent() []Cmd {
 }
 
 func (a *App) parentRead(m parentRead) {
-	p := a.panes[m.pane]
-	if p.parent != nil && p.parent.forDir == m.forDir && p.parent.listGen == m.listGen {
+	p := a.paneOf(m.pane)
+	if p != nil && p.parent != nil && p.parent.forDir == m.forDir && p.parent.listGen == m.listGen {
 		p.parent.items, p.parent.err, p.parent.done = m.items, m.err, true
 	}
 }
@@ -156,7 +155,7 @@ func (a *App) Preview() Preview {
 
 // previewTarget は、プレビューする項目とパスを返す。一覧を読み込み中なら ok が偽。
 func (a *App) previewTarget() (path string, it listing.Item, ok bool) {
-	p := a.panes[a.active]
+	p := a.cur()
 	if !p.loaded || p.load != nil {
 		return "", listing.Item{}, false
 	}
@@ -166,7 +165,7 @@ func (a *App) previewTarget() (path string, it listing.Item, ok bool) {
 	if it.Parent {
 		return filepath.Dir(p.dir), it, true
 	}
-	return filepath.Join(p.dir, it.Name), it, true // 列挙で得た名前から作る（U4）
+	return p.pathOf(it), it, true
 }
 
 // schedulePreview は、カーソル行のプレビューを、カーソルが previewDelay 止まってから読む処理を返す。

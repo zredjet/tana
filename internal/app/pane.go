@@ -1,9 +1,14 @@
 package app
 
-import "github.com/zredjet/tana/internal/listing"
+import (
+	"path/filepath"
+
+	"github.com/zredjet/tana/internal/listing"
+)
 
 // Pane は、1 つのフォルダの表示（フォルダ、項目、カーソル、マーク。filer §4）。
 type Pane struct {
+	id      int // ペインの ID（作業用の goroutine の結果の届け先。並びが変わっても変わらない）
 	dir     string
 	loaded  bool           // 一覧を読み込んだ（最初の読み込みに失敗すれば false のまま）
 	items   []listing.Item // すべての項目（隠しファイルを含む）
@@ -76,6 +81,10 @@ func (p *Pane) Window(rows int) int {
 	p.top = max(min(p.top, len(p.visible)-rows), 0)
 	return p.top
 }
+
+// pathOf は、項目 it のパスを返す。項目のパスはここだけで作る（列挙で得た名前から作る。filer U4）。
+// 後の版で一覧の元（検索結果など）を足すときは、ここを変える（filer §16）。
+func (p *Pane) pathOf(it listing.Item) string { return filepath.Join(p.dir, it.Name) }
 
 // current は、カーソル行の項目を返す。
 func (p *Pane) current() (listing.Item, bool) {

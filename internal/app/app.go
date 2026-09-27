@@ -87,7 +87,7 @@ type dialog struct {
 
 	// DialogRename・DialogNewDir
 	dir  string // 項目のあるフォルダ、フォルダを作る場所
-	pane int    // 始めたペイン
+	pane int    // 始めたペインの ID
 	err  string // fsops のエラーの文言（入力欄の下に出す）
 	busy int    // 変更・作成を待っている処理の世代（0 なら待っていない）
 }
@@ -96,12 +96,12 @@ type dialog struct {
 type App struct {
 	cfg        Config
 	panes      []*Pane
-	active     int
+	active     int // 操作中のペインの ID
 	showHidden bool
 	message    string
 	messageErr bool
 	dialog     dialog
-	gen        int // 読み込み・開く処理の世代。古い結果を捨てる
+	gen        int // ID と世代の払い出し（ペイン、読み込み・開く処理・ファイル操作・名前の変更）。古い結果を捨てる
 	opening    int // 関連付けで開く前の確認をしている世代（0 ならしていない）
 	frames     int // 描いた回数（Drawn）
 	quit       bool
@@ -120,10 +120,15 @@ type App struct {
 func New(cfg Config) (*App, []Cmd) {
 	a := &App{cfg: cfg}
 	var cmds []Cmd
-	for i, dir := range cfg.Dirs {
-		p := &Pane{dir: dir, marks: map[string]struct{}{}, targets: map[string]string{}}
+	for _, dir := range cfg.Dirs {
+		p := &Pane{id: a.newID(), dir: dir, marks: map[string]struct{}{}, targets: map[string]string{}}
 		a.panes = append(a.panes, p)
-		cmds = append(cmds, a.load(i, dir, loadInitial, "")...)
+	}
+	if len(a.panes) > 0 {
+		a.active = a.panes[0].id
+	}
+	for _, p := range a.panes {
+		cmds = append(cmds, a.load(p, p.dir, loadInitial, "")...)
 	}
 	return a, cmds
 }
@@ -133,8 +138,35 @@ func New(cfg Config) (*App, []Cmd) {
 // Panes は、ペインの並びを返す。
 func (a *App) Panes() []*Pane { return a.panes }
 
-// Active は、操作中のペインの番号を返す。
-func (a *App) Active() int { return a.active }
+// Active は、操作中のペインの番号（Panes の添字）を返す。
+func (a *App) Active() int { return a.indexOf(a.active) }
+
+// newID は、ID と世代を払い出す（ペイン、読み込み・開く処理・ファイル操作・名前の変更で 1 つの数を使う）。
+func (a *App) newID() int {
+	a.gen++
+	return a.gen
+}
+
+// cur は、操作中のペインを返す。
+func (a *App) cur() *Pane { return a.panes[a.Active()] }
+
+// indexOf は、ID id のペインの添字を返す。なければ -1。
+func (a *App) indexOf(id int) int {
+	for i, p := range a.panes {
+		if p.id == id {
+			return i
+		}
+	}
+	return -1
+}
+
+// paneOf は、ID id のペインを返す。なければ nil（作業用の goroutine の結果が届く前に、ペインがなくなった）。
+func (a *App) paneOf(id int) *Pane {
+	if i := a.indexOf(id); i >= 0 {
+		return a.panes[i]
+	}
+	return nil
+}
 
 // ShowHidden は、隠しファイルを表示しているかを返す。
 func (a *App) ShowHidden() bool { return a.showHidden }
@@ -276,7 +308,7 @@ func (a *App) do(act Action) []Cmd {
 	if a.dialog.kind != DialogNone {
 		return a.doDialog(act)
 	}
-	p := a.panes[a.active]
+	p := a.cur()
 	if act.Kind == ActCancel {
 		return a.cancel()
 	}
@@ -302,9 +334,9 @@ func (a *App) do(act Action) []Cmd {
 	case ActEnterDir:
 		return a.enterDir()
 	case ActParent:
-		return a.parent(a.active)
+		return a.parent(p)
 	case ActNextPane:
-		a.active = (a.active + 1) % len(a.panes)
+		a.active = a.panes[(a.Active()+1)%len(a.panes)].id
 	case ActMark:
 		if it, ok := p.current(); ok && !it.Parent {
 			p.toggleMark(it.Name)
@@ -321,7 +353,7 @@ func (a *App) do(act Action) []Cmd {
 		// 最初の読み込みに失敗した・中止したペイン（一覧がない）は、起動時と同じく読み込み直す。
 		// 読み込み中のペインは読み直さない（今の移動を知らせなしに取り消さない。filer §6）。
 		var cmds []Cmd
-		for i, q := range a.panes {
+		for _, q := range a.panes {
 			if q.load != nil {
 				continue
 			}
@@ -329,14 +361,14 @@ func (a *App) do(act Action) []Cmd {
 			if !q.loaded {
 				kind = loadInitial
 			}
-			cmds = append(cmds, a.load(i, q.dir, kind, "")...)
+			cmds = append(cmds, a.load(q, q.dir, kind, "")...)
 		}
 		return cmds
 	case ActGoPath:
 		a.dialog = dialog{kind: DialogPath, edit: lineedit.New(p.dir, len(p.dir))}
 	case ActSyncOther:
 		if len(a.panes) > 1 && p.loaded {
-			return a.load((a.active+1)%len(a.panes), p.dir, loadGo, "")
+			return a.load(a.panes[(a.Active()+1)%len(a.panes)], p.dir, loadGo, "")
 		}
 	case ActHelp:
 		a.dialog = dialog{kind: DialogHelp}
@@ -429,7 +461,8 @@ func (a *App) doDialog(act Action) []Cmd {
 			if strings.TrimSpace(text) == "" {
 				return nil
 			}
-			return a.load(a.active, Resolve(a.panes[a.active].dir, text), loadGo, "")
+			p := a.cur()
+			return a.load(p, Resolve(p.dir, text), loadGo, "")
 		}
 	}
 	return nil
@@ -502,7 +535,7 @@ type loading struct {
 	slow  bool   // 読み込み中の表示を出す
 }
 
-// loaded は、読み込みの結果。
+// loaded は、読み込みの結果。pane はペインの ID。
 type loaded struct {
 	pane, gen int
 	dir       string // 読み込んだフォルダ（祖先を表示するときは、その祖先）
@@ -511,14 +544,13 @@ type loaded struct {
 	notDir    bool  // loadLink で、リンク先がフォルダでなかった
 }
 
-// loadSlow は、読み込みが slowLoad を超えたこと。
+// loadSlow は、読み込みが slowLoad を超えたこと。pane はペインの ID。
 type loadSlow struct{ pane, gen int }
 
-// load は、ペイン i にフォルダ dir を読み込む処理を返す。
-func (a *App) load(i int, dir string, kind loadKind, focus string) []Cmd {
-	a.gen++
-	gen := a.gen
-	a.panes[i].load = &loading{gen: gen, dir: dir, kind: kind, focus: focus}
+// load は、ペイン p にフォルダ dir を読み込む処理を返す。
+func (a *App) load(p *Pane, dir string, kind loadKind, focus string) []Cmd {
+	gen, i := a.newID(), p.id
+	p.load = &loading{gen: gen, dir: dir, kind: kind, focus: focus}
 	readDir, dotHidden := a.cfg.ReadDir, a.cfg.DotFilesHidden
 	run := func() any {
 		entries, err := readDir(dir)
@@ -560,12 +592,12 @@ func (a *App) update(m any) []Cmd {
 	case loaded:
 		return a.loaded(m)
 	case loadSlow:
-		if p := a.panes[m.pane]; p.load != nil && p.load.gen == m.gen {
+		if p := a.paneOf(m.pane); p != nil && p.load != nil && p.load.gen == m.gen {
 			p.load.slow = true
 		}
 	case linkRead:
 		// 読み取りを始めた後に一覧を置き換えていれば（再読み込みを含む）、結果を捨てる。
-		if p := a.panes[m.pane]; p.listGen == m.listGen {
+		if p := a.paneOf(m.pane); p != nil && p.listGen == m.listGen {
 			delete(p.pending, m.name)
 			p.targets[m.name] = m.target
 		}
@@ -603,8 +635,8 @@ func (a *App) update(m any) []Cmd {
 }
 
 func (a *App) loaded(m loaded) []Cmd {
-	p := a.panes[m.pane]
-	if p.load == nil || p.load.gen != m.gen {
+	p := a.paneOf(m.pane)
+	if p == nil || p.load == nil || p.load.gen != m.gen {
 		return nil // 中止した、または新しい読み込みに置き換えた
 	}
 	ld := p.load
@@ -629,27 +661,27 @@ func (a *App) loaded(m loaded) []Cmd {
 	if m.pane == a.active {
 		a.previewStale = true // 読み直した一覧で、プレビューも読み直す
 	}
-	return a.linkTarget(m.pane)
+	return a.linkTarget(p)
 }
 
 // enter は、カーソル行の項目に入る・開く（filer §7）。
 func (a *App) enter() []Cmd {
-	p := a.panes[a.active]
+	p := a.cur()
 	it, ok := p.current()
 	if !ok {
 		return nil
 	}
-	path := filepath.Join(p.dir, it.Name) // 列挙で得た名前から作る（U4）
+	path := p.pathOf(it)
 	switch {
 	case it.Parent:
-		return a.parent(a.active)
+		return a.parent(p)
 	case it.Err != nil:
 		a.setMessage(msg.Error(it.Err), true)
 		return nil
 	case it.IsDir():
-		return a.load(a.active, path, loadGo, "")
+		return a.load(p, path, loadGo, "")
 	case it.Info.Type == fsops.TypeSymlink:
-		return a.load(a.active, path, loadLink, "")
+		return a.load(p, path, loadLink, "")
 	case it.Info.Type == fsops.TypeSpecial:
 		a.setMessage(msg.Kind(fsops.KindUnsupportedType), true)
 		return nil
@@ -659,30 +691,29 @@ func (a *App) enter() []Cmd {
 
 // enterDir は、カーソル行がフォルダ（リンク・ジャンクションのフォルダ、.. を含む）なら入る。ファイルでは何もしない（l・→）。
 func (a *App) enterDir() []Cmd {
-	p := a.panes[a.active]
+	p := a.cur()
 	it, ok := p.current()
 	if !ok || it.Err != nil {
 		return nil
 	}
-	path := filepath.Join(p.dir, it.Name) // 列挙で得た名前から作る（U4）
+	path := p.pathOf(it)
 	switch {
 	case it.Parent:
-		return a.parent(a.active)
+		return a.parent(p)
 	case it.IsDir():
-		return a.load(a.active, path, loadGo, "")
+		return a.load(p, path, loadGo, "")
 	case it.Info.Type == fsops.TypeSymlink:
-		return a.load(a.active, path, loadLinkDir, "")
+		return a.load(p, path, loadLinkDir, "")
 	}
 	return nil
 }
 
-// parent は、ペイン i を親のフォルダにし、カーソルを来たフォルダに置く。
-func (a *App) parent(i int) []Cmd {
-	p := a.panes[i]
+// parent は、ペイン p を親のフォルダにし、カーソルを来たフォルダに置く。
+func (a *App) parent(p *Pane) []Cmd {
 	if !p.loaded || listing.IsRoot(p.dir) {
 		return nil
 	}
-	return a.load(i, filepath.Dir(p.dir), loadGo, filepath.Base(p.dir))
+	return a.load(p, filepath.Dir(p.dir), loadGo, filepath.Base(p.dir))
 }
 
 // ---- 関連付けで開く ----
@@ -703,8 +734,7 @@ type opened struct {
 
 // startOpen は、開く前の確認を作業用の goroutine で行う（実行ファイルの判定はファイルシステムを調べることがある。filer U5）。
 func (a *App) startOpen(path, name string) []Cmd {
-	a.gen++
-	gen := a.gen
+	gen := a.newID()
 	a.opening = gen
 	canOpen, isExec := a.cfg.CanOpen, a.cfg.IsExecutable
 	return []Cmd{{Run: func() any {
@@ -740,15 +770,14 @@ func (a *App) openCmd(path, name string) []Cmd {
 
 // ---- リンク先 ----
 
-// linkRead は、リンク先の読み取りの結果（状態行に出す）。
+// linkRead は、リンク先の読み取りの結果（状態行に出す）。pane はペインの ID。
 type linkRead struct {
 	pane, listGen int
 	name, target  string
 }
 
-// linkTarget は、ペイン i のカーソル行がリンク・ジャンクションで、リンク先をまだ読んでいなければ、読む処理を返す。
-func (a *App) linkTarget(i int) []Cmd {
-	p := a.panes[i]
+// linkTarget は、ペイン p のカーソル行がリンク・ジャンクションで、リンク先をまだ読んでいなければ、読む処理を返す。
+func (a *App) linkTarget(p *Pane) []Cmd {
 	it, ok := p.current()
 	if !ok || p.load != nil || it.Err != nil || it.Info.Type != fsops.TypeSymlink && it.Info.Type != fsops.TypeJunction {
 		return nil
@@ -760,7 +789,7 @@ func (a *App) linkTarget(i int) []Cmd {
 		return nil
 	}
 	p.pending[it.Name] = struct{}{}
-	path, name, gen, readlink := filepath.Join(p.dir, it.Name), it.Name, p.listGen, a.cfg.Readlink
+	path, name, gen, readlink, i := p.pathOf(it), it.Name, p.listGen, a.cfg.Readlink, p.id
 	return []Cmd{{Run: func() any {
 		target, err := readlink(path)
 		if err != nil {
