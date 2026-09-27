@@ -71,3 +71,8 @@
 
 - VU5 の記録は `phase20-2026-09-27.md`。事前確認を飛ばす fsops のテスト（`TestTrashPreDeleteAbortHelper`。`FSOPS_TRASH_HELPER_PATH`）を、VM の端末の中で動かし、画面を撮った。
 - 試験用のボリューム（`%USERPROFILE%\tana-probe\vu5.vhdx` を `R:` につないだもの）と、そのごみ箱の最大サイズの設定は、開発者が行った。ファイルは `R:\tana-vu5` の中だけに作った。
+
+## フェーズ21（2026-09-27）
+
+- 手動の確認の記録は `phase21-2026-09-27.md`。手順は `docs/manual-check.md`。VU5 の続きは、端末でキーを押すのを待ってから、事前確認を飛ばす fsops のテストを動かした。
+- VM の画面は `prlctl capture` で 2 秒ごとに撮り、確かめた後に捨てた（リポジトリには入れない）。
