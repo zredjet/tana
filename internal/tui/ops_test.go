@@ -13,6 +13,7 @@ import (
 	"github.com/zredjet/tana/internal/fsops"
 	"github.com/zredjet/tana/internal/keys"
 	"github.com/zredjet/tana/internal/msg"
+	"github.com/zredjet/tana/internal/textfmt"
 )
 
 // opPlan は、ファイル操作の画面を描くための計画（偽物）。
@@ -297,5 +298,45 @@ func TestProgressOverflow(t *testing.T) {
 	}
 	if !found {
 		t.Error("the progress over the total is not shown as 100%")
+	}
+}
+
+// TestLeftoversFit は、中止しても応答がないときの「残りうるもの」の案内が、進捗の画面の幅で切れずに折り返されることを確かめる（filer §8.4）。
+func TestLeftoversFit(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	release, started := make(chan struct{}), make(chan struct{})
+	sc, plan := newOpScene(t, fsops.OpMove, nil, &now)
+	plan.conflicts = nil
+	plan.exec = func(context.Context, fsops.ExecOptions) (*fsops.Result, error) {
+		close(started)
+		<-release // ctx を見ない（応答しないネットワークドライブ）
+		return &fsops.Result{Status: fsops.StatusCanceled}, nil
+	}
+	sc.draw(80, 24)
+	sc.hold = true
+	sc.keys(key(keys.KeyEnter))
+	done := make(chan struct{})
+	go func() { sc.held[0].Run(); close(done) }()
+	defer func() { close(release); <-done }()
+	<-started
+	sc.draw(80, 24)
+	sc.keys(key(keys.KeyEsc))
+	sc.draw(80, 24)
+	sc.keys(char('y'))
+	now = now.Add(11 * time.Second)
+	sc.run(sc.a.Update(sc.delayed[len(sc.delayed)-1].Run())) // 1 秒ごとの見回り
+	s := sc.draw(80, 24)
+	const in = 64 - 4 // 進捗の画面の内側の幅（80 桁のとき）
+	for _, l := range append([]string{msg.Unresponsive}, msg.Leftovers(fsops.OpMove)...) {
+		for _, w := range textfmt.Wrap(l, in) {
+			found := false
+			for y := range 24 {
+				found = found || strings.Contains(s.Row(y), w)
+			}
+			if !found {
+				t.Errorf("%q (part of %q) is cut or missing:\n%s", w, l, render(s))
+			}
+		}
 	}
 }

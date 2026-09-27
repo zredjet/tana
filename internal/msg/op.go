@@ -155,6 +155,8 @@ func ResultError(o fsops.Outcome, err *fsops.OpError) string {
 	switch {
 	case err.Kind == fsops.KindExist:
 		return "計画の後に同じ名前のものができたため、スキップしました"
+	case err.Kind == fsops.KindLinkUnsupported && o == fsops.OutcomeSkipped:
+		return "ジャンクションはコピーしません" // fsops §14.2。リンクを作れなかったもの（Failed）とは分ける
 	case err.Kind == fsops.KindNoSpace && o == fsops.OutcomeSkipped:
 		return "空き容量が足りないため、実行しませんでした"
 	case err.Kind == fsops.KindSourceChanged && o == fsops.OutcomeCopiedSourceKept:
@@ -218,10 +220,15 @@ func Leftovers(op fsops.OpKind) []string {
 	case fsops.OpDelete:
 		return []string{"・一部の項目（フォルダの中の一部を含む）だけが削除されている"}
 	}
-	return []string{
-		"・移動元と移動先の両方に同じものがある、または一部だけ移動されている",
-		"・.fsops-<16 進>.tmp という一時ファイル",
+	var out []string
+	if op == fsops.OpMove {
+		out = append(out, "・移動元と移動先の両方に同じものがある、または一部だけ移動されている")
+	} else {
+		out = append(out, "・コピー先に、途中までコピーしたフォルダがある")
 	}
+	return append(out,
+		"・.fsops-<16 進>.tmp という一時ファイル",
+		"・名前を確保した空のファイル・フォルダ（exFAT など）")
 }
 
 // Yanked は、y で覚えたときの文言。

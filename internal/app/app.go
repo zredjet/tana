@@ -243,7 +243,13 @@ func (a *App) Do(act Action) []Cmd {
 	return append(a.do(act), a.follow()...)
 }
 
+// ClearMessage は、メッセージ行を消す。操作にならないキー入力（割り当てのないキー、表示形式の切り替えなど）のときに tui が呼ぶ（filer §5.1）。
+func (a *App) ClearMessage() { a.message, a.messageErr = "", false }
+
 func (a *App) do(act Action) []Cmd {
+	if a.op == nil || !a.op.planning {
+		a.ClearMessage() // キー入力のたびに消す（ファイル操作の画面・ダイアログの中でも。filer §5.1）
+	}
 	switch {
 	case a.op != nil && a.op.planning:
 		// 計画を作っている間に届いたキーは捨てる（filer U2）。Esc だけは中止にする。
@@ -253,7 +259,6 @@ func (a *App) do(act Action) []Cmd {
 		}
 		return nil
 	case a.op != nil:
-		a.message, a.messageErr = "", false // キー入力のたびにメッセージ行を消す（ファイル操作の画面でも）
 		switch a.op.screen {
 		case ScreenConfirm:
 			return a.doConfirm(act)
@@ -266,13 +271,11 @@ func (a *App) do(act Action) []Cmd {
 		}
 		return nil
 	case a.result != nil && a.result.open:
-		a.message, a.messageErr = "", false
 		return a.doResult(act)
 	}
 	if a.dialog.kind != DialogNone {
 		return a.doDialog(act)
 	}
-	a.message, a.messageErr = "", false
 	p := a.panes[a.active]
 	if act.Kind == ActCancel {
 		return a.cancel()
@@ -316,8 +319,12 @@ func (a *App) do(act Action) []Cmd {
 		}
 	case ActReload:
 		// 最初の読み込みに失敗した・中止したペイン（一覧がない）は、起動時と同じく読み込み直す。
+		// 読み込み中のペインは読み直さない（今の移動を知らせなしに取り消さない。filer §6）。
 		var cmds []Cmd
 		for i, q := range a.panes {
+			if q.load != nil {
+				continue
+			}
 			kind := loadReload
 			if !q.loaded {
 				kind = loadInitial
@@ -419,7 +426,6 @@ func (a *App) doDialog(act Action) []Cmd {
 		case ActSubmit:
 			text := d.edit.Text()
 			a.dialog = dialog{}
-			a.message, a.messageErr = "", false
 			if strings.TrimSpace(text) == "" {
 				return nil
 			}

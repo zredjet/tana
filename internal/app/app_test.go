@@ -414,19 +414,19 @@ func TestLoadCancel(t *testing.T) {
 }
 
 // TestNewerLoadWins は、読み込み中に別の読み込みを始めたら、古い結果を捨てることを確かめる。
+// 読み込み中のペインへの操作は受け付けない（Ctrl+R も読み直さない。filer §6）ので、もう一方のペインの = で、新しい読み込みを始める。
 func TestNewerLoadWins(t *testing.T) {
 	t.Parallel()
 	root := tree(t)
 	h := newHarness(t, nil, root, root)
 	h.hold = true
 	h.moveTo("sub")
-	h.do(ActEnter)
+	h.do(ActEnter) // ペイン 0 が sub を読み込む
 	h.do(ActNextPane)
-	h.do(ActNextPane)
-	h.do(ActReload) // ペイン 0 の読み込みを置き換える
+	h.do(ActSyncOther) // ペイン 1 から、ペイン 0 に root を読み込ませる（新しい読み込み）
 	h.release()
 	if got := h.pane(0).Dir(); got != root {
-		t.Errorf("Dir = %q, want %q (the reload replaced the enter)", got, root)
+		t.Errorf("Dir = %q, want %q (the newer load replaced the enter)", got, root)
 	}
 }
 
@@ -911,4 +911,31 @@ func TestParentListingKeptAndError(t *testing.T) {
 	if _, _, err, ok := h.pane(0).Parent(); !ok || fsops.KindOf(err) != fsops.KindPermission {
 		t.Errorf("Parent err = %v, %v, want KindPermission", err, ok)
 	}
+}
+
+// TestReloadWhileLoading は、読み込み中のペインを Ctrl+R で読み直さないことを確かめる（filer §6。読み込み中のペインは Esc のほかを受け付けない）。
+// 読み直すと、今の移動が知らせなしに取り消されるため。ほかのペインは読み直す。
+func TestReloadWhileLoading(t *testing.T) {
+	t.Parallel()
+	root := tree(t)
+	h := newHarness(t, nil, root, root)
+	h.moveTo("sub")
+	h.hold = true
+	h.do(ActEnter) // sub に入る読み込みが止まっている
+	h.do(ActReload)
+	h.release()
+	if got := h.pane(0).Dir(); got != filepath.Join(root, "sub") {
+		t.Errorf("Dir = %q after Ctrl+R during loading, want the folder being entered (the move was canceled)", got)
+	}
+}
+
+// TestMessageClearedInDialog は、ダイアログを開いている間のキー入力でも、メッセージ行を消すことを確かめる（filer §5.1）。
+func TestMessageClearedInDialog(t *testing.T) {
+	t.Parallel()
+	root := tree(t)
+	h := newHarness(t, nil, root)
+	h.do(ActGoPath)
+	h.a.setMessage("届いた結果", true) // ダイアログを開いている間に届いた結果（作業用の goroutine から）
+	h.act(Action{Kind: ActInsert, Text: "x"})
+	h.wantMessage("")
 }

@@ -19,7 +19,7 @@ import (
 	"github.com/zredjet/tana/internal/tui"
 )
 
-// panes はペインの数（2 ペインの構成。filer §15 で決めるまでの案）。
+// panes はペインの数（2 ペイン。Yazi 風の表示も、この 2 つのペインを切り替えて見せる。filer §5）。
 const panes = 2
 
 func main() {

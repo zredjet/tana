@@ -154,6 +154,9 @@ func TestResultError(t *testing.T) {
 		{fsops.OutcomeFailed, &fsops.OpError{Kind: fsops.KindNoSpace}, "空き容量が足りません"},
 		{fsops.OutcomeCopiedSourceKept, &fsops.OpError{Kind: fsops.KindSourceChanged}, "コピーの後に変更されたため残しました"},
 		{fsops.OutcomeFailed, &fsops.OpError{Kind: fsops.KindLocked, OnDest: true}, "コピー先・移動先で: ほかのアプリが使用中です"},
+		// ジャンクションはコピーしない（Skipped）。リンクを作れなかったもの（Failed）とは言い方を分ける（filer §8.8）。
+		{fsops.OutcomeSkipped, &fsops.OpError{Kind: fsops.KindLinkUnsupported}, "ジャンクションはコピーしません"},
+		{fsops.OutcomeFailed, &fsops.OpError{Kind: fsops.KindLinkUnsupported, OnDest: true}, "コピー先・移動先で: この場所にはリンクを作れません"},
 	} {
 		if got := ResultError(tt.o, tt.err); got != tt.want {
 			t.Errorf("ResultError(%v, %v) = %q, want %q", tt.o, tt.err, got, tt.want)
@@ -200,5 +203,28 @@ func TestKeyGuideWidth(t *testing.T) {
 	}
 	if w > 78 {
 		t.Errorf("KeyGuide is %d columns wide", w)
+	}
+}
+
+// TestLeftovers は、応答がないまま終わるときに残りうるものの案内が、操作に合っていることを確かめる（filer §8.4、fsops の doc.go）。
+func TestLeftovers(t *testing.T) {
+	has := func(op fsops.OpKind, sub string) bool {
+		for _, l := range Leftovers(op) {
+			if strings.Contains(l, sub) {
+				return true
+			}
+		}
+		return false
+	}
+	if has(fsops.OpCopy, "移動元") {
+		t.Error("the copy leftovers mention the move source")
+	}
+	for _, op := range []fsops.OpKind{fsops.OpCopy, fsops.OpMove} {
+		if !has(op, ".tmp") || !has(op, "空のファイル") {
+			t.Errorf("%v: leftovers %q, want the temporary files and the empty files that reserved the names", op, Leftovers(op))
+		}
+	}
+	if !has(fsops.OpMove, "移動元") {
+		t.Error("the move leftovers do not mention the source and the destination")
 	}
 }

@@ -371,9 +371,13 @@ func (f *Filer) drawProgress(s *screen.Screen) {
 	}
 	switch {
 	case p.Unresponsive:
-		lines = append(lines, line{text: msg.Unresponsive, st: styleProblem})
+		for _, w := range textfmt.Wrap(msg.Unresponsive, in) {
+			lines = append(lines, line{text: w, st: styleProblem})
+		}
 		for _, l := range msg.Leftovers(p.Op) {
-			lines = append(lines, line{text: l})
+			for _, w := range textfmt.Wrap(l, in) { // 長い行は、ダイアログの幅で折り返す
+				lines = append(lines, line{text: w})
+			}
 		}
 		lines = append(lines, line{text: msg.ForceQuitKey, st: styleBold})
 	case p.Canceling:

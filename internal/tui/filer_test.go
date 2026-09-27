@@ -692,3 +692,19 @@ func TestColumnsHiddenCurrent(t *testing.T) {
 	}
 	t.Errorf("the hidden current folder is not in the parent column:\n%s", render(s))
 }
+
+// TestMessageClearedByAnyKey は、割り当てのないキー・v・Ctrl+L・貼り付けでも、メッセージ行を消すことを確かめる（filer §5.1「次のキー入力で消す」）。
+func TestMessageClearedByAnyKey(t *testing.T) {
+	t.Parallel()
+	sc := newScene(t)
+	for _, ev := range []keys.Event{char('x'), char('v'), ctrl('l'), paste("q")} {
+		sc.keys(char('p')) // 覚えていないので、メッセージ行に「覚えた項目がありません」
+		if text, _ := sc.a.Message(); text != msg.NothingYanked {
+			t.Fatalf("message %q", text)
+		}
+		sc.keys(ev)
+		if text, _ := sc.a.Message(); text != "" {
+			t.Errorf("%v: message %q remains", ev, text)
+		}
+	}
+}

@@ -85,7 +85,11 @@ func (f *Filer) Handle(l *Loop, ev Event) bool {
 }
 
 // key は、キー入力を処理する。v は表示形式を切り替え（Filer が持つ）、ほかは app の操作に変える。
+// どのキー入力でも、メッセージ行を消す（操作にならないキーでも。filer §5.1）。
 func (f *Filer) key(ev keys.Event) []app.Cmd {
+	if !f.app.Planning() {
+		f.app.ClearMessage()
+	}
 	if ev.Kind == keys.KeyEvent && ev.Key == keys.KeyRune && ev.Mod == keys.ModCtrl && ev.Rune == 'l' {
 		f.redraw = true // どの画面でも、端末に何かが残ったときの描き直し
 		return nil
