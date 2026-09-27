@@ -8,7 +8,8 @@ import (
 
 // Pane は、1 つのフォルダの表示（フォルダ、項目、カーソル、マーク。filer §4）。
 type Pane struct {
-	id      int // ペインの ID（作業用の goroutine の結果の届け先。並びが変わっても変わらない）
+	id      int     // ペインの ID（作業用の goroutine の結果の届け先。並びが変わっても変わらない）
+	node    mounted // フォーカスの道筋の中のこのペイン（filer §4）
 	dir     string
 	loaded  bool           // 一覧を読み込んだ（最初の読み込みに失敗すれば false のまま）
 	items   []listing.Item // すべての項目（隠しファイルを含む）

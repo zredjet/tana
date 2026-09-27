@@ -38,6 +38,8 @@ type ConflictRow struct {
 	InnerHow string  // ID が 0 の行: 表示する方法
 }
 
+func (ConflictsView) Role() Role { return RoleConflicts }
+
 // ConflictsView は、衝突の画面の内容（filer §8.3）。
 type ConflictsView struct {
 	Op              fsops.OpKind
@@ -143,78 +145,100 @@ func (a *App) SetConflictRows(n int) {
 	}
 }
 
-func (a *App) doConflicts(act Action) []Cmd {
-	op := a.op
-	cs := op.plan.Conflicts()
-	rows := conflictRows(cs, op.collapsed, op.unsetOnly)
-	var row ConflictRow
-	if op.cursor >= 0 && op.cursor < len(rows) {
-		row = rows[op.cursor]
-	}
-	if !a.armed() && act.Kind != ActCancel {
-		// 衝突の画面を描く前に届いたキー（先行入力）では、実行しないだけでなく、決定も変えない。
-		// 見ていない衝突が上書き・マージにならないように（U1・U2）。
-		return nil
-	}
-	switch act.Kind {
-	case ActCancel:
-		a.discard()
-	case ActSubmit:
-		return a.execute()
-	case ActUp, ActDown, ActPageUp, ActPageDown, ActHome, ActEnd:
-		op.cursor = moveCursor(op.cursor, len(rows), op.rows, act.Kind)
-	case ActDecide:
-		c, ok := conflictByID(cs, row.ID)
-		switch {
-		case !ok:
-		case !allowed(c, act.Decision):
-			a.setMessage(msg.DecisionNotAllowed(act.Decision), true)
-		default:
-			a.decide(c.ID, act.Decision)
+// conflictsComp は、衝突の決定の画面（filer §8.3）。
+// 画面を描く前に届いたキー（先行入力）では、実行しないだけでなく、決定もカーソルも変えない。見ていない衝突が上書き・マージにならないように（U1・U2）。
+type conflictsComp struct {
+	base
+	op *operation
+}
+
+func (*conflictsComp) role() Role         { return RoleConflicts }
+func (c *conflictsComp) view(a *App) View { return a.Conflicts() }
+
+func (c *conflictsComp) commands() commandTable {
+	// cur は、衝突と、一覧の行と、カーソル行を返す。
+	cur := func() ([]fsops.Conflict, []ConflictRow, ConflictRow) {
+		op := c.op
+		cs := op.plan.Conflicts()
+		rows := conflictRows(cs, op.collapsed, op.unsetOnly)
+		var row ConflictRow
+		if op.cursor >= 0 && op.cursor < len(rows) {
+			row = rows[op.cursor]
 		}
-	case ActDecideAll:
-		n := 0
-		for _, c := range cs {
-			if allowed(c, act.Decision) {
-				a.decide(c.ID, act.Decision)
-			} else {
-				n++
+		return cs, rows, row
+	}
+	after := func(f func(a *App, act Action) []Cmd) command { return command{GateAfterDraw, f} }
+	return listCommands(GateAfterDraw, func(k ActionKind) {
+		_, rows, _ := cur()
+		c.op.cursor = moveCursor(c.op.cursor, len(rows), c.op.rows, k)
+	}).with(commandTable{
+		ActCancel: {GateFree, func(a *App, _ Action) []Cmd { a.discard(); return nil }},
+		ActSubmit: after(func(a *App, _ Action) []Cmd { return a.execute() }),
+		ActDecide: after(func(a *App, act Action) []Cmd {
+			cs, _, row := cur()
+			x, ok := conflictByID(cs, row.ID)
+			switch {
+			case !ok:
+			case !allowed(x, act.Decision):
+				a.setMessage(msg.DecisionNotAllowed(act.Decision), true)
+			default:
+				a.decide(x.ID, act.Decision)
 			}
-		}
-		if n > 0 {
-			a.setMessage(msg.NotChanged(n), false)
-		}
-	case ActNewerOnly:
+			return nil
+		}),
+		ActDecideAll: after(func(a *App, act Action) []Cmd {
+			cs, _, _ := cur()
+			n := 0
+			for _, x := range cs {
+				if allowed(x, act.Decision) {
+					a.decide(x.ID, act.Decision)
+				} else {
+					n++
+				}
+			}
+			if n > 0 {
+				a.setMessage(msg.NotChanged(n), false)
+			}
+			return nil
+		}),
 		// ファイル同士の衝突のうち、コピー元が新しいもの（2 秒を超える差）を上書きに、それ以外をスキップにする（filer §8.3）。
-		n := 0
-		for _, c := range cs {
-			if !allowed(c, fsops.DecisionOverwrite) {
-				n++
-				continue
+		ActNewerOnly: after(func(a *App, _ Action) []Cmd {
+			cs, _, _ := cur()
+			n := 0
+			for _, x := range cs {
+				if !allowed(x, fsops.DecisionOverwrite) {
+					n++
+					continue
+				}
+				d := fsops.DecisionSkip
+				if x.SrcInfo.ModTime.Sub(x.DstInfo.ModTime) > sameTimeWindow {
+					d = fsops.DecisionOverwrite
+				}
+				a.decide(x.ID, d)
 			}
-			d := fsops.DecisionSkip
-			if c.SrcInfo.ModTime.Sub(c.DstInfo.ModTime) > sameTimeWindow {
-				d = fsops.DecisionOverwrite
+			if n > 0 {
+				a.setMessage(msg.NotChanged(n), false)
 			}
-			a.decide(c.ID, d)
-		}
-		if n > 0 {
-			a.setMessage(msg.NotChanged(n), false)
-		}
-	case ActToggle:
-		switch {
-		case row.ID == 0 && row.Parent != 0:
-			if c, ok := conflictByID(cs, row.Parent); ok && c.Decision == fsops.DecisionMerge {
-				op.collapsed[row.Parent] = false
+			return nil
+		}),
+		ActToggle: after(func(*App, Action) []Cmd {
+			cs, _, row := cur()
+			switch {
+			case row.ID == 0 && row.Parent != 0:
+				if x, ok := conflictByID(cs, row.Parent); ok && x.Decision == fsops.DecisionMerge {
+					c.op.collapsed[row.Parent] = false
+				}
+			case row.ID != 0 && row.Decision == fsops.DecisionMerge:
+				c.op.collapsed[row.ID] = !c.op.collapsed[row.ID]
 			}
-		case row.ID != 0 && row.Decision == fsops.DecisionMerge:
-			op.collapsed[row.ID] = !op.collapsed[row.ID]
-		}
-	case ActUnsetOnly:
-		op.unsetOnly = !op.unsetOnly
-		op.cursor = 0
-	}
-	return nil
+			return nil
+		}),
+		ActUnsetOnly: after(func(*App, Action) []Cmd {
+			c.op.unsetOnly = !c.op.unsetOnly
+			c.op.cursor = 0
+			return nil
+		}),
+	})
 }
 
 // decide は決定を設定し、警告（空き容量の見込みは決定で変わる）を計算し直す。使えることは呼ぶ側で確かめている。

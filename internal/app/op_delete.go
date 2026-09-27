@@ -37,6 +37,8 @@ type DeleteItem struct {
 	Info fsops.EntryInfo
 }
 
+func (DeleteView) Role() Role { return RoleDelete }
+
 // DeleteView は、完全削除の確認の内容（filer §8.6）。
 type DeleteView struct {
 	FromTrash       bool   // ごみ箱に入らなかった項目から進んだ
@@ -66,25 +68,28 @@ func (a *App) Delete() DeleteView {
 	return v
 }
 
-// doDelete は、完全削除の確認の操作を行う。確定は、画面を描いた後の y だけ。Enter・n・Esc はやめる（うっかり Enter で消さない。U2）。
+// deleteComp は、完全削除の確認（filer §8.6）。確定は、画面を描いた後の y だけ。Enter・n・Esc はやめる（うっかり Enter で消さない。U2）。
 // 描く前に届いたキーは、Esc（やめる）のほかは何もしない。
-func (a *App) doDelete(act Action) []Cmd {
-	if act.Kind == ActCancel {
-		a.discard()
-		return nil
+type deleteComp struct {
+	base
+	op *operation
+}
+
+func (*deleteComp) role() Role         { return RoleDelete }
+func (c *deleteComp) view(a *App) View { return a.Delete() }
+func (c *deleteComp) commands() commandTable {
+	stop := func(a *App, _ Action) []Cmd { a.discard(); return nil }
+	return commandTable{
+		ActCancel: {GateFree, stop},
+		ActYes: {GateAfterDraw, func(a *App, _ Action) []Cmd {
+			if a.Delete().Runnable > 0 {
+				return a.execute()
+			}
+			return nil
+		}},
+		ActNo:     {GateAfterDraw, stop},
+		ActSubmit: {GateAfterDraw, stop},
 	}
-	if !a.armed() {
-		return nil
-	}
-	switch act.Kind {
-	case ActYes:
-		if a.Delete().Runnable > 0 {
-			return a.execute()
-		}
-	case ActNo, ActSubmit:
-		a.discard()
-	}
-	return nil
 }
 
 // trashUnavailable は、ごみ箱が使えないと確かめられた理由かを返す。完全削除を勧めるのはこの理由のときだけ

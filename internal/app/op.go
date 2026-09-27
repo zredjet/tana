@@ -63,8 +63,6 @@ type operation struct {
 	req       fsops.Request
 	from      string // 項目のあったフォルダ（覚えたときのフォルダ。見出しに出す）
 	fromTrash bool   // 完全削除: ごみ箱に入らなかった項目から進んだ（filer §8.6）
-	screen    Screen
-	frame     int // この画面を出したときの a.frames。描いた後に届いたキーでだけ確定する（filer U2）
 	cancel    context.CancelFunc
 
 	planning, slow bool // 計画を作っている。0.2 秒を超えた
@@ -83,8 +81,6 @@ type operation struct {
 	progress     fsops.Progress
 	started      time.Time
 	changed      time.Time // 進捗が最後に変わった時刻（ごみ箱の確認ダイアログの知らせ。filer §8.4）
-	askCancel    bool      // 中止の確認を出している
-	askFrame     int
 	canceling    bool
 	cancelAt     time.Time
 	unresponsive bool
@@ -109,19 +105,50 @@ func (s *progressSlot) get() fsops.Progress {
 	return s.p
 }
 
-// Screen は、いまのファイル操作の画面を返す。
+// Screen は、いまのファイル操作の画面を返す（一番上の重ねる部品から求める。計画を作っている間とダイアログは ScreenBrowse）。
 func (a *App) Screen() Screen {
-	if a.op == nil {
-		if a.result != nil && a.result.open {
-			return ScreenResult
-		}
-		return ScreenBrowse
+	switch a.topRole() {
+	case RoleConfirm:
+		return ScreenConfirm
+	case RoleConflicts:
+		return ScreenConflicts
+	case RoleProgress, RoleCancelAsk:
+		return ScreenProgress
+	case RoleResult:
+		return ScreenResult
+	case RoleDelete:
+		return ScreenDelete
 	}
-	return a.op.screen
+	return ScreenBrowse
 }
 
 // Planning は、計画を作っていて 0.2 秒を超えた（「計画を作成中」を出す）かを返す。
-func (a *App) Planning() bool { return a.op != nil && a.op.planning && a.op.slow }
+func (a *App) Planning() bool { return a.topRole() == RolePlanning && a.op.slow }
+
+// PlanningView は、計画を作っている間の内容。
+type PlanningView struct {
+	Slow bool // 0.2 秒を超えた（「計画を作成中」を出す）
+}
+
+func (PlanningView) Role() Role { return RolePlanning }
+
+// planningComp は、計画を作っている間（filer §8.1）。届いたキーは捨て、Esc だけで中止する（U2）。
+// 「計画を作成中」を出している間は、キー入力でメッセージ行を消さない（filer §5.1）。
+type planningComp struct {
+	base
+	op *operation
+}
+
+func (*planningComp) role() Role               { return RolePlanning }
+func (c *planningComp) view(*App) View         { return PlanningView{Slow: c.op.slow} }
+func (c *planningComp) keepsMessage(*App) bool { return c.op.slow }
+func (c *planningComp) commands() commandTable {
+	return commandTable{ActCancel: {GateFree, func(a *App, _ Action) []Cmd {
+		a.discard()
+		a.setMessage(msg.Kind(fsops.KindCanceled), false)
+		return nil
+	}}}
+}
 
 // Yanked は、覚えている項目の数を返す。
 func (a *App) Yanked() int { return len(a.yanked) }
@@ -178,6 +205,7 @@ func (a *App) begin(req fsops.Request, from string, fromTrash bool) []Cmd {
 	ctx, cancel := context.WithCancel(context.Background())
 	a.op = &operation{gen: gen, req: req, from: from, fromTrash: fromTrash, cancel: cancel, planning: true,
 		collapsed: map[fsops.ConflictID]bool{}}
+	a.push(&planningComp{op: a.op}, gen)
 	newPlan := a.cfg.NewPlan
 	return []Cmd{
 		{Run: func() any {
@@ -206,6 +234,7 @@ func (a *App) planned(m planned) {
 	if m.err != nil {
 		a.logErr(m.err)
 		a.op = nil
+		a.removeOwned(op.gen)
 		if oe, ok := errors.AsType[*fsops.OpError](m.err); ok && oe.Kind == fsops.KindNotFound && oe.Path == op.req.DestDir {
 			a.setMessage(msg.DestNotFound, true)
 		} else {
@@ -224,25 +253,21 @@ func (a *App) planned(m planned) {
 	}
 	op.warnings = warningTexts(op.plan.Warnings())
 	if op.req.Op == fsops.OpDelete {
-		a.show(ScreenDelete) // 完全削除は専用の確認で（filer §8.6。U2）
+		a.replaceOwned(op.gen, &deleteComp{op: op}) // 完全削除は専用の確認で（filer §8.6。U2）
 		return
 	}
-	a.show(ScreenConfirm)
+	a.replaceOwned(op.gen, &confirmComp{op: op})
 }
-
-// show は、ファイル操作の画面を出す。これより前に届いたキーでは確定しない（filer U2）。
-func (a *App) show(s Screen) {
-	a.op.screen, a.op.frame = s, a.frames
-}
-
-// armed は、いまの画面を描いた後に届いたキーかを返す（先行入力を捨てる。filer U2）。
-func (a *App) armed() bool { return a.frames > a.op.frame }
 
 // discard は、計画を捨てる（実行前にやめた。NewPlan はファイルシステムを変更しないので、元に戻すものはない。filer §8.1）。
 func (a *App) discard() {
-	if a.op != nil && a.op.cancel != nil {
+	if a.op == nil {
+		return
+	}
+	if a.op.cancel != nil {
 		a.op.cancel()
 	}
+	a.removeOwned(a.op.gen)
 	a.op = nil
 }
 
@@ -252,6 +277,8 @@ func (a *App) discard() {
 type ItemNote struct {
 	Name, Reason string
 }
+
+func (ConfirmView) Role() Role { return RoleConfirm }
 
 // ConfirmView は、確認画面の内容（filer §8.2）。
 type ConfirmView struct {
@@ -306,34 +333,38 @@ func warningTexts(ws []*fsops.OpError) []string {
 	return out
 }
 
-func (a *App) doConfirm(act Action) []Cmd {
-	switch act.Kind {
-	case ActCancel:
-		a.discard()
-	case ActSubmit:
-		if !a.armed() {
-			return nil // 確認画面を描く前に届いた Enter（先行入力。filer U2）
-		}
-		v := a.Confirm()
-		switch {
-		case v.Runnable == 0:
-			// すべての項目が実行されないときは、Esc で閉じるだけにする（filer §8.2）
-		case v.Conflicts > 0:
-			a.show(ScreenConflicts)
-		default:
-			return a.execute()
-		}
-	case ActPurge:
+// confirmComp は、確認画面（filer §8.2）。Enter と D は、画面を描いた後だけ行う（U2）。
+type confirmComp struct {
+	base
+	op *operation
+}
+
+func (*confirmComp) role() Role         { return RoleConfirm }
+func (c *confirmComp) view(a *App) View { return a.Confirm() }
+func (c *confirmComp) commands() commandTable {
+	return commandTable{
+		ActCancel: {GateFree, func(a *App, _ Action) []Cmd { a.discard(); return nil }},
+		ActSubmit: {GateAfterDraw, func(a *App, _ Action) []Cmd {
+			v := a.Confirm()
+			switch {
+			case v.Runnable == 0:
+				// すべての項目が実行されないときは、Esc で閉じるだけにする（filer §8.2）
+			case v.Conflicts > 0:
+				a.replaceOwned(c.op.gen, &conflictsComp{op: c.op})
+			default:
+				return a.execute()
+			}
+			return nil
+		}},
 		// ごみ箱: すべての項目が実行されず、ごみ箱に入らない項目があれば、完全削除の確認へ進める（filer §8.2。フェーズ20で決めた）。
 		// 利用者が D を選んだときだけ進む。UI が自分から完全削除に切り替えない（fsops I5 の UI 側。U2）。
-		if !a.armed() {
+		ActPurge: {GateAfterDraw, func(a *App, _ Action) []Cmd {
+			if v := a.Confirm(); v.Op == fsops.OpTrash && v.Runnable == 0 && v.Untrashable > 0 {
+				srcs, from := untrashableItems(c.op.plan.Items()), c.op.from
+				a.discard()
+				return a.begin(fsops.Request{Op: fsops.OpDelete, Sources: srcs}, from, true)
+			}
 			return nil
-		}
-		if v := a.Confirm(); v.Op == fsops.OpTrash && v.Runnable == 0 && v.Untrashable > 0 {
-			srcs, from := untrashableItems(a.op.plan.Items()), a.op.from
-			a.discard()
-			return a.begin(fsops.Request{Op: fsops.OpDelete, Sources: srcs}, from, true)
-		}
+		}},
 	}
-	return nil
 }

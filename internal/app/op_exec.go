@@ -25,7 +25,7 @@ type opTick struct{ gen int }
 // 進捗は最新の値だけを progressSlot に置き、Wake でイベントループに知らせる（Execute を待たせない）。
 func (a *App) execute() []Cmd {
 	op := a.op
-	a.show(ScreenProgress)
+	a.replaceOwned(op.gen, &progressComp{op: op})
 	ctx, cancel := context.WithCancel(context.Background())
 	op.cancel = cancel
 	op.slot = &progressSlot{}
@@ -56,7 +56,7 @@ func (a *App) SetWake(f func()) { a.cfg.Wake = f }
 
 // Refresh は、最新の進捗を読む（tui が Wake の知らせを受けたときに呼ぶ）。
 func (a *App) Refresh() {
-	if op := a.op; op != nil && op.screen == ScreenProgress {
+	if op := a.op; op != nil && op.slot != nil { // 実行中（中止の確認を出している間も読む）
 		if p := op.slot.get(); p != op.progress {
 			op.progress, op.changed = p, a.cfg.Now()
 		}
@@ -65,7 +65,7 @@ func (a *App) Refresh() {
 
 func (a *App) opTick(m opTick) []Cmd {
 	op := a.op
-	if op == nil || op.gen != m.gen || op.screen != ScreenProgress {
+	if op == nil || op.gen != m.gen || op.slot == nil {
 		return nil
 	}
 	a.Refresh()
@@ -74,6 +74,8 @@ func (a *App) opTick(m opTick) []Cmd {
 	}
 	return []Cmd{a.tick()}
 }
+
+func (ProgressView) Role() Role { return RoleProgress }
 
 // ProgressView は、進捗の画面の内容。速度・残り時間・経過時間は UI が計算する（filer §8.4）。
 type ProgressView struct {
@@ -96,7 +98,7 @@ func (a *App) Progress() ProgressView {
 	p := op.progress
 	v := ProgressView{Op: op.req.Op, Stage: p.Stage, Current: p.Current, DoneFiles: p.DoneFiles, TotalFiles: p.TotalFiles,
 		DoneBytes: p.DoneBytes, TotalBytes: p.TotalBytes, Elapsed: a.cfg.Now().Sub(op.started), Remaining: -1,
-		AskCancel: op.askCancel, Canceling: op.canceling, Unresponsive: op.unresponsive}
+		AskCancel: a.topRole() == RoleCancelAsk, Canceling: op.canceling, Unresponsive: op.unresponsive}
 	if v.Stage == 0 { // 最初の進捗が届く前
 		switch op.req.Op {
 		case fsops.OpMove:
@@ -121,21 +123,60 @@ func (a *App) Progress() ProgressView {
 	return v
 }
 
-func (a *App) doProgress(act Action) []Cmd {
-	op := a.op
-	switch {
-	case act.Kind == ActForceQuit && op.unresponsive:
-		a.quit = true // 残りうるものは画面に示してある（filer §8.4）
-	case op.canceling:
-	case act.Kind == ActCancel && !op.askCancel:
-		op.askCancel, op.askFrame = true, a.frames
-	case act.Kind == ActYes && op.askCancel && a.frames > op.askFrame:
-		op.askCancel, op.canceling, op.cancelAt = false, true, a.cfg.Now()
-		op.cancel() // 処理中の項目は安全に中断され、残りはスキップになる（fsops）
-	case (act.Kind == ActNo || act.Kind == ActCancel) && op.askCancel:
-		op.askCancel = false
+// progressComp は、進捗の画面（filer §8.4）。実行中はほかの操作を受け付けない（filer §7）。
+// Esc・Ctrl+C で中止の確認を重ねる。中止しても応答がないときだけ、Q で終わる（残りうるものは画面に示してある）。
+type progressComp struct {
+	base
+	op *operation
+}
+
+func (*progressComp) role() Role         { return RoleProgress }
+func (c *progressComp) view(a *App) View { return a.Progress() }
+func (c *progressComp) commands() commandTable {
+	return commandTable{
+		ActCancel: {GateFree, func(a *App, _ Action) []Cmd {
+			if !c.op.canceling {
+				a.push(&cancelAskComp{op: c.op}, c.op.gen)
+			}
+			return nil
+		}},
+		ActForceQuit: {GateFree, func(a *App, _ Action) []Cmd {
+			if c.op.unresponsive {
+				a.quit = true
+			}
+			return nil
+		}},
 	}
-	return nil
+}
+
+// CancelAskView は、中止の確認の内容。
+type CancelAskView struct {
+	Op fsops.OpKind
+}
+
+func (CancelAskView) Role() Role { return RoleCancelAsk }
+
+// cancelAskComp は、中止の確認（filer §8.4）。y は確認を描いた後だけ行う（U2）。n・Esc・Ctrl+C は続ける。
+type cancelAskComp struct {
+	base
+	op *operation
+}
+
+func (*cancelAskComp) role() Role       { return RoleCancelAsk }
+func (c *cancelAskComp) view(*App) View { return CancelAskView{Op: c.op.req.Op} }
+func (c *cancelAskComp) commands() commandTable {
+	keep := command{GateFree, func(a *App, _ Action) []Cmd { a.pop(); return nil }}
+	return commandTable{
+		ActYes: {GateAfterDraw, func(a *App, _ Action) []Cmd {
+			a.pop()
+			op := c.op
+			op.canceling, op.cancelAt = true, a.cfg.Now()
+			op.cancel() // 処理中の項目は安全に中断され、残りはスキップになる（fsops）
+			return nil
+		}},
+		ActNo:     keep,
+		ActCancel: keep,
+	}
 }
 
 // Abort は、実行中のファイル操作を中止し、Execute が戻るのを最大 wait だけ待つ（シグナルで終わるとき。filer §10）。
@@ -165,8 +206,6 @@ type resultState struct {
 	english     bool
 	cursor      int
 	rows        int
-	open        bool
-	frame       int
 }
 
 func (a *App) executed(m executed) []Cmd {
@@ -175,6 +214,7 @@ func (a *App) executed(m executed) []Cmd {
 		return nil
 	}
 	a.op = nil
+	a.removeOwned(op.gen) // 進捗と中止の確認
 	if m.err != nil {
 		a.logErr(m.err)
 		a.setMessage(msg.CannotExecute(msg.Error(m.err)), true)
@@ -208,7 +248,7 @@ func (a *App) executed(m executed) []Cmd {
 		}
 	}
 	if needsResultScreen(res) {
-		a.result.open, a.result.frame = true, a.frames
+		a.push(&resultComp{r: a.result}, 0)
 	} else {
 		a.setMessage(msg.Done(op.req.Op, done, skipped, warned), false)
 	}
@@ -307,6 +347,8 @@ type ResultRow struct {
 	Expandable bool
 	Expanded   bool
 }
+
+func (ResultView) Role() Role { return RoleResult }
 
 // ResultView は、結果の画面の内容。
 type ResultView struct {
@@ -427,31 +469,37 @@ func (a *App) SetResultRows(n int) {
 	}
 }
 
-func (a *App) doResult(act Action) []Cmd {
-	r := a.result
-	rows := r.rowsOf()
-	switch act.Kind {
-	case ActSubmit, ActCancel:
-		if a.frames <= r.frame {
-			return nil // 結果の画面を描く前に届いたキーでは閉じない（結果を隠さない。U3）
-		}
-		r.open = false
-	case ActUp, ActDown, ActPageUp, ActPageDown, ActHome, ActEnd:
-		r.cursor = moveCursor(r.cursor, len(rows), r.rows, act.Kind)
-	case ActToggle:
-		if r.cursor < len(rows) && rows[r.cursor].Expandable {
-			i := rows[r.cursor].Item
-			r.expanded[i] = !r.expanded[i]
-		}
-	case ActEnglish:
-		r.english = !r.english
-	case ActPurge:
+// resultComp は、結果の画面（filer §8.5）。画面を描く前に届いたキーでは閉じない（結果を隠さない。U3）。
+// 移動・展開・英語の詳細は、描く前でも行う。
+type resultComp struct {
+	base
+	r *resultState
+}
+
+func (*resultComp) role() Role         { return RoleResult }
+func (c *resultComp) view(a *App) View { return a.Result() }
+func (c *resultComp) commands() commandTable {
+	closeIt := command{GateAfterDraw, func(a *App, _ Action) []Cmd { a.pop(); return nil }}
+	free := func(f func()) command { return command{GateFree, func(*App, Action) []Cmd { f(); return nil }} }
+	return listCommands(GateFree, func(k ActionKind) {
+		c.r.cursor = moveCursor(c.r.cursor, len(c.r.rowsOf()), c.r.rows, k)
+	}).with(commandTable{
+		ActSubmit: closeIt,
+		ActCancel: closeIt,
+		ActToggle: free(func() {
+			if rows := c.r.rowsOf(); c.r.cursor < len(rows) && rows[c.r.cursor].Expandable {
+				i := rows[c.r.cursor].Item
+				c.r.expanded[i] = !c.r.expanded[i]
+			}
+		}),
+		ActEnglish: free(func() { c.r.english = !c.r.english }),
 		// ごみ箱に入らなかった項目の完全削除の確認へ（filer §8.5・§8.6）。利用者が D を選んだときだけ進む（fsops I5 の UI 側）。
-		if a.frames <= r.frame || len(r.untrashable) == 0 {
-			return nil
-		}
-		r.open = false
-		return a.begin(fsops.Request{Op: fsops.OpDelete, Sources: slices.Clone(r.untrashable)}, r.from, true)
-	}
-	return nil
+		ActPurge: {GateAfterDraw, func(a *App, _ Action) []Cmd {
+			if len(c.r.untrashable) == 0 {
+				return nil
+			}
+			a.pop()
+			return a.begin(fsops.Request{Op: fsops.OpDelete, Sources: slices.Clone(c.r.untrashable)}, c.r.from, true)
+		}},
+	})
 }

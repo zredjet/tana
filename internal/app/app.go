@@ -78,32 +78,20 @@ const (
 	DialogNewDir            // 新しいフォルダ（filer §8.7）
 )
 
-type dialog struct {
-	kind  DialogKind
-	edit  *lineedit.Editor // DialogPath・DialogRename・DialogNewDir
-	path  string           // DialogExec: 開くパス。DialogRename: 変える項目のパス（列挙で得た名前から作る。U4）
-	name  string           // DialogExec: 表示する名前。DialogRename: 今の名前
-	frame int              // 開いたときの a.frames。これより後に描いてから届いたキーだけで確定する（filer U2）
-
-	// DialogRename・DialogNewDir
-	dir  string // 項目のあるフォルダ、フォルダを作る場所
-	pane int    // 始めたペインの ID
-	err  string // fsops のエラーの文言（入力欄の下に出す）
-	busy int    // 変更・作成を待っている処理の世代（0 なら待っていない）
-}
-
 // App は、画面の状態。
 type App struct {
 	cfg        Config
 	panes      []*Pane
 	active     int // 操作中のペインの ID
 	showHidden bool
-	message    string
+	message    string // 知らせ（メッセージ行。filer §4 の置き方「知らせ」）
 	messageErr bool
-	dialog     dialog
-	gen        int // ID と世代の払い出し（ペイン、読み込み・開く処理・ファイル操作・名前の変更）。古い結果を捨てる
-	opening    int // 関連付けで開く前の確認をしている世代（0 ならしていない）
-	frames     int // 描いた回数（Drawn）
+	ws         mounted    // 作業場（フォーカスの道筋の根。重ねる部品がないとき）
+	modals     []*mounted // 作業場の上に重ねた部品（下から順）
+	inner      focusKey   // 道筋の一番内側（変わったら門を掛け直す）
+	gen        int        // ID と世代の払い出し（ペイン、読み込み・開く処理・ファイル操作・名前の変更）。古い結果を捨てる
+	opening    int        // 関連付けで開く前の確認をしている世代（0 ならしていない）
+	frames     int        // 描いた回数（Drawn）
 	quit       bool
 
 	needs        Needs        // 表示形式が求めるもの（SetNeeds）
@@ -119,9 +107,11 @@ type App struct {
 // New は、App を作り、各ペインの最初の読み込みを返す。
 func New(cfg Config) (*App, []Cmd) {
 	a := &App{cfg: cfg}
+	a.ws = mounted{c: workspaceComp{}, id: a.newID()}
 	var cmds []Cmd
 	for _, dir := range cfg.Dirs {
 		p := &Pane{id: a.newID(), dir: dir, marks: map[string]struct{}{}, targets: map[string]string{}}
+		p.node = mounted{c: paneComp{p: p}, id: p.id}
 		a.panes = append(a.panes, p)
 	}
 	if len(a.panes) > 0 {
@@ -130,6 +120,7 @@ func New(cfg Config) (*App, []Cmd) {
 	for _, p := range a.panes {
 		cmds = append(cmds, a.load(p, p.dir, loadInitial, "")...)
 	}
+	a.settleFocus()
 	return a, cmds
 }
 
@@ -174,29 +165,42 @@ func (a *App) ShowHidden() bool { return a.showHidden }
 // Message は、メッセージ行の文言と、それがエラーかを返す。
 func (a *App) Message() (text string, isErr bool) { return a.message, a.messageErr }
 
-// Dialog は、開いているダイアログの種類を返す。
-func (a *App) Dialog() DialogKind { return a.dialog.kind }
+// Dialog は、開いているダイアログの種類を返す（一番上の重ねる部品から求める）。
+func (a *App) Dialog() DialogKind {
+	switch a.topRole() {
+	case RoleHelp:
+		return DialogHelp
+	case RolePath:
+		return DialogPath
+	case RoleExec:
+		return DialogExec
+	case RoleRename:
+		return DialogRename
+	case RoleNewDir:
+		return DialogNewDir
+	}
+	return DialogNone
+}
 
 // PathEditor は、パスの入力欄を返す（DialogPath のとき）。
-func (a *App) PathEditor() *lineedit.Editor { return a.dialog.edit }
-
-// NameView は、名前の変更・新しいフォルダの画面の内容（filer §8.7）。
-type NameView struct {
-	Edit *lineedit.Editor // 入力欄（元のバイト列を持つ。表示する形への置き換えは描くときに行う。U4）
-	Name string           // 名前の変更: 今の名前（列挙で得たもの）
-	Dir  string           // 項目のあるフォルダ、フォルダを作る場所
-	Err  string           // fsops のエラーの文言（入力欄の下に出す）
-	Busy bool             // 変更・作成を待っている
+func (a *App) PathEditor() *lineedit.Editor {
+	if v, ok := ModalView[PathView](a); ok {
+		return v.Edit
+	}
+	return nil
 }
 
 // NameDialog は、名前の変更・新しいフォルダの画面の内容を返す（DialogRename・DialogNewDir のとき）。
 func (a *App) NameDialog() NameView {
-	d := a.dialog
-	return NameView{Edit: d.edit, Name: d.name, Dir: d.dir, Err: d.err, Busy: d.busy != 0}
+	v, _ := ModalView[NameView](a)
+	return v
 }
 
 // ExecName は、実行の確認で表示する名前を返す（DialogExec のとき）。
-func (a *App) ExecName() string { return a.dialog.name }
+func (a *App) ExecName() string {
+	v, _ := ModalView[ExecView](a)
+	return v.Name
+}
 
 // Now は、日時の表示に使う現在の時刻を返す。
 func (a *App) Now() time.Time { return a.cfg.Now() }
@@ -268,143 +272,19 @@ type Action struct {
 	Kind     ActionKind
 	Text     string         // ActInsert
 	Decision fsops.Decision // ActDecide・ActDecideAll
+	Role     Role           // 届ける部品の役割（tui の keymap がキーを解決した役割）。RoleNone なら、道筋の内側から探す
 }
 
 // Do は、利用者の操作を行う。キー入力のたびにメッセージ行を消す（filer §5.1）。
 func (a *App) Do(act Action) []Cmd {
-	return append(a.do(act), a.follow()...)
+	a.KeyPressed()
+	cmds := append(a.dispatch(act), a.follow()...)
+	a.settleFocus()
+	return cmds
 }
 
 // ClearMessage は、メッセージ行を消す。操作にならないキー入力（割り当てのないキー、表示形式の切り替えなど）のときに tui が呼ぶ（filer §5.1）。
 func (a *App) ClearMessage() { a.message, a.messageErr = "", false }
-
-func (a *App) do(act Action) []Cmd {
-	if a.op == nil || !a.op.planning {
-		a.ClearMessage() // キー入力のたびに消す（ファイル操作の画面・ダイアログの中でも。filer §5.1）
-	}
-	switch {
-	case a.op != nil && a.op.planning:
-		// 計画を作っている間に届いたキーは捨てる（filer U2）。Esc だけは中止にする。
-		if act.Kind == ActCancel {
-			a.discard()
-			a.setMessage(msg.Kind(fsops.KindCanceled), false)
-		}
-		return nil
-	case a.op != nil:
-		switch a.op.screen {
-		case ScreenConfirm:
-			return a.doConfirm(act)
-		case ScreenConflicts:
-			return a.doConflicts(act)
-		case ScreenProgress:
-			return a.doProgress(act) // 実行中はほかの操作を受け付けない（filer §7）
-		case ScreenDelete:
-			return a.doDelete(act)
-		}
-		return nil
-	case a.result != nil && a.result.open:
-		return a.doResult(act)
-	}
-	if a.dialog.kind != DialogNone {
-		return a.doDialog(act)
-	}
-	p := a.cur()
-	if act.Kind == ActCancel {
-		return a.cancel()
-	}
-	// 読み込み中のペインでは、そのペインの操作を受け付けない（読み込みが終わると一覧が変わるため）。
-	if p.load != nil && paneLocal(act.Kind) {
-		return nil
-	}
-	switch act.Kind {
-	case ActUp:
-		p.move(-1)
-	case ActDown:
-		p.move(1)
-	case ActPageUp:
-		p.move(-max(p.rows, 1))
-	case ActPageDown:
-		p.move(max(p.rows, 1))
-	case ActHome:
-		p.move(-len(p.visible))
-	case ActEnd:
-		p.move(len(p.visible))
-	case ActEnter:
-		return a.enter()
-	case ActEnterDir:
-		return a.enterDir()
-	case ActParent:
-		return a.parent(p)
-	case ActNextPane:
-		a.active = a.panes[(a.Active()+1)%len(a.panes)].id
-	case ActMark:
-		if it, ok := p.current(); ok && !it.Parent {
-			p.toggleMark(it.Name)
-		}
-		p.move(1)
-	case ActMarkAll:
-		p.markAll()
-	case ActToggleHidden:
-		a.showHidden = !a.showHidden
-		for _, q := range a.panes {
-			q.filter(a.showHidden)
-		}
-	case ActReload:
-		// 最初の読み込みに失敗した・中止したペイン（一覧がない）は、起動時と同じく読み込み直す。
-		// 読み込み中のペインは読み直さない（今の移動を知らせなしに取り消さない。filer §6）。
-		var cmds []Cmd
-		for _, q := range a.panes {
-			if q.load != nil {
-				continue
-			}
-			kind := loadReload
-			if !q.loaded {
-				kind = loadInitial
-			}
-			cmds = append(cmds, a.load(q, q.dir, kind, "")...)
-		}
-		return cmds
-	case ActGoPath:
-		a.dialog = dialog{kind: DialogPath, edit: lineedit.New(p.dir, len(p.dir))}
-	case ActSyncOther:
-		if len(a.panes) > 1 && p.loaded {
-			return a.load(a.panes[(a.Active()+1)%len(a.panes)], p.dir, loadGo, "")
-		}
-	case ActHelp:
-		a.dialog = dialog{kind: DialogHelp}
-	case ActQuit:
-		a.quit = true
-	case ActYank:
-		a.yank()
-	case ActPasteCopy:
-		return a.paste(fsops.OpCopy)
-	case ActPasteMove:
-		return a.paste(fsops.OpMove)
-	case ActLastResult:
-		if a.result != nil {
-			a.result.open, a.result.frame = true, a.frames
-		}
-	case ActTrash:
-		return a.trash()
-	case ActPurge:
-		return a.purge()
-	case ActRename:
-		a.rename()
-	case ActNewDir:
-		a.newDir()
-	}
-	return nil
-}
-
-// paneLocal は、操作中のペインの一覧を使う操作かを返す。
-func paneLocal(k ActionKind) bool {
-	switch k {
-	case ActUp, ActDown, ActPageUp, ActPageDown, ActHome, ActEnd, ActEnter, ActEnterDir, ActParent, ActMark, ActMarkAll, ActGoPath, ActSyncOther,
-		ActYank, ActPasteCopy, ActPasteMove, ActTrash, ActPurge, ActRename, ActNewDir:
-		return true
-	}
-	return false
-}
 
 // cancel は、読み込みと、開く前の確認を中止する（filer U5。待つのをやめて結果を捨てる）。
 func (a *App) cancel() []Cmd {
@@ -424,71 +304,6 @@ func (a *App) cancel() []Cmd {
 		a.setMessage(msg.Kind(fsops.KindCanceled), false)
 	}
 	return nil
-}
-
-// doDialog は、ダイアログを開いているときの操作を行う。
-func (a *App) doDialog(act Action) []Cmd {
-	d := &a.dialog
-	switch d.kind {
-	case DialogHelp:
-		if act.Kind != ActInsert { // 貼り付けでは閉じない
-			a.dialog = dialog{}
-		}
-	case DialogExec:
-		if a.frames <= d.frame {
-			return nil // 確認を描く前に届いたキー（filer U2）
-		}
-		switch act.Kind {
-		case ActYes:
-			path, name := d.path, d.name
-			a.dialog = dialog{}
-			return a.openCmd(path, name)
-		case ActNo, ActCancel:
-			a.dialog = dialog{}
-		}
-	case DialogRename, DialogNewDir:
-		return a.doName(act)
-	case DialogPath:
-		if edit(d.edit, act) {
-			return nil
-		}
-		switch act.Kind {
-		case ActCancel:
-			a.dialog = dialog{}
-		case ActSubmit:
-			text := d.edit.Text()
-			a.dialog = dialog{}
-			if strings.TrimSpace(text) == "" {
-				return nil
-			}
-			p := a.cur()
-			return a.load(p, Resolve(p.dir, text), loadGo, "")
-		}
-	}
-	return nil
-}
-
-// edit は、入力欄 e の編集の操作（文字を入れる、消す、カーソルを動かす）を行う。編集の操作でなければ false。
-func edit(e *lineedit.Editor, act Action) bool {
-	switch act.Kind {
-	case ActInsert:
-		e.Insert(act.Text)
-	case ActBackspace:
-		e.DeleteBackward()
-	case ActDelete:
-		e.DeleteForward()
-	case ActLeft:
-		e.Left()
-	case ActRight:
-		e.Right()
-	case ActLineHome:
-		e.Home()
-	case ActLineEnd:
-		e.End()
-	default:
-		return false
-	}
-	return true
 }
 
 // Resolve は、入力されたパス（g の入力欄、起動の引数）を絶対パスにする。相対パスは dir から数える。
@@ -584,7 +399,9 @@ func (a *App) load(p *Pane, dir string, kind loadKind, focus string) []Cmd {
 
 // Update は、Cmd の結果を反映する。
 func (a *App) Update(m any) []Cmd {
-	return append(a.update(m), a.follow()...)
+	cmds := append(a.update(m), a.follow()...)
+	a.settleFocus()
+	return cmds
 }
 
 func (a *App) update(m any) []Cmd {
@@ -752,12 +569,9 @@ func (a *App) checked(m checked) []Cmd {
 		a.setMessage(msg.CannotOpenName, true)
 		return nil
 	case m.exec:
-		// 閲覧の画面でなければ（ヘルプ・入力欄・結果の画面などを開いていれば）、確認を出さずにやめる。
+		// 閲覧の画面でなければ（ヘルプ・入力欄・結果の画面などを開いていれば）、確認を出さずにやめる（pushAsync が重ねない）。
 		// 出すと、ほかの画面の下に隠れたまま（またはそれを置き換えて）描いた後の扱いになり、見ていない確認を確定できる（filer §7。U2）。
-		if a.op != nil || a.result != nil && a.result.open || a.dialog.kind != DialogNone {
-			return nil
-		}
-		a.dialog = dialog{kind: DialogExec, path: m.path, name: m.name, frame: a.frames}
+		a.pushAsync(&execComp{path: m.path, name: m.name})
 		return nil
 	}
 	return a.openCmd(m.path, m.name)
@@ -797,4 +611,83 @@ func (a *App) linkTarget(p *Pane) []Cmd {
 		}
 		return linkRead{pane: i, listGen: gen, name: name, target: target}
 	}}}
+}
+
+// ---- ダイアログの部品 ----
+
+// HelpView は、ヘルプの内容。
+type HelpView struct{}
+
+func (HelpView) Role() Role { return RoleHelp }
+
+// helpComp は、ヘルプ。文字の入力（貼り付け）のほかのどの操作でも閉じる。
+type helpComp struct{ base }
+
+func (helpComp) role() Role     { return RoleHelp }
+func (helpComp) view(*App) View { return HelpView{} }
+func (helpComp) commands() commandTable {
+	t := commandTable{}
+	for k := ActUp; k <= ActNewDir; k++ {
+		if k != ActInsert { // 貼り付けでは閉じない
+			t[k] = command{GateFree, func(a *App, _ Action) []Cmd { a.pop(); return nil }}
+		}
+	}
+	return t
+}
+
+// PathView は、パスの入力（g）の内容。
+type PathView struct {
+	Edit *lineedit.Editor
+}
+
+func (PathView) Role() Role { return RolePath }
+
+// pathComp は、パスの入力（g）。入力したパスは利用者が打った文字列で、表示用に加工したものではない（filer U4）。
+type pathComp struct {
+	base
+	edit *lineedit.Editor
+}
+
+func (*pathComp) role() Role       { return RolePath }
+func (c *pathComp) view(*App) View { return PathView{Edit: c.edit} }
+func (c *pathComp) commands() commandTable {
+	return editCommands(func() *lineedit.Editor { return c.edit }, nil, nil).with(commandTable{
+		ActCancel: {GateFree, func(a *App, _ Action) []Cmd { a.pop(); return nil }},
+		ActSubmit: {GateFree, func(a *App, _ Action) []Cmd {
+			text := c.edit.Text()
+			a.pop()
+			if strings.TrimSpace(text) == "" {
+				return nil
+			}
+			p := a.cur()
+			return a.load(p, Resolve(p.dir, text), loadGo, "")
+		}},
+	})
+}
+
+// ExecView は、実行ファイルを開く前の確認の内容。
+type ExecView struct {
+	Name string // 表示する名前
+}
+
+func (ExecView) Role() Role { return RoleExec }
+
+// execComp は、実行ファイルを開く前の確認（filer §7）。作業用の goroutine の結果で出すので、どの操作も描いた後だけ行う（Esc も）。
+type execComp struct {
+	base
+	path, name string // 開くパス（列挙で得た名前から作ったもの。U4）、表示する名前
+}
+
+func (*execComp) role() Role       { return RoleExec }
+func (c *execComp) view(*App) View { return ExecView{Name: c.name} }
+func (c *execComp) commands() commandTable {
+	closeIt := command{GateAfterDraw, func(a *App, _ Action) []Cmd { a.pop(); return nil }}
+	return commandTable{
+		ActYes: {GateAfterDraw, func(a *App, _ Action) []Cmd {
+			a.pop()
+			return a.openCmd(c.path, c.name)
+		}},
+		ActNo:     closeIt,
+		ActCancel: closeIt,
+	}
 }
