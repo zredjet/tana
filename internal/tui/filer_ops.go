@@ -112,8 +112,8 @@ func (f *Filer) drawConflicts(s *screen.Screen, r screen.Region, view app.View, 
 	}
 	rule := strings.Repeat(boxSingle.h, cols)
 	s.Put(full, 0, header, rule, f.th().dim)
-	nameW := cols - 2 - (infoW + 1) - (infoW + 1) - 1 - decisionW // 左端の 2 桁と、欄の間の 3 つの空白
-	colX := [4]int{2, 2 + nameW + 1, 2 + nameW + 1 + infoW + 1, 2 + nameW + 1 + 2*(infoW+1)}
+	colX, colW := rowColumns(2, cols-2, 1, flex, infoW, infoW, decisionW) // 左端の 2 桁（カーソルの印）の後に、名前・コピー元・コピー先・決定
+	nameW := colW[0]
 	for i, h := range msg.ConflictColumns {
 		s.Put(full, colX[i], header+1, h, f.th().dim)
 	}
@@ -300,7 +300,7 @@ func (f *Filer) drawResult(s *screen.Screen, r screen.Region, view app.View, fr 
 			outW = max(outW, textwidth.Width(msg.Outcome(r.Outcome)))
 		}
 	}
-	nameW := min(24, cols/4)
+	colX, colW := rowColumns(2, cols-3, 1, outW, min(24, cols/4), flex) // 左端の 2 桁（カーソルの印）の後に、結果・名前・理由
 	// 英語の詳細（e）は、カーソル行のものを画面の下に折り返して出す（行の中に出すと、深い階層のパスで Kind が見えなくなる）。
 	var english []string
 	if v.English && v.Cursor < len(v.Rows) {
@@ -322,21 +322,19 @@ func (f *Filer) drawResult(s *screen.Screen, r screen.Region, view app.View, fr 
 			s.Fill(screen.Region{X: 0, Y: y, W: cols, H: 1}, st)
 			s.Put(full, 0, y, ">", st)
 		}
-		x := 2
 		if !r.Detail {
 			ost := st
 			if r.Outcome != fsops.OutcomeDone && r.Outcome != fsops.OutcomeSkipped {
 				ost.FG, ost.Attr = f.th().problem.FG, ost.Attr|f.th().problem.Attr
 			}
-			s.Put(full, x, y, msg.Outcome(r.Outcome), ost)
+			s.Put(full, colX[0], y, msg.Outcome(r.Outcome), ost)
 		}
-		x += outW + 1
 		indent := ""
 		if r.Detail {
 			indent = boxSingle.bl + " " // フォルダの中の結果（上の項目の中）
 		}
-		f.putName(s, screen.Region{X: x, Y: y, W: nameW, H: 1}, textfmt.TruncName(indent+r.Name, nameW), st)
-		s.Put(screen.Region{X: x + nameW + 1, Y: y, W: cols - x - nameW - 2, H: 1}, 0, 0, r.Reason, st)
+		f.putName(s, screen.Region{X: colX[1], Y: y, W: colW[1], H: 1}, textfmt.TruncName(indent+r.Name, colW[1]), st)
+		s.Put(screen.Region{X: colX[2], Y: y, W: colW[2], H: 1}, 0, 0, r.Reason, st)
 	}
 	if paneH > 0 {
 		py := rows - 2 - paneH

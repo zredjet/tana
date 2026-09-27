@@ -147,31 +147,30 @@ func (f *Filer) Draw(s *screen.Screen) {
 		return
 	}
 	a := f.app
-	panes := a.Panes()
-	paneH := rows - 3
+	// 作業場の配置: 下端にキーの案内・メッセージ行・状態行を寄せ、残りにペイン（表示形式ごと）を置く（G13）。
+	d := dock{rest: screen.Region{W: cols, H: rows}}
+	guide, message, status := d.bottom(1), d.bottom(1), d.bottom(1)
 	if f.view == viewColumns {
-		f.drawColumns(s, screen.Region{W: cols, H: paneH})
+		f.drawColumns(s, d.rest)
 	} else {
-		for i, p := range panes {
-			x0, x1 := cols*i/len(panes), cols*(i+1)/len(panes)
-			f.drawPane(s, screen.Region{X: x0, Y: 0, W: x1 - x0, H: paneH}, p, i == a.Active())
+		for i, r := range splitCols(d.rest, len(a.Panes())) {
+			f.drawPane(s, r, a.Panes()[i], i == a.Active())
 		}
 	}
-	line := func(y int) screen.Region { return screen.Region{X: 0, Y: y, W: cols, H: 1} }
-	f.drawStatus(s, line(rows-3))
+	f.drawStatus(s, status)
 	if n := a.Yanked(); n > 0 { // 覚えている項目の数（y。filer §7）は、状態行の右に出す
 		text := " " + msg.YankedIndicator(n) + " "
 		w := textwidth.Width(text)
-		s.Put(screen.Region{X: cols - w - 1, Y: rows - 3, W: w, H: 1}, 0, 0, text, f.th().indicator)
+		s.Put(screen.Region{X: status.X + status.W - w - 1, Y: status.Y, W: w, H: 1}, 0, 0, text, f.th().indicator)
 	}
 	if text, isErr := a.Message(); text != "" {
 		st := screen.Style{}
 		if isErr {
 			st = f.th().err
 		}
-		s.Put(line(rows-2), 1, 0, text, st)
+		s.Put(message, 1, 0, text, st)
 	}
-	s.Put(line(rows-1), 1, 0, keymap.MainGuide.Render(), f.th().dim)
+	s.Put(guide, 1, 0, keymap.MainGuide.Render(), f.th().dim)
 	f.drawModals(s)
 	a.Drawn() // 確認のダイアログは、描いた後に届いたキーで確定する（filer U2）
 }
@@ -222,10 +221,11 @@ func drawFooter(s *screen.Screen, r screen.Region, x int, p *app.Pane, st screen
 // columns は、ペインの内側の幅 w での名前の欄の幅と、更新日時の欄を出すかを返す。
 // 行は「マーク 1 桁、名前、空白、サイズ 5 桁、空白、更新日時 11 桁」。狭ければ更新日時を隠して名前に回す（filer §5.1）。
 func columns(w int) (nameW int, date bool) {
-	if nameW = w - 1 - 1 - sizeW - 1 - dateW; nameW >= minNameW {
-		return nameW, true
+	if _, ws := rowColumns(1, w-1, 1, flex, sizeW, dateW); ws[0] >= minNameW {
+		return ws[0], true
 	}
-	return max(w-1-1-sizeW, 1), false
+	_, ws := rowColumns(1, w-1, 1, flex, sizeW)
+	return max(ws[0], 1), false
 }
 
 // drawItem は、ペイン p の i 番目の項目を 1 行の領域 r に描く。
@@ -452,8 +452,8 @@ func (f *Filer) drawColumns(s *screen.Screen, r screen.Region) {
 	st := screen.Style{}
 	drawBox(s, r, boxSingle, "", st)
 	inner := screen.Region{X: r.X + 1, Y: r.Y + 1, W: r.W - 2, H: r.H - 2}
-	total := inner.W - 2
-	pw, cw := total/8, total*4/8
+	ws := ratioWidths(inner.W-2, 1, 4, 3) // 列の間の罫線 2 本を除いた幅を、親フォルダ・ペイン・プレビューに 1:4:3 で分ける
+	pw, cw := ws[0], ws[1]
 	sep1 := inner.X + pw
 	sep2 := sep1 + 1 + cw
 	for _, x := range []int{sep1, sep2} {
