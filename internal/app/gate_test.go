@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -352,4 +353,70 @@ func TestLastResultKeepsState(t *testing.T) {
 	if got := h.a.Result(); fmt.Sprintf("%+v", got) != fmt.Sprintf("%+v", want) {
 		t.Errorf("reopened result:\n got %+v\nwant %+v", got, want)
 	}
+}
+
+// TestExecNotUnderOverlay は、開く前の確認の間にほかの画面を開いたら、実行の確認を出さないことを確かめる（filer §7）。
+// 出すと、ほかの画面の下に隠れたまま（またはヘルプを置き換えて）、描いた後の扱いになり、見ていない確認を確定できる（U2）。
+func TestExecNotUnderOverlay(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name    string
+		overlay func(h *harness)
+		screen  Screen
+		dialog  DialogKind
+	}{
+		{"help", func(h *harness) { h.do(ActHelp) }, ScreenBrowse, DialogHelp},
+		{"path", func(h *harness) { h.do(ActGoPath) }, ScreenBrowse, DialogPath},
+		{"last result", func(h *harness) { h.do(ActLastResult) }, ScreenResult, DialogNone},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			fp := &fakePlan{}
+			fp.exec = gateFailed(fp)
+			root := tree(t)
+			h := newHarness(t, func(c *Config) {
+				c.NewPlan = func(_ context.Context, req fsops.Request) (Plan, error) { fp.req = req; return fp, nil }
+				c.IsExecutable = func(string, bool) bool { return true }
+			}, root, filepath.Join(root, "sub"))
+			// 直前の操作の結果を作っておく（L で開き直せるように）。
+			h.pasteInto("b.txt", 1, ActPasteCopy)
+			h.confirm()
+			h.a.Drawn()
+			h.do(ActSubmit)
+			h.do(ActNextPane)
+			h.moveTo("a.txt")
+			h.hold = true
+			h.do(ActEnter) // 開く前の確認（実行ファイルか）は held に残る
+			tt.overlay(h)
+			h.release()
+			if h.a.Screen() != tt.screen || h.a.Dialog() != tt.dialog {
+				t.Fatalf("screen %v dialog %v, want the %s kept (the exec confirmation must not replace or hide under it)", h.a.Screen(), h.a.Dialog(), tt.name)
+			}
+			h.a.Drawn()
+			h.do(ActCancel) // ほかの画面を閉じる
+			if tt.screen == ScreenResult {
+				h.do(ActSubmit)
+			}
+			if h.a.Screen() != ScreenBrowse || h.a.Dialog() != DialogNone || len(h.opened) != 0 {
+				t.Errorf("after closing: screen %v dialog %v opened %q, want nothing left", h.a.Screen(), h.a.Dialog(), h.opened)
+			}
+		})
+	}
+	t.Run("link", func(t *testing.T) {
+		t.Parallel()
+		root := tree(t)
+		if err := os.Symlink("a.txt", filepath.Join(root, "filelink")); err != nil {
+			t.Skipf("cannot create a symbolic link: %v", err)
+		}
+		h := newHarness(t, func(c *Config) { c.IsExecutable = func(string, bool) bool { return true } }, root)
+		h.moveTo("filelink")
+		h.hold = true
+		h.do(ActEnter) // リンクに入る読み込み（リンク先はファイルなので、開く処理に移る）
+		h.do(ActHelp)
+		h.release()
+		h.release()
+		if h.a.Dialog() != DialogHelp {
+			t.Errorf("dialog %v, want the help kept", h.a.Dialog())
+		}
+	})
 }

@@ -722,6 +722,11 @@ func (a *App) checked(m checked) []Cmd {
 		a.setMessage(msg.CannotOpenName, true)
 		return nil
 	case m.exec:
+		// 閲覧の画面でなければ（ヘルプ・入力欄・結果の画面などを開いていれば）、確認を出さずにやめる。
+		// 出すと、ほかの画面の下に隠れたまま（またはそれを置き換えて）描いた後の扱いになり、見ていない確認を確定できる（filer §7。U2）。
+		if a.op != nil || a.result != nil && a.result.open || a.dialog.kind != DialogNone {
+			return nil
+		}
 		a.dialog = dialog{kind: DialogExec, path: m.path, name: m.name, frame: a.frames}
 		return nil
 	}
