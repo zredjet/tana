@@ -63,7 +63,7 @@ TUI のライブラリは使わず、端末の入出力から自作する。
 
 ## UI の実装ルール
 
-対象: `internal/` の term・textwidth・keys・screen・lineedit・listing・textfmt・msg・app・tui・platform と、`cmd/tana`・`cmd/tuiprobe`。
+対象: `internal/` の term・textwidth・keys・screen・lineedit・listing・textfmt・msg・app・keymap・tui・platform と、`cmd/tana`・`cmd/tuiprobe`。
 
 - import してよいのは標準ライブラリ、`golang.org/x/sys`、`golang.org/x/text` だけ（fsops と同じ）。ほかが必要なら理由を添えて私に確認する。
   TUI のライブラリは使わない（filer §12.3）。
@@ -74,6 +74,7 @@ TUI のライブラリは使わず、端末の入出力から自作する。
 - fsops に渡すパスを、表示用に加工した文字列（置き換え・切り詰め・正規化をしたもの）から作らない（U4）。
 - 書記素クラスタの区切りと幅は、`textwidth` だけで判断する（T4）。
 - `app` を画面の構成（2 ペインなど）に依存させない（filer §4）。
+- 画面の部品の出し入れ・フォーカス・先行入力の門は、filer §4 の「UI の骨格」に従う。門（Free・AfterDraw）は役割の操作表で必ず宣言し、画面ごとに frame を比べる処理を書かない（U2）。
 - 人向けの文言は `internal/msg` にまとめる（filer §8.8）。
 
 ## テストのルール
