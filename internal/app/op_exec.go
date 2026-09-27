@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -10,70 +9,6 @@ import (
 	"github.com/zredjet/tana/internal/fsops"
 	"github.com/zredjet/tana/internal/msg"
 )
-
-// ---- 実行と進捗（filer §8.4） ----
-
-type executed struct {
-	gen int
-	res *fsops.Result
-	err error
-}
-
-type opTick struct{ gen int }
-
-// execute は、計画をその時点の決定で実行する処理を返す。Execute は作業用の goroutine で動く（filer §10）。
-// 進捗は最新の値だけを progressSlot に置き、Wake でイベントループに知らせる（Execute を待たせない）。
-func (a *App) execute() []Cmd {
-	op := a.op
-	a.replaceOwned(op.gen, &progressComp{op: op})
-	ctx, cancel := context.WithCancel(context.Background())
-	op.cancel = cancel
-	op.slot = &progressSlot{}
-	op.started = a.cfg.Now()
-	op.changed = op.started
-	op.done = make(chan struct{})
-	plan, slot, wake, gen, done := op.plan, op.slot, a.cfg.Wake, op.gen, op.done
-	run := func() any {
-		defer close(done)
-		res, err := plan.Execute(ctx, fsops.ExecOptions{Progress: func(p fsops.Progress) {
-			slot.set(p)
-			if wake != nil {
-				wake()
-			}
-		}})
-		return executed{gen: gen, res: res, err: err}
-	}
-	return []Cmd{{Run: run}, a.tick()}
-}
-
-func (a *App) tick() Cmd {
-	gen := a.op.gen
-	return Cmd{Delay: opTickInterval, Run: func() any { return opTick{gen: gen} }}
-}
-
-// SetWake は、実行中の進捗が届いたことをイベントループに知らせる関数を設定する（tui が Loop.Wake を渡す）。
-func (a *App) SetWake(f func()) { a.cfg.Wake = f }
-
-// Refresh は、最新の進捗を読む（tui が Wake の知らせを受けたときに呼ぶ）。
-func (a *App) Refresh() {
-	if op := a.op; op != nil && op.slot != nil { // 実行中（中止の確認を出している間も読む）
-		if p := op.slot.get(); p != op.progress {
-			op.progress, op.changed = p, a.cfg.Now()
-		}
-	}
-}
-
-func (a *App) opTick(m opTick) []Cmd {
-	op := a.op
-	if op == nil || op.gen != m.gen || op.slot == nil {
-		return nil
-	}
-	a.Refresh()
-	if op.canceling && a.cfg.Now().Sub(op.cancelAt) >= unresponsiveWait {
-		op.unresponsive = true // 中止しても Execute が戻らない（応答しないネットワークドライブなど。filer §8.4）
-	}
-	return []Cmd{a.tick()}
-}
 
 func (ProgressView) Role() Role { return RoleProgress }
 
@@ -94,11 +29,17 @@ type ProgressView struct {
 
 // Progress は、進捗の画面の内容を返す（ScreenProgress のとき）。
 func (a *App) Progress() ProgressView {
-	op := a.op
-	p := op.progress
+	v, _ := ModalView[ProgressView](a)
+	return v
+}
+
+// progress は、流れ f の進捗の内容（runner）。速度・残り時間・経過時間は UI が計算する（filer §8.4）。
+func (f *flow) progress(a *App) ProgressView {
+	op, x := f, f.exec
+	p := x.progress
 	v := ProgressView{Op: op.req.Op, Stage: p.Stage, Current: p.Current, DoneFiles: p.DoneFiles, TotalFiles: p.TotalFiles,
-		DoneBytes: p.DoneBytes, TotalBytes: p.TotalBytes, Elapsed: a.cfg.Now().Sub(op.started), Remaining: -1,
-		AskCancel: a.topRole() == RoleCancelAsk, Canceling: op.canceling, Unresponsive: op.unresponsive}
+		DoneBytes: p.DoneBytes, TotalBytes: p.TotalBytes, Elapsed: a.cfg.Now().Sub(x.started), Remaining: -1,
+		Canceling: x.canceling, Unresponsive: x.unresponsive}
 	if v.Stage == 0 { // 最初の進捗が届く前
 		switch op.req.Op {
 		case fsops.OpMove:
@@ -113,7 +54,7 @@ func (a *App) Progress() ProgressView {
 	}
 	// Windows では、ごみ箱に入らないと Windows が判断すると、完全削除の確認ダイアログが出て Execute が止まる（fsops §12.2）。
 	// ダイアログは ctx では閉じられないので、進捗が変わらなければ、ほかのウィンドウを確かめるよう知らせる（U5 の例外）。
-	v.TrashDialog = a.cfg.TrashMayAsk && op.req.Op == fsops.OpTrash && a.cfg.Now().Sub(op.changed) >= trashDialogWait
+	v.TrashDialog = a.cfg.TrashMayAsk && op.req.Op == fsops.OpTrash && a.cfg.Now().Sub(x.changed) >= trashDialogWait
 	if sec := v.Elapsed.Seconds(); sec >= 1 && p.DoneBytes > 0 {
 		v.Speed = float64(p.DoneBytes) / sec
 		if p.TotalBytes > p.DoneBytes {
@@ -127,21 +68,28 @@ func (a *App) Progress() ProgressView {
 // Esc・Ctrl+C で中止の確認を重ねる。中止しても応答がないときだけ、Q で終わる（残りうるものは画面に示してある）。
 type progressComp struct {
 	base
-	op *operation
+	r runner
 }
 
-func (*progressComp) role() Role         { return RoleProgress }
-func (c *progressComp) view(a *App) View { return a.Progress() }
+func (*progressComp) role() Role { return RoleProgress }
+
+// view: 中止の確認を重ねている間も、その下に進捗を出す。
+func (c *progressComp) view(a *App) View {
+	v := c.r.progress(a)
+	v.AskCancel = a.topRole() == RoleCancelAsk
+	return v
+}
+
 func (c *progressComp) commands() commandTable {
 	return commandTable{
 		ActCancel: {GateFree, func(a *App, _ Action) []Cmd {
-			if !c.op.canceling {
-				a.push(&cancelAskComp{op: c.op}, c.op.gen)
+			if c.r.state() == runRunning {
+				a.push(&cancelAskComp{r: c.r}, c.r.ownerID())
 			}
 			return nil
 		}},
 		ActForceQuit: {GateFree, func(a *App, _ Action) []Cmd {
-			if c.op.unresponsive {
+			if c.r.state() == runUnresponsive {
 				a.quit = true
 			}
 			return nil
@@ -159,19 +107,17 @@ func (CancelAskView) Role() Role { return RoleCancelAsk }
 // cancelAskComp は、中止の確認（filer §8.4）。y は確認を描いた後だけ行う（U2）。n・Esc・Ctrl+C は続ける。
 type cancelAskComp struct {
 	base
-	op *operation
+	r runner
 }
 
-func (*cancelAskComp) role() Role       { return RoleCancelAsk }
-func (c *cancelAskComp) view(*App) View { return CancelAskView{Op: c.op.req.Op} }
+func (*cancelAskComp) role() Role         { return RoleCancelAsk }
+func (c *cancelAskComp) view(a *App) View { return CancelAskView{Op: c.r.progress(a).Op} }
 func (c *cancelAskComp) commands() commandTable {
 	keep := command{GateFree, func(a *App, _ Action) []Cmd { a.pop(); return nil }}
 	return commandTable{
 		ActYes: {GateAfterDraw, func(a *App, _ Action) []Cmd {
 			a.pop()
-			op := c.op
-			op.canceling, op.cancelAt = true, a.cfg.Now()
-			op.cancel() // 処理中の項目は安全に中断され、残りはスキップになる（fsops）
+			c.r.stop(a)
 			return nil
 		}},
 		ActNo:     keep,
@@ -179,24 +125,9 @@ func (c *cancelAskComp) commands() commandTable {
 	}
 }
 
-// Abort は、実行中のファイル操作を中止し、Execute が戻るのを最大 wait だけ待つ（シグナルで終わるとき。filer §10）。
-func (a *App) Abort(wait time.Duration) {
-	op := a.op
-	if op == nil || op.cancel == nil {
-		return
-	}
-	op.cancel()
-	if op.done != nil {
-		select {
-		case <-op.done:
-		case <-time.After(wait):
-		}
-	}
-}
-
 // ---- 結果（filer §8.5） ----
 
-// resultState は、直前の操作の結果（L でもう一度出す）。
+// resultState は、直前の操作の結果（L でもう一度出す）。カーソル・展開・英語の詳細もここに置く（開き直しても保つ）。
 type resultState struct {
 	op          fsops.OpKind
 	from, to    string
@@ -209,21 +140,20 @@ type resultState struct {
 }
 
 func (a *App) executed(m executed) []Cmd {
-	op := a.op
-	if op == nil || op.gen != m.gen {
+	op := a.flowOf(m.flow)
+	if op == nil {
 		return nil
 	}
-	a.op = nil
-	a.removeOwned(op.gen) // 進捗と中止の確認
+	a.dropFlow(op) // 進捗と中止の確認を下ろす
 	if m.err != nil {
 		a.logErr(m.err)
 		a.setMessage(msg.CannotExecute(msg.Error(m.err)), true)
 		return nil
 	}
 	res := m.res
-	a.result = &resultState{op: op.req.Op, from: op.from, to: op.req.DestDir, res: res, expanded: map[int]bool{}}
+	a.last = &resultState{op: op.req.Op, from: op.from, to: op.req.DestDir, res: res, expanded: map[int]bool{}}
 	if op.req.Op == fsops.OpTrash {
-		a.result.untrashable = untrashable(res)
+		a.last.untrashable = untrashable(res)
 	}
 	done, skipped, warned := 0, 0, false
 	for _, it := range res.Items {
@@ -248,7 +178,7 @@ func (a *App) executed(m executed) []Cmd {
 		}
 	}
 	if needsResultScreen(res) {
-		a.push(&resultComp{r: a.result}, 0)
+		a.push(&resultComp{r: a.last}, 0)
 	} else {
 		a.setMessage(msg.Done(op.req.Op, done, skipped, warned), false)
 	}
@@ -372,9 +302,16 @@ type OutcomeCount struct {
 var outcomeOrder = []fsops.Outcome{fsops.OutcomeTrashUnconfirmed, fsops.OutcomeCopiedSourceKept, fsops.OutcomeFailed,
 	fsops.OutcomePartial, fsops.OutcomeSkipped, fsops.OutcomeDone}
 
-// Result は、結果の画面の内容を返す（ScreenResult のとき）。
+// Result は、結果の画面の内容を返す（ScreenResult のとき。直前の操作の結果）。
 func (a *App) Result() ResultView {
-	r := a.result
+	if a.last == nil {
+		return ResultView{}
+	}
+	return a.last.view()
+}
+
+// view は、結果の画面の内容。
+func (r *resultState) view() ResultView {
 	v := ResultView{Op: r.op, Status: r.res.Status, From: r.from, To: r.to, English: r.english, Untrashable: len(r.untrashable)}
 	rows := r.rowsOf()
 	for _, o := range outcomeOrder {
@@ -464,8 +401,8 @@ func (r *resultState) reason(it fsops.ItemResult) string {
 
 // SetResultRows は、結果の一覧を描いた行数を覚える（ページ単位の移動に使う）。
 func (a *App) SetResultRows(n int) {
-	if a.result != nil {
-		a.result.rows = n
+	if a.last != nil {
+		a.last.rows = n
 	}
 }
 
@@ -476,8 +413,8 @@ type resultComp struct {
 	r *resultState
 }
 
-func (*resultComp) role() Role         { return RoleResult }
-func (c *resultComp) view(a *App) View { return a.Result() }
+func (*resultComp) role() Role       { return RoleResult }
+func (c *resultComp) view(*App) View { return c.r.view() }
 func (c *resultComp) commands() commandTable {
 	closeIt := command{GateAfterDraw, func(a *App, _ Action) []Cmd { a.pop(); return nil }}
 	free := func(f func()) command { return command{GateFree, func(*App, Action) []Cmd { f(); return nil }} }

@@ -57,8 +57,8 @@ func (workspaceComp) commands() commandTable {
 		ActHelp: free(func(a *App) []Cmd { a.push(helpComp{}, 0); return nil }),
 		ActQuit: free(func(a *App) []Cmd { a.quit = true; return nil }),
 		ActLastResult: free(func(a *App) []Cmd {
-			if a.result != nil {
-				a.push(&resultComp{r: a.result}, 0)
+			if a.last != nil {
+				a.push(&resultComp{r: a.last}, 0)
 			}
 			return nil
 		}),

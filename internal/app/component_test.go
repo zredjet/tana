@@ -133,3 +133,70 @@ func TestFocusPath(t *testing.T) {
 		t.Error("n after the draw did not close the revealed confirmation")
 	}
 }
+
+// TestStaleFlowResults は、終わった・中止した流れ宛ての結果が、何も変えないことを確かめる（持ち主の ID で届け先を決める。filer §4）。
+func TestStaleFlowResults(t *testing.T) {
+	t.Parallel()
+	h := gateCopy(t, false)
+	h.confirm()
+	h.confirm() // 実行して、結果の画面
+	before := focusSig(h.a)
+	for _, m := range []any{planned{flow: 12345}, planSlow{flow: 12345}, executed{flow: 12345}, opTick{flow: 12345}} {
+		if cmds := h.a.Update(m); len(cmds) != 0 || focusSig(h.a) != before {
+			t.Errorf("%T for a finished flow changed the screen or returned %d commands", m, len(cmds))
+		}
+	}
+}
+
+// TestOneFlowAtATime は、v0.1 ではファイル操作の流れが同時に 1 つだけであることを確かめる（filer §7）。
+func TestOneFlowAtATime(t *testing.T) {
+	t.Parallel()
+	h := gateCopy(t, true) // 計画を作っている途中
+	if cmds := h.a.begin(h.a.flows[0].req, "", false); cmds != nil || len(h.a.flows) != 1 {
+		t.Errorf("a second flow started: %d commands, %d flows", len(cmds), len(h.a.flows))
+	}
+}
+
+// fakeRunner は、fsops の流れでない、止められる実行（進捗と中止の確認の部品が、流れの型に縛られていないことを確かめる）。
+type fakeRunner struct {
+	stopped bool
+}
+
+func (*fakeRunner) ownerID() int               { return 777 }
+func (*fakeRunner) progress(*App) ProgressView { return ProgressView{DoneFiles: 3} }
+func (r *fakeRunner) stop(*App)                { r.stopped = true }
+func (r *fakeRunner) state() runState {
+	if r.stopped {
+		return runStopping
+	}
+	return runRunning
+}
+
+// TestRunnerComponents は、進捗と中止の確認の部品が、runner だけを見て動くことを確かめる（filer §4、§16 の X3）。
+func TestRunnerComponents(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, nil, tree(t))
+	r := &fakeRunner{}
+	h.a.push(&progressComp{r: r}, r.ownerID())
+	h.a.settleFocus()
+	if v := h.a.Progress(); v.DoneFiles != 3 {
+		t.Fatalf("progress %+v", v)
+	}
+	h.do(ActCancel)
+	if !h.a.Progress().AskCancel || h.a.topRole() != RoleCancelAsk {
+		t.Fatal("no cancel question over the runner's progress")
+	}
+	h.do(ActYes) // 描く前の y
+	if r.stopped {
+		t.Fatal("stopped by y before the question was drawn (U2)")
+	}
+	h.a.Drawn()
+	h.do(ActYes)
+	if !r.stopped || h.a.topRole() != RoleProgress {
+		t.Errorf("stopped %v, top %v", r.stopped, h.a.topRole())
+	}
+	h.do(ActCancel) // 止めている間は、もう確認を出さない
+	if h.a.topRole() != RoleProgress {
+		t.Error("a second cancel question while stopping")
+	}
+}

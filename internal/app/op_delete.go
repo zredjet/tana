@@ -53,7 +53,13 @@ type DeleteView struct {
 
 // Delete は、完全削除の確認の内容を返す（ScreenDelete のとき）。
 func (a *App) Delete() DeleteView {
-	op := a.op
+	v, _ := ModalView[DeleteView](a)
+	return v
+}
+
+// deleteView は、流れ f の完全削除の確認の内容。
+func deleteView(f *flow) DeleteView {
+	op := f
 	pl := op.plan
 	v := DeleteView{FromTrash: op.fromTrash, Dir: op.from, Files: pl.TotalFiles(), Bytes: pl.TotalBytes(), Warnings: op.warnings}
 	for _, it := range pl.Items() {
@@ -72,18 +78,18 @@ func (a *App) Delete() DeleteView {
 // 描く前に届いたキーは、Esc（やめる）のほかは何もしない。
 type deleteComp struct {
 	base
-	op *operation
+	f *flow
 }
 
-func (*deleteComp) role() Role         { return RoleDelete }
-func (c *deleteComp) view(a *App) View { return a.Delete() }
+func (*deleteComp) role() Role       { return RoleDelete }
+func (c *deleteComp) view(*App) View { return deleteView(c.f) }
 func (c *deleteComp) commands() commandTable {
-	stop := func(a *App, _ Action) []Cmd { a.discard(); return nil }
+	stop := func(a *App, _ Action) []Cmd { a.discard(c.f); return nil }
 	return commandTable{
 		ActCancel: {GateFree, stop},
 		ActYes: {GateAfterDraw, func(a *App, _ Action) []Cmd {
-			if a.Delete().Runnable > 0 {
-				return a.execute()
+			if deleteView(c.f).Runnable > 0 {
+				return a.execute(c.f)
 			}
 			return nil
 		}},

@@ -2,10 +2,8 @@ package app
 
 import (
 	"context"
-	"errors"
 	"path/filepath"
 	"slices"
-	"sync"
 	"time"
 
 	"github.com/zredjet/tana/internal/fsops"
@@ -57,54 +55,6 @@ const (
 	ScreenDelete                  // 完全削除の確認（filer §8.6）
 )
 
-// operation は、進めているファイル操作。
-type operation struct {
-	gen       int
-	req       fsops.Request
-	from      string // 項目のあったフォルダ（覚えたときのフォルダ。見出しに出す）
-	fromTrash bool   // 完全削除: ごみ箱に入らなかった項目から進んだ（filer §8.6）
-	cancel    context.CancelFunc
-
-	planning, slow bool // 計画を作っている。0.2 秒を超えた
-	plan           Plan
-	warnings       []string // 計画の警告の文言（決定を変えたときに計算し直す）
-
-	// 衝突の画面
-	collapsed map[fsops.ConflictID]bool
-	unsetOnly bool
-	cursor    int
-	top       int
-	rows      int // 最後に描いた一覧の行数
-
-	// 進捗の画面
-	slot         *progressSlot
-	progress     fsops.Progress
-	started      time.Time
-	changed      time.Time // 進捗が最後に変わった時刻（ごみ箱の確認ダイアログの知らせ。filer §8.4）
-	canceling    bool
-	cancelAt     time.Time
-	unresponsive bool
-	done         chan struct{} // Execute が戻ったら閉じる
-}
-
-// progressSlot は、最新の進捗を 1 つだけ置く場所（filer §10）。Execute の goroutine が書き、イベントループが読む。
-type progressSlot struct {
-	mu sync.Mutex
-	p  fsops.Progress
-}
-
-func (s *progressSlot) set(p fsops.Progress) {
-	s.mu.Lock()
-	s.p = p
-	s.mu.Unlock()
-}
-
-func (s *progressSlot) get() fsops.Progress {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.p
-}
-
 // Screen は、いまのファイル操作の画面を返す（一番上の重ねる部品から求める。計画を作っている間とダイアログは ScreenBrowse）。
 func (a *App) Screen() Screen {
 	switch a.topRole() {
@@ -123,7 +73,14 @@ func (a *App) Screen() Screen {
 }
 
 // Planning は、計画を作っていて 0.2 秒を超えた（「計画を作成中」を出す）かを返す。
-func (a *App) Planning() bool { return a.topRole() == RolePlanning && a.op.slow }
+func (a *App) Planning() bool {
+	if m := a.top(); m != nil {
+		if c, ok := m.c.(*planningComp); ok {
+			return c.f.slow
+		}
+	}
+	return false
+}
 
 // PlanningView は、計画を作っている間の内容。
 type PlanningView struct {
@@ -136,15 +93,15 @@ func (PlanningView) Role() Role { return RolePlanning }
 // 「計画を作成中」を出している間は、キー入力でメッセージ行を消さない（filer §5.1）。
 type planningComp struct {
 	base
-	op *operation
+	f *flow
 }
 
 func (*planningComp) role() Role               { return RolePlanning }
-func (c *planningComp) view(*App) View         { return PlanningView{Slow: c.op.slow} }
-func (c *planningComp) keepsMessage(*App) bool { return c.op.slow }
+func (c *planningComp) view(*App) View         { return PlanningView{Slow: c.f.slow} }
+func (c *planningComp) keepsMessage(*App) bool { return c.f.slow }
 func (c *planningComp) commands() commandTable {
 	return commandTable{ActCancel: {GateFree, func(a *App, _ Action) []Cmd {
-		a.discard()
+		a.discard(c.f)
 		a.setMessage(msg.Kind(fsops.KindCanceled), false)
 		return nil
 	}}}
@@ -197,80 +154,6 @@ func (a *App) paste(op fsops.OpKind) []Cmd {
 	return a.begin(fsops.Request{Op: op, Sources: slices.Clone(a.yanked), DestDir: p.dir}, a.yankDir, false)
 }
 
-// begin は、操作 req の計画を作り始める（filer §8.1）。from は項目のあったフォルダ（見出しに出す）。
-// fromTrash は、完全削除を、ごみ箱に入らなかった項目から始めたこと（filer §8.6）。
-func (a *App) begin(req fsops.Request, from string, fromTrash bool) []Cmd {
-	a.opening = 0 // 関連付けで開く前の確認をやめる（操作の後に古い「実行しますか」を出さない）
-	gen := a.newID()
-	ctx, cancel := context.WithCancel(context.Background())
-	a.op = &operation{gen: gen, req: req, from: from, fromTrash: fromTrash, cancel: cancel, planning: true,
-		collapsed: map[fsops.ConflictID]bool{}}
-	a.push(&planningComp{op: a.op}, gen)
-	newPlan := a.cfg.NewPlan
-	return []Cmd{
-		{Run: func() any {
-			plan, err := newPlan(ctx, req)
-			return planned{gen: gen, plan: plan, err: err}
-		}},
-		{Delay: slowLoad, Run: func() any { return planSlow{gen: gen} }},
-	}
-}
-
-type planned struct {
-	gen  int
-	plan Plan
-	err  error
-}
-
-type planSlow struct{ gen int }
-
-func (a *App) planned(m planned) {
-	op := a.op
-	if op == nil || op.gen != m.gen || !op.planning {
-		return // 中止した
-	}
-	op.planning = false
-	op.cancel()
-	if m.err != nil {
-		a.logErr(m.err)
-		a.op = nil
-		a.removeOwned(op.gen)
-		if oe, ok := errors.AsType[*fsops.OpError](m.err); ok && oe.Kind == fsops.KindNotFound && oe.Path == op.req.DestDir {
-			a.setMessage(msg.DestNotFound, true)
-		} else {
-			a.setMessage(msg.CannotPlan(msg.Error(m.err)), true)
-		}
-		return
-	}
-	op.plan = m.plan
-	// 自分自身への衝突（同じフォルダへのコピー）は、最初から自動リネームにする。既存のものを置き換えないため（U1）。
-	for _, c := range op.plan.Conflicts() {
-		if c.Self {
-			if err := op.plan.Decide(c.ID, fsops.DecisionAutoRename); err != nil {
-				a.logErr(err)
-			}
-		}
-	}
-	op.warnings = warningTexts(op.plan.Warnings())
-	if op.req.Op == fsops.OpDelete {
-		a.replaceOwned(op.gen, &deleteComp{op: op}) // 完全削除は専用の確認で（filer §8.6。U2）
-		return
-	}
-	a.replaceOwned(op.gen, &confirmComp{op: op})
-}
-
-// discard は、計画を捨てる（実行前にやめた。NewPlan はファイルシステムを変更しないので、元に戻すものはない。filer §8.1）。
-func (a *App) discard() {
-	if a.op == nil {
-		return
-	}
-	if a.op.cancel != nil {
-		a.op.cancel()
-	}
-	a.removeOwned(a.op.gen)
-	a.op = nil
-}
-
 // ---- 確認画面 ----
 
 // ItemNote は、実行されない項目とその理由。
@@ -295,7 +178,13 @@ type ConfirmView struct {
 
 // Confirm は、確認画面の内容を返す（ScreenConfirm のとき）。
 func (a *App) Confirm() ConfirmView {
-	op := a.op
+	v, _ := ModalView[ConfirmView](a)
+	return v
+}
+
+// confirmView は、流れ f の確認画面の内容（filer §8.2）。
+func confirmView(f *flow) ConfirmView {
+	op := f
 	pl := op.plan
 	v := ConfirmView{Op: op.req.Op, Dest: op.req.DestDir, Files: pl.TotalFiles(), Bytes: pl.TotalBytes()}
 	for _, it := range pl.Items() {
@@ -336,32 +225,32 @@ func warningTexts(ws []*fsops.OpError) []string {
 // confirmComp は、確認画面（filer §8.2）。Enter と D は、画面を描いた後だけ行う（U2）。
 type confirmComp struct {
 	base
-	op *operation
+	f *flow
 }
 
-func (*confirmComp) role() Role         { return RoleConfirm }
-func (c *confirmComp) view(a *App) View { return a.Confirm() }
+func (*confirmComp) role() Role       { return RoleConfirm }
+func (c *confirmComp) view(*App) View { return confirmView(c.f) }
 func (c *confirmComp) commands() commandTable {
 	return commandTable{
-		ActCancel: {GateFree, func(a *App, _ Action) []Cmd { a.discard(); return nil }},
+		ActCancel: {GateFree, func(a *App, _ Action) []Cmd { a.discard(c.f); return nil }},
 		ActSubmit: {GateAfterDraw, func(a *App, _ Action) []Cmd {
-			v := a.Confirm()
+			v := confirmView(c.f)
 			switch {
 			case v.Runnable == 0:
 				// すべての項目が実行されないときは、Esc で閉じるだけにする（filer §8.2）
 			case v.Conflicts > 0:
-				a.replaceOwned(c.op.gen, &conflictsComp{op: c.op})
+				a.replaceOwned(c.f.id, &conflictsComp{f: c.f, collapsed: map[fsops.ConflictID]bool{}})
 			default:
-				return a.execute()
+				return a.execute(c.f)
 			}
 			return nil
 		}},
 		// ごみ箱: すべての項目が実行されず、ごみ箱に入らない項目があれば、完全削除の確認へ進める（filer §8.2。フェーズ20で決めた）。
 		// 利用者が D を選んだときだけ進む。UI が自分から完全削除に切り替えない（fsops I5 の UI 側。U2）。
 		ActPurge: {GateAfterDraw, func(a *App, _ Action) []Cmd {
-			if v := a.Confirm(); v.Op == fsops.OpTrash && v.Runnable == 0 && v.Untrashable > 0 {
-				srcs, from := untrashableItems(c.op.plan.Items()), c.op.from
-				a.discard()
+			if v := confirmView(c.f); v.Op == fsops.OpTrash && v.Runnable == 0 && v.Untrashable > 0 {
+				srcs, from := untrashableItems(c.f.plan.Items()), c.f.from
+				a.discard(c.f)
 				return a.begin(fsops.Request{Op: fsops.OpDelete, Sources: srcs}, from, true)
 			}
 			return nil

@@ -97,8 +97,8 @@ type App struct {
 	needs        Needs        // 表示形式が求めるもの（SetNeeds）
 	yanked       []string     // 覚えた項目のパス（y。filer §7）
 	yankDir      string       // 覚えたときのペインのフォルダ（見出しに出す）
-	op           *operation   // 進めているファイル操作（計画から結果まで。filer §8）
-	result       *resultState // 直前の操作の結果（L でもう一度出す）
+	flows        []*flow      // 進めているファイル操作（計画から結果まで。filer §8。ID で引く。v0.1 では 1 つだけ）
+	last         *resultState // 直前の操作の結果（L でもう一度出す）
 	preview      Preview      // 操作中のペインのカーソル行のプレビュー（読んでいる途中なら Kind が PreviewNone）
 	previewGen   int          // プレビューの世代。カーソルが動いたら古い読み込みの結果を捨てる
 	previewStale bool         // 一覧を読み直したので、同じ項目でもプレビューを読み直す
@@ -431,8 +431,8 @@ func (a *App) update(m any) []Cmd {
 	case planned:
 		a.planned(m)
 	case planSlow:
-		if a.op != nil && a.op.gen == m.gen && a.op.planning {
-			a.op.slow = true
+		if f := a.flowOf(m.flow); f != nil && f.planning {
+			f.slow = true
 		}
 	case executed:
 		return a.executed(m)

@@ -53,22 +53,28 @@ type ConflictsView struct {
 
 // Conflicts は、衝突の画面の内容を返す（ScreenConflicts のとき）。
 func (a *App) Conflicts() ConflictsView {
-	op := a.op
-	cs := op.plan.Conflicts()
-	v := ConflictsView{Op: op.req.Op, From: op.from, To: op.req.DestDir, UnsetOnly: op.unsetOnly}
-	for _, c := range cs {
+	v, _ := ModalView[ConflictsView](a)
+	return v
+}
+
+// conflictsView は、衝突の画面の内容。カーソルは、読むときに一覧の中に収める（決定で一覧が短くなったとき）。
+func (c *conflictsComp) conflictsView() ConflictsView {
+	f := c.f
+	cs := f.plan.Conflicts()
+	v := ConflictsView{Op: f.req.Op, From: f.from, To: f.req.DestDir, UnsetOnly: c.unsetOnly}
+	for _, x := range cs {
 		v.All++
-		if c.Parent == 0 {
+		if x.Parent == 0 {
 			v.Top++
 		}
-		if c.Decision == fsops.DecisionUnset {
+		if x.Decision == fsops.DecisionUnset {
 			v.Unset++
 		}
 	}
-	v.Warnings = op.warnings // 決定を変えたときに計算し直す（fsops §6.4）
-	v.Rows = conflictRows(cs, op.collapsed, op.unsetOnly)
-	op.cursor = max(min(op.cursor, len(v.Rows)-1), 0)
-	v.Cursor = op.cursor
+	v.Warnings = f.warnings // 決定を変えたときに計算し直す（fsops §6.4）
+	v.Rows = conflictRows(cs, c.collapsed, c.unsetOnly)
+	c.cursor = max(min(c.cursor, len(v.Rows)-1), 0)
+	v.Cursor = c.cursor
 	return v
 }
 
@@ -140,8 +146,10 @@ func conflictByID(cs []fsops.Conflict, id fsops.ConflictID) (fsops.Conflict, boo
 
 // SetConflictRows は、衝突の一覧を描いた行数を覚える（ページ単位の移動に使う）。
 func (a *App) SetConflictRows(n int) {
-	if a.op != nil {
-		a.op.rows = n
+	for _, m := range a.modals {
+		if c, ok := m.c.(*conflictsComp); ok {
+			c.rows = n
+		}
 	}
 }
 
@@ -149,31 +157,34 @@ func (a *App) SetConflictRows(n int) {
 // 画面を描く前に届いたキー（先行入力）では、実行しないだけでなく、決定もカーソルも変えない。見ていない衝突が上書き・マージにならないように（U1・U2）。
 type conflictsComp struct {
 	base
-	op *operation
+	f         *flow
+	collapsed map[fsops.ConflictID]bool // 折りたたんだマージの衝突
+	unsetOnly bool                      // 未選択の衝突だけを出す
+	cursor    int
+	rows      int // 最後に描いた一覧の行数
 }
 
-func (*conflictsComp) role() Role         { return RoleConflicts }
-func (c *conflictsComp) view(a *App) View { return a.Conflicts() }
+func (*conflictsComp) role() Role       { return RoleConflicts }
+func (c *conflictsComp) view(*App) View { return c.conflictsView() }
 
 func (c *conflictsComp) commands() commandTable {
 	// cur は、衝突と、一覧の行と、カーソル行を返す。
 	cur := func() ([]fsops.Conflict, []ConflictRow, ConflictRow) {
-		op := c.op
-		cs := op.plan.Conflicts()
-		rows := conflictRows(cs, op.collapsed, op.unsetOnly)
+		cs := c.f.plan.Conflicts()
+		rows := conflictRows(cs, c.collapsed, c.unsetOnly)
 		var row ConflictRow
-		if op.cursor >= 0 && op.cursor < len(rows) {
-			row = rows[op.cursor]
+		if c.cursor >= 0 && c.cursor < len(rows) {
+			row = rows[c.cursor]
 		}
 		return cs, rows, row
 	}
 	after := func(f func(a *App, act Action) []Cmd) command { return command{GateAfterDraw, f} }
 	return listCommands(GateAfterDraw, func(k ActionKind) {
 		_, rows, _ := cur()
-		c.op.cursor = moveCursor(c.op.cursor, len(rows), c.op.rows, k)
+		c.cursor = moveCursor(c.cursor, len(rows), c.rows, k)
 	}).with(commandTable{
-		ActCancel: {GateFree, func(a *App, _ Action) []Cmd { a.discard(); return nil }},
-		ActSubmit: after(func(a *App, _ Action) []Cmd { return a.execute() }),
+		ActCancel: {GateFree, func(a *App, _ Action) []Cmd { a.discard(c.f); return nil }},
+		ActSubmit: after(func(a *App, _ Action) []Cmd { return a.execute(c.f) }),
 		ActDecide: after(func(a *App, act Action) []Cmd {
 			cs, _, row := cur()
 			x, ok := conflictByID(cs, row.ID)
@@ -182,7 +193,7 @@ func (c *conflictsComp) commands() commandTable {
 			case !allowed(x, act.Decision):
 				a.setMessage(msg.DecisionNotAllowed(act.Decision), true)
 			default:
-				a.decide(x.ID, act.Decision)
+				a.decide(c.f, x.ID, act.Decision)
 			}
 			return nil
 		}),
@@ -191,7 +202,7 @@ func (c *conflictsComp) commands() commandTable {
 			n := 0
 			for _, x := range cs {
 				if allowed(x, act.Decision) {
-					a.decide(x.ID, act.Decision)
+					a.decide(c.f, x.ID, act.Decision)
 				} else {
 					n++
 				}
@@ -214,7 +225,7 @@ func (c *conflictsComp) commands() commandTable {
 				if x.SrcInfo.ModTime.Sub(x.DstInfo.ModTime) > sameTimeWindow {
 					d = fsops.DecisionOverwrite
 				}
-				a.decide(x.ID, d)
+				a.decide(c.f, x.ID, d)
 			}
 			if n > 0 {
 				a.setMessage(msg.NotChanged(n), false)
@@ -226,27 +237,27 @@ func (c *conflictsComp) commands() commandTable {
 			switch {
 			case row.ID == 0 && row.Parent != 0:
 				if x, ok := conflictByID(cs, row.Parent); ok && x.Decision == fsops.DecisionMerge {
-					c.op.collapsed[row.Parent] = false
+					c.collapsed[row.Parent] = false
 				}
 			case row.ID != 0 && row.Decision == fsops.DecisionMerge:
-				c.op.collapsed[row.ID] = !c.op.collapsed[row.ID]
+				c.collapsed[row.ID] = !c.collapsed[row.ID]
 			}
 			return nil
 		}),
 		ActUnsetOnly: after(func(*App, Action) []Cmd {
-			c.op.unsetOnly = !c.op.unsetOnly
-			c.op.cursor = 0
+			c.unsetOnly = !c.unsetOnly
+			c.cursor = 0
 			return nil
 		}),
 	})
 }
 
 // decide は決定を設定し、警告（空き容量の見込みは決定で変わる）を計算し直す。使えることは呼ぶ側で確かめている。
-func (a *App) decide(id fsops.ConflictID, d fsops.Decision) {
-	if err := a.op.plan.Decide(id, d); err != nil {
+func (a *App) decide(f *flow, id fsops.ConflictID, d fsops.Decision) {
+	if err := f.plan.Decide(id, d); err != nil {
 		a.logErr(err)
 	}
-	a.op.warnings = warningTexts(a.op.plan.Warnings())
+	f.warnings = warningTexts(f.plan.Warnings())
 }
 
 // moveCursor は、n 行の一覧のカーソル cur を、操作 k で動かす（page は描いた行数）。
