@@ -42,13 +42,18 @@ func gateFailed(fp *fakePlan) func(context.Context, fsops.ExecOptions) (*fsops.R
 	}
 }
 
-// gateCopy は、a.txt と b.txt を覚えて sub に貼り付け、確認画面を出した harness（計画は偽物）。
-func gateCopy(t *testing.T, hold bool) *harness {
+// gateCopy は、フォルダ root（tree で作ったもの）で、a.txt と b.txt を覚えて sub に貼り付け、確認画面を出した harness（計画は偽物）。
+func gateCopy(t *testing.T, root string, hold bool) *harness {
 	t.Helper()
 	fp := &fakePlan{}
 	fp.exec = gateFailed(fp)
-	h := fakeHarness(t, fp, nil)
-	fp.conflicts = gateConflicts(h.pane(0).Dir())
+	h := newHarness(t, func(c *Config) {
+		c.NewPlan = func(_ context.Context, req fsops.Request) (Plan, error) {
+			fp.req = req
+			return fp, nil
+		}
+	}, root, filepath.Join(root, "sub"))
+	fp.conflicts = gateConflicts(root)
 	h.moveTo("a.txt")
 	h.do(ActMark) // a.txt（カーソルは b.txt へ）
 	h.do(ActMark) // b.txt
@@ -59,64 +64,79 @@ func gateCopy(t *testing.T, hold bool) *harness {
 	return h
 }
 
-// gateStates は、門を確かめる画面と、その作り方。
+// gateTrash は、フォルダ root で、ごみ箱の計画だけを偽物 fp にした harness（完全削除は本物の fsops。trashHarness と同じ）。
+func gateTrash(t *testing.T, root string, fp *fakePlan) *harness {
+	t.Helper()
+	return newHarness(t, func(c *Config) {
+		c.NewPlan = func(ctx context.Context, req fsops.Request) (Plan, error) {
+			if req.Op == fsops.OpTrash {
+				fp.req = req
+				return fp, nil
+			}
+			return newFsopsPlan(ctx, req)
+		}
+	}, root, filepath.Join(root, "sub"))
+}
+
+// gateStates は、門を確かめる画面と、その作り方。root は tree で作ったフォルダ。
+// 描く前と後を比べる 2 つの harness は、同じ root で作る（状態を、パスを置き換えずにそのまま比べるため）。
 var gateStates = []struct {
 	name   string
 	screen Screen
 	dialog DialogKind
-	build  func(t *testing.T) *harness
+	build  func(t *testing.T, root string) *harness
 }{
-	{"help", ScreenBrowse, DialogHelp, func(t *testing.T) *harness {
-		h := newHarness(t, nil, tree(t))
+	{"help", ScreenBrowse, DialogHelp, func(t *testing.T, root string) *harness {
+		h := newHarness(t, nil, root)
 		h.do(ActHelp)
 		return h
 	}},
-	{"path", ScreenBrowse, DialogPath, func(t *testing.T) *harness {
-		h := newHarness(t, nil, tree(t))
+	{"path", ScreenBrowse, DialogPath, func(t *testing.T, root string) *harness {
+		h := newHarness(t, nil, root)
 		h.do(ActGoPath)
 		return h
 	}},
-	{"rename", ScreenBrowse, DialogRename, func(t *testing.T) *harness {
-		h := newHarness(t, nil, tree(t))
+	{"rename", ScreenBrowse, DialogRename, func(t *testing.T, root string) *harness {
+		h := newHarness(t, nil, root)
 		h.moveTo("a.txt")
 		h.do(ActRename)
 		return h
 	}},
-	{"newdir", ScreenBrowse, DialogNewDir, func(t *testing.T) *harness {
-		h := newHarness(t, nil, tree(t))
+	{"newdir", ScreenBrowse, DialogNewDir, func(t *testing.T, root string) *harness {
+		h := newHarness(t, nil, root)
 		h.do(ActNewDir)
 		return h
 	}},
-	{"exec", ScreenBrowse, DialogExec, func(t *testing.T) *harness {
-		h := newHarness(t, func(c *Config) { c.IsExecutable = func(string, bool) bool { return true } }, tree(t))
+	{"exec", ScreenBrowse, DialogExec, func(t *testing.T, root string) *harness {
+		h := newHarness(t, func(c *Config) { c.IsExecutable = func(string, bool) bool { return true } }, root)
 		h.moveTo("a.txt")
 		h.do(ActEnter)
 		return h
 	}},
-	{"planning", ScreenBrowse, DialogNone, func(t *testing.T) *harness {
-		h := gateCopy(t, true)
+	{"planning", ScreenBrowse, DialogNone, func(t *testing.T, root string) *harness {
+		h := gateCopy(t, root, true)
 		h.fire() // 0.2 秒が過ぎた（「計画を作成中」を出す。Planning で見分けられるように）
 		if !h.a.Planning() {
 			t.Fatal("no planning notice")
 		}
 		return h
 	}},
-	{"confirm", ScreenConfirm, DialogNone, func(t *testing.T) *harness { return gateCopy(t, false) }},
-	{"conflicts", ScreenConflicts, DialogNone, func(t *testing.T) *harness {
-		h := gateCopy(t, false)
+	{"confirm", ScreenConfirm, DialogNone, func(t *testing.T, root string) *harness { return gateCopy(t, root, false) }},
+	{"conflicts", ScreenConflicts, DialogNone, func(t *testing.T, root string) *harness {
+		h := gateCopy(t, root, false)
 		h.confirm()
 		return h
 	}},
-	{"progress", ScreenProgress, DialogNone, func(t *testing.T) *harness {
-		h := gateCopy(t, false)
+	{"progress", ScreenProgress, DialogNone, func(t *testing.T, root string) *harness {
+		h := gateCopy(t, root, false)
 		h.confirm()
 		h.a.Drawn()
 		h.hold = true
 		h.do(ActSubmit) // 実行は held に残す
 		return h
 	}},
-	{"cancelask", ScreenProgress, DialogNone, func(t *testing.T) *harness {
-		h := gateCopy(t, false)
+	{"cancelask", ScreenProgress, DialogNone, func(t *testing.T, root string) *harness {
+		h := gateCopy(t, root, false)
 		h.confirm()
 		h.a.Drawn()
 		h.hold = true
@@ -124,25 +144,23 @@ var gateStates = []struct {
 		h.do(ActCancel)
 		return h
 	}},
-	{"result", ScreenResult, DialogNone, func(t *testing.T) *harness {
-		h := gateCopy(t, false)
+	{"result", ScreenResult, DialogNone, func(t *testing.T, root string) *harness {
+		h := gateCopy(t, root, false)
 		h.confirm()
 		h.confirm()
 		return h
 	}},
-	{"result-trash", ScreenResult, DialogNone, func(t *testing.T) *harness {
+	{"result-trash", ScreenResult, DialogNone, func(t *testing.T, root string) *harness {
 		fp := &fakePlan{}
 		fp.exec = trashResult(fp, map[string]fsops.ItemResult{"a.txt": {Outcome: fsops.OutcomeFailed, Err: unavailable()}})
-		var ops []fsops.OpKind
-		h, _ := trashHarness(t, fp, &ops, nil)
+		h := gateTrash(t, root, fp)
 		h.moveTo("a.txt")
 		h.do(ActTrash)
 		h.confirm()
 		return h
 	}},
-	{"delete", ScreenDelete, DialogNone, func(t *testing.T) *harness {
-		var ops []fsops.OpKind
-		h, _ := trashHarness(t, &fakePlan{}, &ops, nil)
+	{"delete", ScreenDelete, DialogNone, func(t *testing.T, root string) *harness {
+		h := gateTrash(t, root, &fakePlan{})
 		h.moveTo("a.txt")
 		h.do(ActPurge)
 		return h
@@ -227,17 +245,17 @@ func TestGateTable(t *testing.T) {
 			t.Parallel()
 			want := gateWant[st.name]
 			for k := ActUp; k <= ActNewDir; k++ {
-				before := st.build(t)
+				root := tree(t)
+				before := st.build(t, root)
 				if before.a.Screen() != st.screen || before.a.Dialog() != st.dialog {
 					t.Fatalf("built screen %v dialog %v, want %v %v", before.a.Screen(), before.a.Dialog(), st.screen, st.dialog)
 				}
-				// 描く前と後は別の harness（別の一時フォルダ）で行うので、比べるときはフォルダのパスを置き換える。
-				rootB, initB := before.pane(0).Dir(), gateSig(before)
+				initB := gateSig(before)
 				before.act(gateAction(k))
 				resB := gateSig(before)
-				after := st.build(t)
+				after := st.build(t, root) // 同じフォルダで作る（描く前の harness は、ファイルシステムを変えていない）
 				after.a.Drawn()
-				rootA, initA := after.pane(0).Dir(), gateSig(after)
+				initA := gateSig(after)
 				after.act(gateAction(k))
 				resA := gateSig(after)
 				got := "none"
@@ -245,7 +263,7 @@ func TestGateTable(t *testing.T) {
 				case !changedB && !changedA:
 				case !changedB:
 					got = "afterdraw"
-				case strings.ReplaceAll(resB, rootB, "ROOT") == strings.ReplaceAll(resA, rootA, "ROOT"):
+				case resB == resA:
 					got = "free"
 				default:
 					got = "other"
@@ -334,7 +352,7 @@ func TestTickWhileAsking(t *testing.T) {
 // TestLastResultKeepsState は、L で結果の画面を開き直したとき、カーソル・展開・英語の詳細が保たれることを確かめる。
 func TestLastResultKeepsState(t *testing.T) {
 	t.Parallel()
-	h := gateCopy(t, false)
+	h := gateCopy(t, tree(t), false)
 	h.confirm()
 	h.confirm()
 	if h.a.Screen() != ScreenResult {

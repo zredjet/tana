@@ -64,14 +64,14 @@ func TestGateProperty(t *testing.T) {
 	t.Parallel()
 	covered := map[Role]bool{RoleWorkspace: true, RolePane: true} // 閲覧の画面は AfterDraw の操作を持たない（TestGateDeclared）
 	for _, st := range gateStates {
-		h := st.build(t)
+		h := st.build(t, tree(t))
 		m := h.a.path()[0]
 		covered[m.c.role()] = true
 		for k, c := range m.c.commands() {
 			if c.gate != GateAfterDraw {
 				continue
 			}
-			h := st.build(t)
+			h := st.build(t, tree(t))
 			before := focusSig(h.a)
 			if cmds := h.a.Do(gateAction(k)); len(cmds) != 0 || focusSig(h.a) != before {
 				t.Errorf("%s: action %d before the draw changed the screen or returned %d commands", st.name, k, len(cmds))
@@ -137,7 +137,7 @@ func TestFocusPath(t *testing.T) {
 // TestStaleFlowResults は、終わった・中止した流れ宛ての結果が、何も変えないことを確かめる（持ち主の ID で届け先を決める。filer §4）。
 func TestStaleFlowResults(t *testing.T) {
 	t.Parallel()
-	h := gateCopy(t, false)
+	h := gateCopy(t, tree(t), false)
 	h.confirm()
 	h.confirm() // 実行して、結果の画面
 	before := focusSig(h.a)
@@ -151,7 +151,7 @@ func TestStaleFlowResults(t *testing.T) {
 // TestOneFlowAtATime は、v0.1 ではファイル操作の流れが同時に 1 つだけであることを確かめる（filer §7）。
 func TestOneFlowAtATime(t *testing.T) {
 	t.Parallel()
-	h := gateCopy(t, true) // 計画を作っている途中
+	h := gateCopy(t, tree(t), true) // 計画を作っている途中
 	if cmds := h.a.begin(h.a.flows[0].req, "", false); cmds != nil || len(h.a.flows) != 1 {
 		t.Errorf("a second flow started: %d commands, %d flows", len(cmds), len(h.a.flows))
 	}
