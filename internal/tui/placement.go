@@ -45,7 +45,7 @@ func linesDrawer(content func(f *Filer, s *screen.Screen, v app.View) (string, i
 		},
 		draw: func(f *Filer, s *screen.Screen, r screen.Region, v app.View, _ *frame) {
 			title, _, lines := content(f, s, v)
-			drawLinesIn(s, r, title, lines)
+			f.drawLinesIn(s, r, title, lines)
 		},
 	}
 }
@@ -103,5 +103,5 @@ func (f *Filer) drawPlanning(s *screen.Screen, r screen.Region, view app.View, _
 		return
 	}
 	s.Fill(r, screen.Style{})
-	s.Put(r, 1, 0, msg.Planning(keymap.KeyName(app.RolePlanning, "cancel")), styleWarn)
+	s.Put(r, 1, 0, msg.Planning(keymap.KeyName(app.RolePlanning, "cancel")), f.th().warn)
 }

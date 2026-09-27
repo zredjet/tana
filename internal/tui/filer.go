@@ -134,17 +134,6 @@ const (
 	minNameW = 16 // これより名前の欄が狭くなるなら、更新日時の欄を隠す
 )
 
-// 見た目（filer §9.5）。色だけで区別しないので、種類はサイズの欄、マークは * でも分かる。
-var (
-	styleDir      = screen.Style{FG: screen.ColorBlue, Attr: screen.AttrBold}
-	styleJunction = screen.Style{FG: screen.ColorMagenta, Attr: screen.AttrBold}
-	styleLink     = screen.Style{FG: screen.ColorCyan}
-	styleSpecial  = screen.Style{FG: screen.ColorYellow}
-	styleError    = screen.Style{FG: screen.ColorRed}
-	styleMarked   = screen.Style{FG: screen.ColorYellow, Attr: screen.AttrBold}
-	styleReplaced = screen.Style{FG: screen.ColorBrightRed} // 表示で置き換えた文字（filer §9.3）
-)
-
 // Draw は、画面の全体を描く。
 func (f *Filer) Draw(s *screen.Screen) {
 	cols, rows := s.Size()
@@ -173,16 +162,16 @@ func (f *Filer) Draw(s *screen.Screen) {
 	if n := a.Yanked(); n > 0 { // 覚えている項目の数（y。filer §7）は、状態行の右に出す
 		text := " " + msg.YankedIndicator(n) + " "
 		w := textwidth.Width(text)
-		s.Put(screen.Region{X: cols - w - 1, Y: rows - 3, W: w, H: 1}, 0, 0, text, screen.Style{Attr: screen.AttrReverse})
+		s.Put(screen.Region{X: cols - w - 1, Y: rows - 3, W: w, H: 1}, 0, 0, text, f.th().indicator)
 	}
 	if text, isErr := a.Message(); text != "" {
 		st := screen.Style{}
 		if isErr {
-			st = styleError
+			st = f.th().err
 		}
 		s.Put(line(rows-2), 1, 0, text, st)
 	}
-	s.Put(line(rows-1), 1, 0, keymap.MainGuide.Render(), screen.Style{Attr: screen.AttrDim})
+	s.Put(line(rows-1), 1, 0, keymap.MainGuide.Render(), f.th().dim)
 	f.drawModals(s)
 	a.Drawn() // 確認のダイアログは、描いた後に届いたキーで確定する（filer U2）
 }
@@ -205,7 +194,7 @@ func drawBox(s *screen.Screen, r screen.Region, b box, title string, st screen.S
 func (f *Filer) drawPane(s *screen.Screen, r screen.Region, p *app.Pane, active bool) {
 	b, st := boxSingle, screen.Style{}
 	if active {
-		b, st = boxDouble, screen.Style{Attr: screen.AttrBold}
+		b, st = boxDouble, f.th().bold
 	}
 	drawBox(s, r, b, textfmt.TruncPath(p.Dir(), r.W-6), st)
 	drawFooter(s, r, 2, p, st)
@@ -243,12 +232,12 @@ func columns(w int) (nameW int, date bool) {
 func (f *Filer) drawItem(s *screen.Screen, r screen.Region, p *app.Pane, i int, active bool) {
 	it := p.Item(i)
 	marked := !it.Parent && p.Marked(it.Name)
-	st := itemStyle(it, marked)
+	st := f.itemStyle(it, marked)
 	if i == p.Cursor() {
 		if active {
-			st.Attr |= screen.AttrReverse
+			st.Attr |= f.th().cursor
 		} else {
-			st.Attr |= screen.AttrUnderline
+			st.Attr |= f.th().cursorInactive
 		}
 	}
 	s.Fill(r, st)
@@ -256,7 +245,7 @@ func (f *Filer) drawItem(s *screen.Screen, r screen.Region, p *app.Pane, i int, 
 		s.Put(r, 0, 0, "*", st)
 	}
 	nameW, date := columns(r.W)
-	putName(s, screen.Region{X: r.X + 1, Y: r.Y, W: nameW, H: 1}, textfmt.TruncName(it.Name, nameW), st)
+	f.putName(s, screen.Region{X: r.X + 1, Y: r.Y, W: nameW, H: 1}, textfmt.TruncName(it.Name, nameW), st)
 	x := 1 + nameW + 1
 	s.Put(r, x, 0, fmt.Sprintf("%*s", sizeW, sizeText(it)), st)
 	if date && !it.Parent && it.Err == nil {
@@ -265,13 +254,13 @@ func (f *Filer) drawItem(s *screen.Screen, r screen.Region, p *app.Pane, i int, 
 }
 
 // putName は、名前を置く。表示で置き換える書記素クラスタ（制御文字など）は色を変える（filer §9.3）。置き換えは screen が行う（T2）。
-func putName(s *screen.Screen, r screen.Region, name string, st screen.Style) {
+func (f *Filer) putName(s *screen.Screen, r screen.Region, name string, st screen.Style) {
 	x, start, replaced := 0, 0, false
 	flush := func(end int) {
 		if end > start {
 			sty := st
 			if replaced {
-				sty.FG, sty.Attr = styleReplaced.FG, sty.Attr|screen.AttrBold
+				sty.FG, sty.Attr = f.th().replaced.FG, sty.Attr|screen.AttrBold
 			}
 			x += s.Put(r, x, 0, name[start:end], sty)
 		}
@@ -289,22 +278,22 @@ func putName(s *screen.Screen, r screen.Region, name string, st screen.Style) {
 }
 
 // itemStyle は、項目の種類とマークの見た目を返す（filer §9.5）。
-func itemStyle(it listing.Item, marked bool) screen.Style {
+func (f *Filer) itemStyle(it listing.Item, marked bool) screen.Style {
 	var st screen.Style
 	switch {
 	case it.Err != nil:
-		st = styleError
+		st = f.th().err
 	case it.IsDir() && it.Info.Type != fsops.TypeJunction:
-		st = styleDir
+		st = f.th().dir
 	case it.Info.Type == fsops.TypeJunction:
-		st = styleJunction
+		st = f.th().junction
 	case it.Info.Type == fsops.TypeSymlink:
-		st = styleLink
+		st = f.th().link
 	case it.Info.Type == fsops.TypeSpecial:
-		st = styleSpecial
+		st = f.th().special
 	}
 	if marked {
-		st = styleMarked
+		st = f.th().marked
 	}
 	if it.Hidden {
 		st.Attr |= screen.AttrDim
@@ -372,7 +361,7 @@ func (f *Filer) drawStatus(s *screen.Screen, r screen.Region) {
 	avail := max(r.W-2-textwidth.Width(rest), r.W/3)
 	st := screen.Style{}
 	if textfmt.HasReplaced(it.Name) {
-		st = styleReplaced
+		st = f.th().replaced
 	}
 	x := 1 + s.Put(r, 1, 0, textfmt.TruncName(name, avail), st)
 	s.Put(r, x, 0, rest, screen.Style{})
@@ -406,11 +395,11 @@ func (f *Filer) drawName(s *screen.Screen, r screen.Region, view app.View, fr *f
 	if !rename {
 		title, keys, busy = msg.NewDirTitle, keymap.NewDirGuide.Render(), msg.NewDirBusy(keymap.KeyName(app.RoleNewDir, "cancel"))
 	}
-	drawBox(s, r, boxDouble, title, screen.Style{Attr: screen.AttrBold})
+	drawBox(s, r, boxDouble, title, f.th().bold)
 	in := screen.Region{X: r.X + 2, Y: r.Y + 1, W: r.W - 4, H: r.H - 2}
 	head := screen.Region{X: in.X, Y: in.Y + 1, W: in.W, H: 1}
 	if rename {
-		putName(s, head, textfmt.TruncName(v.Name, in.W), screen.Style{}) // 今の名前（置き換えた文字は色を変える）
+		f.putName(s, head, textfmt.TruncName(v.Name, in.W), screen.Style{}) // 今の名前（置き換えた文字は色を変える）
 	} else {
 		s.Put(head, 0, 0, msg.Place(textfmt.TruncPath(v.Dir, in.W-textwidth.Width(msg.Place("")))), screen.Style{})
 	}
@@ -421,11 +410,11 @@ func (f *Filer) drawName(s *screen.Screen, r screen.Region, view app.View, fr *f
 	s.Put(field, 0, 0, v.Edit.Text()[fv.Start:fv.End], screen.Style{})
 	switch {
 	case v.Busy:
-		s.Put(in, 0, 4, busy, screen.Style{Attr: screen.AttrDim})
+		s.Put(in, 0, 4, busy, f.th().dim)
 	case v.Err != "":
-		s.Put(in, 0, 4, "! "+v.Err, styleError)
+		s.Put(in, 0, 4, "! "+v.Err, f.th().err)
 	}
-	s.Put(in, 0, 6, keys, screen.Style{Attr: screen.AttrBold})
+	s.Put(in, 0, 6, keys, f.th().bold)
 	if !v.Busy && fr.focused {
 		s.SetCursor(field.X+fv.CursorCol, field.Y, true)
 	}
@@ -433,9 +422,9 @@ func (f *Filer) drawName(s *screen.Screen, r screen.Region, view app.View, fr *f
 
 // drawExec は、実行ファイルを開く前の確認を領域 r に描く（filer §7）。
 func (f *Filer) drawExec(s *screen.Screen, r screen.Region, view app.View, _ *frame) {
-	drawBox(s, r, boxDouble, msg.ExecConfirm, screen.Style{Attr: screen.AttrBold})
+	drawBox(s, r, boxDouble, msg.ExecConfirm, f.th().bold)
 	in := screen.Region{X: r.X + 2, Y: r.Y + 1, W: r.W - 4, H: 3}
-	putName(s, screen.Region{X: in.X, Y: in.Y, W: in.W, H: 1}, textfmt.TruncName(view.(app.ExecView).Name, in.W), screen.Style{})
+	f.putName(s, screen.Region{X: in.X, Y: in.Y, W: in.W, H: 1}, textfmt.TruncName(view.(app.ExecView).Name, in.W), screen.Style{})
 	s.Put(in, 0, 2, keymap.ExecGuide.Render(), screen.Style{})
 }
 
@@ -449,7 +438,7 @@ func (f *Filer) drawHelp(s *screen.Screen, r screen.Region, _ app.View, _ *frame
 	drawBox(s, r, boxDouble, msg.HelpTitle, screen.Style{})
 	in := screen.Region{X: r.X + 2, Y: r.Y + 1, W: r.W - 4, H: r.H - 2}
 	for i, h := range keymap.HelpRows {
-		s.Put(in, 0, i, h.Keys(), screen.Style{Attr: screen.AttrBold})
+		s.Put(in, 0, i, h.Keys(), f.th().bold)
 		s.Put(in, keyW+2, i, h.Label, screen.Style{})
 	}
 }
@@ -479,7 +468,7 @@ func (f *Filer) drawColumns(s *screen.Screen, r screen.Region) {
 	titleX := sep1 - r.X + 2
 	titleW := r.W - titleX - len(ind) - 6
 	s.Put(screen.Region{X: r.X + titleX, Y: r.Y, W: titleW + 2, H: 1}, 0, 0, " "+textfmt.TruncPath(p.Dir(), titleW)+" ",
-		screen.Style{Attr: screen.AttrBold})
+		f.th().bold)
 	s.Put(r, r.W-4-len(ind), 0, " "+ind+" ", st)
 	drawFooter(s, r, sep1-r.X+1, p, st) // 中央の列（操作中のペイン）の下
 
@@ -509,7 +498,7 @@ func (f *Filer) drawParentColumn(s *screen.Screen, r screen.Region, p *app.Pane)
 	}
 	if err != nil {
 		for row, l := range textfmt.Wrap(msg.Error(err), r.W-1) {
-			s.Put(screen.Region{X: r.X + 1, Y: r.Y, W: r.W - 1, H: r.H}, 0, row, l, screen.Style{FG: styleError.FG, Attr: screen.AttrDim})
+			s.Put(screen.Region{X: r.X + 1, Y: r.Y, W: r.W - 1, H: r.H}, 0, row, l, withAttr(f.th().err, screen.AttrDim))
 		}
 		return
 	}
@@ -538,13 +527,13 @@ func (f *Filer) drawParentColumn(s *screen.Screen, r screen.Region, p *app.Pane)
 		if k++; k-1 < top {
 			continue
 		}
-		st := itemStyle(it, false)
+		st := f.itemStyle(it, false)
 		if k-1 == at {
-			st.Attr |= screen.AttrReverse
+			st.Attr |= f.th().cursor
 		}
 		line := screen.Region{X: r.X, Y: r.Y + row, W: r.W, H: 1}
 		s.Fill(line, st)
-		putName(s, screen.Region{X: r.X + 1, Y: line.Y, W: r.W - 1, H: 1}, textfmt.TruncName(it.Name, r.W-1), st)
+		f.putName(s, screen.Region{X: r.X + 1, Y: line.Y, W: r.W - 1, H: 1}, textfmt.TruncName(it.Name, r.W-1), st)
 		row++
 	}
 }
@@ -560,7 +549,7 @@ func (f *Filer) drawPreview(s *screen.Screen, r screen.Region, pv app.Preview) {
 			row++
 		}
 	}
-	dim := screen.Style{Attr: screen.AttrDim}
+	dim := f.th().dim
 	switch pv.Kind {
 	case app.PreviewDir:
 		for _, it := range pv.Items { // 見える行の分だけ描く（一覧を写さない）
@@ -568,7 +557,7 @@ func (f *Filer) drawPreview(s *screen.Screen, r screen.Region, pv app.Preview) {
 				break
 			}
 			if f.shown(it, "") {
-				putName(s, screen.Region{X: in.X, Y: in.Y + row, W: in.W, H: 1}, textfmt.TruncName(it.Name, in.W), itemStyle(it, false))
+				f.putName(s, screen.Region{X: in.X, Y: in.Y + row, W: in.W, H: 1}, textfmt.TruncName(it.Name, in.W), f.itemStyle(it, false))
 				row++
 			}
 		}
@@ -588,6 +577,6 @@ func (f *Filer) drawPreview(s *screen.Screen, r screen.Region, pv app.Preview) {
 	case app.PreviewSpecial:
 		put(msg.TypeSpecial, dim)
 	case app.PreviewError:
-		put(msg.Error(pv.Err), styleError)
+		put(msg.Error(pv.Err), f.th().err)
 	}
 }

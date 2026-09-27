@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/zredjet/tana/internal/app"
@@ -36,6 +37,17 @@ func TestCursorOnlyWhenFocused(t *testing.T) {
 			if _, _, visible := s.Cursor(); visible != focused {
 				t.Errorf("%c: focused %v, cursor visible %v", open, focused, visible)
 			}
+		}
+	}
+}
+
+// TestThemeComplete は、見た目の表のすべての意味の名前が、既定の値を持つことを確かめる（G15）。
+func TestThemeComplete(t *testing.T) {
+	t.Parallel()
+	v := reflect.ValueOf(defaultTheme)
+	for i := range v.NumField() {
+		if v.Field(i).IsZero() {
+			t.Errorf("theme.%s has no default", v.Type().Field(i).Name)
 		}
 	}
 }

@@ -17,13 +17,6 @@ import (
 
 // ファイル操作の画面（確認・衝突の決定・進捗・結果・完全削除の確認。filer §8.2〜§8.6）のキーと描画。
 
-var (
-	styleDim     = screen.Style{Attr: screen.AttrDim}
-	styleBold    = screen.Style{Attr: screen.AttrBold}
-	styleWarn    = screen.Style{FG: screen.ColorYellow, Attr: screen.AttrBold}
-	styleProblem = screen.Style{FG: screen.ColorRed, Attr: screen.AttrBold}
-)
-
 // line は、ダイアログの中の 1 行（文字と見た目）。
 type line struct {
 	text string
@@ -31,8 +24,8 @@ type line struct {
 }
 
 // drawLinesIn は、領域 r に、題名 title の枠を描き、行を並べる（行を並べるダイアログ。領域は配置が決める）。
-func drawLinesIn(s *screen.Screen, r screen.Region, title string, lines []line) {
-	drawBox(s, r, boxDouble, title, styleBold)
+func (f *Filer) drawLinesIn(s *screen.Screen, r screen.Region, title string, lines []line) {
+	drawBox(s, r, boxDouble, title, f.th().bold)
 	in := screen.Region{X: r.X + 2, Y: r.Y + 1, W: r.W - 4, H: r.H - 2}
 	for i, l := range lines {
 		s.Put(in, 0, i, l.text, l.st)
@@ -54,17 +47,17 @@ func (f *Filer) confirmLines(s *screen.Screen, view app.View) (string, int, []li
 		lines = append(lines, line{text: msg.Totals(v.Files, size)})
 	}
 	lines = append(lines, line{})
-	lines = append(lines, notRunnableLines(v.NotRunnable)...)
+	lines = append(lines, f.notRunnableLines(v.NotRunnable)...)
 	if v.Conflicts > 0 {
-		lines = append(lines, line{text: "! " + msg.Conflicts(v.Conflicts, v.TopLvl), st: styleWarn})
+		lines = append(lines, line{text: "! " + msg.Conflicts(v.Conflicts, v.TopLvl), st: f.th().warn})
 	}
 	for _, w := range v.Warnings {
-		lines = append(lines, line{text: "! " + w, st: styleWarn})
+		lines = append(lines, line{text: "! " + w, st: f.th().warn})
 	}
 	keys := keymap.ConfirmGuide
 	switch {
 	case v.Runnable == 0:
-		lines = append(lines, line{text: msg.NothingRunnable, st: styleProblem})
+		lines = append(lines, line{text: msg.NothingRunnable, st: f.th().problem})
 		keys = keymap.ConfirmNoneGuide
 		if v.Untrashable > 0 {
 			keys = keymap.ConfirmPurgeGuide // ごみ箱に入らない項目は、利用者が選べば完全削除の確認へ（フェーズ20で決めた）
@@ -72,20 +65,20 @@ func (f *Filer) confirmLines(s *screen.Screen, view app.View) (string, int, []li
 	case v.Conflicts > 0:
 		keys = keymap.ConfirmConflictsGuide
 	}
-	lines = append(lines, line{}, line{text: keys.Render(), st: styleBold})
+	lines = append(lines, line{}, line{text: keys.Render(), st: f.th().bold})
 	return msg.Op(v.Op), w, lines
 }
 
 // notRunnableLines は、実行されない項目の行（「! n 項目は実行しません」と、先頭の 3 件とその理由、残りの件数）。項目がなければ空。
-func notRunnableLines(notes []app.ItemNote) []line {
+func (f *Filer) notRunnableLines(notes []app.ItemNote) []line {
 	n := len(notes)
 	if n == 0 {
 		return nil
 	}
-	lines := []line{{text: "! " + msg.NotRunnable(n), st: styleWarn}}
+	lines := []line{{text: "! " + msg.NotRunnable(n), st: f.th().warn}}
 	for i, it := range notes {
 		if i == 3 {
-			return append(lines, line{text: "    " + msg.Count(n-3), st: styleDim})
+			return append(lines, line{text: "    " + msg.Count(n-3), st: f.th().dim})
 		}
 		lines = append(lines, line{text: "    " + textfmt.TruncName(it.Name, 20) + "  " + it.Reason})
 	}
@@ -105,24 +98,24 @@ func (f *Filer) drawConflicts(s *screen.Screen, r screen.Region, view app.View, 
 	v := view.(app.ConflictsView)
 	full := r
 	from, to := fitPaths(cols, msg.ConflictHeader(v.Op, "", ""), v.From, v.To)
-	s.Put(full, 1, 0, msg.ConflictHeader(v.Op, from, to), styleBold)
+	s.Put(full, 1, 0, msg.ConflictHeader(v.Op, from, to), f.th().bold)
 	x := 1 + s.Put(full, 1, 1, msg.Conflicts(v.All, v.Top)+"  ", screen.Style{})
 	st := screen.Style{}
 	if v.Unset > 0 {
-		st = styleWarn
+		st = f.th().warn
 	}
 	s.Put(full, x, 1, msg.Unset(v.Unset), st) // 未選択はスキップになることを、常に出しておく（U1）
 	header := 2
 	if len(v.Warnings) > 0 {
-		s.Put(full, 1, 2, "! "+strings.Join(v.Warnings, "  "), styleWarn)
+		s.Put(full, 1, 2, "! "+strings.Join(v.Warnings, "  "), f.th().warn)
 		header = 3
 	}
 	rule := strings.Repeat(boxSingle.h, cols)
-	s.Put(full, 0, header, rule, styleDim)
+	s.Put(full, 0, header, rule, f.th().dim)
 	nameW := cols - 2 - (infoW + 1) - (infoW + 1) - 1 - decisionW // 左端の 2 桁と、欄の間の 3 つの空白
 	colX := [4]int{2, 2 + nameW + 1, 2 + nameW + 1 + infoW + 1, 2 + nameW + 1 + 2*(infoW+1)}
 	for i, h := range msg.ConflictColumns {
-		s.Put(full, colX[i], header+1, h, styleDim)
+		s.Put(full, colX[i], header+1, h, f.th().dim)
 	}
 	listY := header + 2
 	listH := rows - listY - 4
@@ -136,7 +129,7 @@ func (f *Filer) drawConflicts(s *screen.Screen, r screen.Region, view app.View, 
 		rowSt := screen.Style{}
 		if top+i == v.Cursor {
 			cur = r
-			rowSt.Attr |= screen.AttrReverse
+			rowSt.Attr |= f.th().cursor
 			s.Fill(screen.Region{X: 0, Y: y, W: cols, H: 1}, rowSt)
 			s.Put(full, 0, y, ">", rowSt)
 		}
@@ -150,7 +143,7 @@ func (f *Filer) drawConflicts(s *screen.Screen, r screen.Region, view app.View, 
 		if r.Dir {
 			name += "/"
 		}
-		putName(s, nameR, textfmt.TruncName(indent+name, nameW), rowSt)
+		f.putName(s, nameR, textfmt.TruncName(indent+name, nameW), rowSt)
 		s.Put(full, colX[1], y, infoText(r.Src, r.SrcNewer, now), rowSt)
 		s.Put(full, colX[2], y, infoText(r.Dst, r.DstNewer, now), rowSt)
 		dst := rowSt
@@ -159,7 +152,7 @@ func (f *Filer) drawConflicts(s *screen.Screen, r screen.Region, view app.View, 
 		}
 		s.Put(full, colX[3], y, msg.Decision(r.Decision), dst)
 	}
-	s.Put(full, 0, rows-4, rule, styleDim)
+	s.Put(full, 0, rows-4, rule, f.th().dim)
 	// この行のキー: その行で使えない決定は暗くする（filer §8.3）。
 	g := keymap.ConflictRowGuide
 	lx := 1 + s.Put(full, 1, rows-3, g.Prefix, screen.Style{})
@@ -167,7 +160,7 @@ func (f *Filer) drawConflicts(s *screen.Screen, r screen.Region, view app.View, 
 		c, _ := keymap.CommandByID(it.IDs[0])
 		st := screen.Style{}
 		if cur.ID == 0 || !cur.Allowed[c.Action.Decision] {
-			st = styleDim
+			st = f.th().dim
 		}
 		lx += s.Put(full, lx, rows-3, it.Text(), st) + textwidth.Width(g.Sep)
 	}
@@ -176,7 +169,7 @@ func (f *Filer) drawConflicts(s *screen.Screen, r screen.Region, view app.View, 
 	if text, isErr := f.app.Message(); text != "" { // 使えない決定の理由などは、キーの案内の上に重ねて出す
 		st := screen.Style{}
 		if isErr {
-			st = styleError
+			st = f.th().err
 		}
 		s.Fill(screen.Region{X: 0, Y: rows - 4, W: cols, H: 1}, screen.Style{})
 		s.Put(full, 1, rows-4, text, st)
@@ -248,25 +241,25 @@ func (f *Filer) progressLines(s *screen.Screen, view app.View) (string, int, []l
 		{}}
 	if p.TrashDialog { // Windows のごみ箱の確認ダイアログ（filer §8.4）
 		for _, l := range textfmt.Wrap(msg.TrashDialog, in) {
-			lines = append(lines, line{text: l, st: styleWarn})
+			lines = append(lines, line{text: l, st: f.th().warn})
 		}
 		lines = append(lines, line{})
 	}
 	switch {
 	case p.Unresponsive:
 		for _, w := range textfmt.Wrap(msg.Unresponsive(keymap.KeyName(app.RoleProgress, "force-quit")), in) {
-			lines = append(lines, line{text: w, st: styleProblem})
+			lines = append(lines, line{text: w, st: f.th().problem})
 		}
 		for _, l := range msg.Leftovers(p.Op) {
 			for _, w := range textfmt.Wrap(l, in) { // 長い行は、ダイアログの幅で折り返す
 				lines = append(lines, line{text: w})
 			}
 		}
-		lines = append(lines, line{text: keymap.ForceQuitGuide.Render(), st: styleBold})
+		lines = append(lines, line{text: keymap.ForceQuitGuide.Render(), st: f.th().bold})
 	case p.Canceling:
-		lines = append(lines, line{text: msg.Canceling, st: styleWarn})
+		lines = append(lines, line{text: msg.Canceling, st: f.th().warn})
 	default:
-		lines = append(lines, line{text: keymap.ProgressGuide.Render(), st: styleBold})
+		lines = append(lines, line{text: keymap.ProgressGuide.Render(), st: f.th().bold})
 	}
 	return msg.Stage(p.Stage), w, lines
 }
@@ -274,11 +267,11 @@ func (f *Filer) progressLines(s *screen.Screen, view app.View) (string, int, []l
 // cancelAskLines は、中止の確認の題名・幅・行（filer §8.4）。
 func (f *Filer) cancelAskLines(_ *screen.Screen, view app.View) (string, int, []line) {
 	v := view.(app.CancelAskView)
-	lines := []line{{}, {text: msg.CancelQuestion, st: styleBold}}
+	lines := []line{{}, {text: msg.CancelQuestion, st: f.th().bold}}
 	for _, l := range msg.CancelNotes(v.Op) {
 		lines = append(lines, line{text: l})
 	}
-	return msg.CancelTitle, 52, append(lines, line{}, line{text: keymap.CancelAskGuide.Render(), st: styleBold})
+	return msg.CancelTitle, 52, append(lines, line{}, line{text: keymap.CancelAskGuide.Render(), st: f.th().bold})
 }
 
 // drawResult は、結果の画面を、画面全体の領域 r に描く（filer §8.5）。
@@ -288,9 +281,9 @@ func (f *Filer) drawResult(s *screen.Screen, r screen.Region, view app.View, fr 
 	v := view.(app.ResultView)
 	full := r
 	from, to := fitPaths(cols, msg.ResultTitle(v.Op, msg.Status(v.Status), "", ""), v.From, v.To)
-	titleSt := styleBold
+	titleSt := f.th().bold
 	if v.Status != fsops.StatusCompleted {
-		titleSt = styleProblem
+		titleSt = f.th().problem
 	}
 	s.Put(full, 1, 0, msg.ResultTitle(v.Op, msg.Status(v.Status), from, to), titleSt)
 	var counts []string
@@ -299,7 +292,7 @@ func (f *Filer) drawResult(s *screen.Screen, r screen.Region, view app.View, fr 
 	}
 	s.Put(full, 1, 1, strings.Join(counts, "   "), screen.Style{})
 	rule := strings.Repeat(boxSingle.h, cols)
-	s.Put(full, 0, 2, rule, styleDim)
+	s.Put(full, 0, 2, rule, f.th().dim)
 	// 結果の欄の幅は、出す結果の文言の幅に合わせる（「ごみ箱に入ったか確かめられない」は長い）。
 	outW := 0
 	for _, r := range v.Rows {
@@ -325,7 +318,7 @@ func (f *Filer) drawResult(s *screen.Screen, r screen.Region, view app.View, fr 
 		y := listY + i
 		st := screen.Style{}
 		if top+i == v.Cursor {
-			st.Attr |= screen.AttrReverse
+			st.Attr |= f.th().cursor
 			s.Fill(screen.Region{X: 0, Y: y, W: cols, H: 1}, st)
 			s.Put(full, 0, y, ">", st)
 		}
@@ -333,7 +326,7 @@ func (f *Filer) drawResult(s *screen.Screen, r screen.Region, view app.View, fr 
 		if !r.Detail {
 			ost := st
 			if r.Outcome != fsops.OutcomeDone && r.Outcome != fsops.OutcomeSkipped {
-				ost.FG, ost.Attr = screen.ColorRed, ost.Attr|screen.AttrBold
+				ost.FG, ost.Attr = f.th().problem.FG, ost.Attr|f.th().problem.Attr
 			}
 			s.Put(full, x, y, msg.Outcome(r.Outcome), ost)
 		}
@@ -342,18 +335,18 @@ func (f *Filer) drawResult(s *screen.Screen, r screen.Region, view app.View, fr 
 		if r.Detail {
 			indent = boxSingle.bl + " " // フォルダの中の結果（上の項目の中）
 		}
-		putName(s, screen.Region{X: x, Y: y, W: nameW, H: 1}, textfmt.TruncName(indent+r.Name, nameW), st)
+		f.putName(s, screen.Region{X: x, Y: y, W: nameW, H: 1}, textfmt.TruncName(indent+r.Name, nameW), st)
 		s.Put(screen.Region{X: x + nameW + 1, Y: y, W: cols - x - nameW - 2, H: 1}, 0, 0, r.Reason, st)
 	}
 	if paneH > 0 {
 		py := rows - 2 - paneH
-		s.Put(full, 0, py, rule, styleDim)
-		s.Put(full, 1, py+1, msg.EnglishTitle(keymap.KeyName(app.RoleResult, "english")), styleBold)
+		s.Put(full, 0, py, rule, f.th().dim)
+		s.Put(full, 1, py+1, msg.EnglishTitle(keymap.KeyName(app.RoleResult, "english")), f.th().bold)
 		for i, l := range english {
 			s.Put(full, 1, py+2+i, l, screen.Style{})
 		}
 	}
-	s.Put(full, 0, rows-2, rule, styleDim)
+	s.Put(full, 0, rows-2, rule, f.th().dim)
 	// Space で何が起きるかは、カーソル行に合わせて書く（中の結果がある行だけ）。
 	var items []keymap.Item
 	if v.Untrashable > 0 { // ごみ箱に入らなかった項目があれば、完全削除の確認へ進めることを案内する（filer §8.5）
@@ -415,14 +408,14 @@ func (f *Filer) deleteLines(s *screen.Screen, view app.View) (string, int, []lin
 		if v.FromTrash {
 			second = msg.DeleteQuestion
 		}
-		lines = append(lines, line{text: msg.DeleteLead(v.Runnable, v.FromTrash), st: styleBold}, line{text: second, st: styleProblem}, line{})
+		lines = append(lines, line{text: msg.DeleteLead(v.Runnable, v.FromTrash), st: f.th().bold}, line{text: second, st: f.th().problem}, line{})
 	}
 	lines = append(lines, line{text: msg.Place(textfmt.TruncPath(v.Dir, in-textwidth.Width(msg.Place(""))))})
 	const infoW = 14 // 「ジャンクション」
 	nameW := in - 4 - 2 - infoW
 	for i, it := range v.Items {
 		if i == deleteShown && len(v.Items) > deleteShown+1 {
-			lines = append(lines, line{text: "    " + msg.More(len(v.Items)-deleteShown), st: styleDim})
+			lines = append(lines, line{text: "    " + msg.More(len(v.Items)-deleteShown), st: f.th().dim})
 			break
 		}
 		name := it.Name
@@ -444,16 +437,16 @@ func (f *Filer) deleteLines(s *screen.Screen, view app.View) (string, int, []lin
 		lines = append(lines, line{}, line{text: msg.Totals(v.Files, size)})
 	}
 	if len(v.NotRunnable) > 0 {
-		lines = append(append(lines, line{}), notRunnableLines(v.NotRunnable)...)
+		lines = append(append(lines, line{}), f.notRunnableLines(v.NotRunnable)...)
 	}
 	for _, w := range v.Warnings {
-		lines = append(lines, line{text: "! " + w, st: styleWarn})
+		lines = append(lines, line{text: "! " + w, st: f.th().warn})
 	}
 	keys := keymap.DeleteGuide
 	if v.Runnable == 0 {
-		lines = append(lines, line{text: msg.NothingRunnable, st: styleProblem})
+		lines = append(lines, line{text: msg.NothingRunnable, st: f.th().problem})
 		keys = keymap.DeleteNoneGuide
 	}
-	lines = append(lines, line{}, line{text: keys.Render(), st: styleBold})
+	lines = append(lines, line{}, line{text: keys.Render(), st: f.th().bold})
 	return msg.DeleteTitle, w, lines
 }
