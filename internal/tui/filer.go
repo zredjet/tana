@@ -182,22 +182,8 @@ func (f *Filer) Draw(s *screen.Screen) {
 		}
 		s.Put(line(rows-2), 1, 0, text, st)
 	}
-	if a.Planning() {
-		s.Fill(line(rows-2), screen.Style{})
-		s.Put(line(rows-2), 1, 0, msg.Planning(keymap.KeyName(app.RolePlanning, "cancel")), styleWarn)
-	}
 	s.Put(line(rows-1), 1, 0, keymap.MainGuide.Render(), screen.Style{Attr: screen.AttrDim})
-	switch a.Dialog() {
-	case app.DialogPath:
-		f.drawPathInput(s)
-	case app.DialogRename, app.DialogNewDir:
-		f.drawName(s)
-	case app.DialogExec:
-		f.drawExec(s)
-	case app.DialogHelp:
-		f.drawHelp(s)
-	}
-	f.drawOp(s)
+	f.drawModals(s)
 	a.Drawn() // 確認のダイアログは、描いた後に届いたキーで確定する（filer U2）
 }
 
@@ -399,31 +385,31 @@ func dialogRegion(s *screen.Screen, w, h int) screen.Region {
 	return screen.Region{X: (cols - w) / 2, Y: max((rows-h)/2-1, 0), W: w, H: h}
 }
 
-// drawPathInput は、パスの入力欄を描き、本物のカーソルを入力の位置に置く（IME の変換中の文字はここに出る。filer VU4）。
-func (f *Filer) drawPathInput(s *screen.Screen) {
-	r := dialogRegion(s, 76, 3)
+// drawPathInput は、パスの入力欄を領域 r に描き、本物のカーソルを入力の位置に置く（IME の変換中の文字はここに出る。filer VU4）。
+func (f *Filer) drawPathInput(s *screen.Screen, r screen.Region, view app.View, fr *frame) {
 	drawBox(s, r, boxDouble, msg.PathInputTitle(keymap.KeyName(app.RolePath, "submit"), keymap.KeyName(app.RolePath, "cancel")), screen.Style{})
 	field := screen.Region{X: r.X + 2, Y: r.Y + 1, W: r.W - 4, H: 1}
-	e := f.app.PathEditor()
+	e := view.(app.PathView).Edit
 	v := e.View(field.W)
 	s.Put(field, 0, 0, e.Text()[v.Start:v.End], screen.Style{})
-	s.SetCursor(field.X+v.CursorCol, field.Y, true)
+	if fr.focused {
+		s.SetCursor(field.X+v.CursorCol, field.Y, true)
+	}
 }
 
 // drawName は、名前の変更・新しいフォルダの入力欄を描く（filer §8.7）。本物のカーソルを入力の位置に置く（IME。filer VU4）。
 // 入力欄の文字は元のバイト列で、表示する形への置き換えは screen が描くときに行う（U4・U6）。
-func (f *Filer) drawName(s *screen.Screen) {
-	a := f.app
-	v := a.NameDialog()
+func (f *Filer) drawName(s *screen.Screen, r screen.Region, view app.View, fr *frame) {
+	v := view.(app.NameView)
+	rename := v.Role() == app.RoleRename
 	title, keys, busy := msg.RenameTitle, keymap.RenameGuide.Render(), msg.RenameBusy(keymap.KeyName(app.RoleRename, "cancel"))
-	if a.Dialog() == app.DialogNewDir {
+	if !rename {
 		title, keys, busy = msg.NewDirTitle, keymap.NewDirGuide.Render(), msg.NewDirBusy(keymap.KeyName(app.RoleNewDir, "cancel"))
 	}
-	r := dialogRegion(s, 64, 9)
 	drawBox(s, r, boxDouble, title, screen.Style{Attr: screen.AttrBold})
 	in := screen.Region{X: r.X + 2, Y: r.Y + 1, W: r.W - 4, H: r.H - 2}
 	head := screen.Region{X: in.X, Y: in.Y + 1, W: in.W, H: 1}
-	if a.Dialog() == app.DialogRename {
+	if rename {
 		putName(s, head, textfmt.TruncName(v.Name, in.W), screen.Style{}) // 今の名前（置き換えた文字は色を変える）
 	} else {
 		s.Put(head, 0, 0, msg.Place(textfmt.TruncPath(v.Dir, in.W-textwidth.Width(msg.Place("")))), screen.Style{})
@@ -440,28 +426,26 @@ func (f *Filer) drawName(s *screen.Screen) {
 		s.Put(in, 0, 4, "! "+v.Err, styleError)
 	}
 	s.Put(in, 0, 6, keys, screen.Style{Attr: screen.AttrBold})
-	if !v.Busy {
+	if !v.Busy && fr.focused {
 		s.SetCursor(field.X+fv.CursorCol, field.Y, true)
 	}
 }
 
-// drawExec は、実行ファイルを開く前の確認を描く（filer §7）。
-func (f *Filer) drawExec(s *screen.Screen) {
-	r := dialogRegion(s, 60, 5)
+// drawExec は、実行ファイルを開く前の確認を領域 r に描く（filer §7）。
+func (f *Filer) drawExec(s *screen.Screen, r screen.Region, view app.View, _ *frame) {
 	drawBox(s, r, boxDouble, msg.ExecConfirm, screen.Style{Attr: screen.AttrBold})
 	in := screen.Region{X: r.X + 2, Y: r.Y + 1, W: r.W - 4, H: 3}
-	putName(s, screen.Region{X: in.X, Y: in.Y, W: in.W, H: 1}, textfmt.TruncName(f.app.ExecName(), in.W), screen.Style{})
+	putName(s, screen.Region{X: in.X, Y: in.Y, W: in.W, H: 1}, textfmt.TruncName(view.(app.ExecView).Name, in.W), screen.Style{})
 	s.Put(in, 0, 2, keymap.ExecGuide.Render(), screen.Style{})
 }
 
-// drawHelp は、キー操作の一覧を描く。
-func (f *Filer) drawHelp(s *screen.Screen) {
+// drawHelp は、キー操作の一覧を領域 r に描く。
+func (f *Filer) drawHelp(s *screen.Screen, r screen.Region, _ app.View, _ *frame) {
 	// キーの欄はキーの表から作る（操作ごとにキーを空白 1 つ、操作の間は空白 2 つ）。説明はキーの欄の最も広いものの 2 桁後から。
 	keyW := 0
 	for _, h := range keymap.HelpRows {
 		keyW = max(keyW, textwidth.Width(h.Keys()))
 	}
-	r := dialogRegion(s, 76, len(keymap.HelpRows)+2)
 	drawBox(s, r, boxDouble, msg.HelpTitle, screen.Style{})
 	in := screen.Region{X: r.X + 2, Y: r.Y + 1, W: r.W - 4, H: r.H - 2}
 	for i, h := range keymap.HelpRows {

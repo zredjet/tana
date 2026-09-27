@@ -24,33 +24,14 @@ var (
 	styleProblem = screen.Style{FG: screen.ColorRed, Attr: screen.AttrBold}
 )
 
-// drawOp は、ファイル操作の画面を描く（一覧の上に重ねる）。
-func (f *Filer) drawOp(s *screen.Screen) {
-	switch f.app.Screen() {
-	case app.ScreenConfirm:
-		f.drawConfirm(s)
-	case app.ScreenConflicts:
-		f.drawConflicts(s)
-	case app.ScreenProgress:
-		f.drawProgress(s)
-	case app.ScreenResult:
-		f.drawResult(s)
-	case app.ScreenDelete:
-		f.drawDelete(s)
-	}
-}
-
 // line は、ダイアログの中の 1 行（文字と見た目）。
 type line struct {
 	text string
 	st   screen.Style
 }
 
-// drawLines は、題名 title のダイアログに行を並べて、画面の中央に描く。高さは行の数に合わせる（画面に収める）。
-func drawLines(s *screen.Screen, width int, title string, lines []line) {
-	_, rows := s.Size()
-	h := min(len(lines)+2, rows-2)
-	r := dialogRegion(s, width, h)
+// drawLinesIn は、領域 r に、題名 title の枠を描き、行を並べる（行を並べるダイアログ。領域は配置が決める）。
+func drawLinesIn(s *screen.Screen, r screen.Region, title string, lines []line) {
 	drawBox(s, r, boxDouble, title, styleBold)
 	in := screen.Region{X: r.X + 2, Y: r.Y + 1, W: r.W - 4, H: r.H - 2}
 	for i, l := range lines {
@@ -58,10 +39,10 @@ func drawLines(s *screen.Screen, width int, title string, lines []line) {
 	}
 }
 
-// drawConfirm は、確認画面を描く（filer §8.2）。実行されない項目・衝突・警告は ! を付けて示す。
-func (f *Filer) drawConfirm(s *screen.Screen) {
+// confirmLines は、確認画面の題名・幅・行（filer §8.2）。実行されない項目・衝突・警告は ! を付けて示す。
+func (f *Filer) confirmLines(s *screen.Screen, view app.View) (string, int, []line) {
 	cols, _ := s.Size()
-	v := f.app.Confirm()
+	v := view.(app.ConfirmView)
 	w := min(cols-4, 68)
 	in := w - 4
 	lines := []line{{}, {text: msg.ConfirmSummary(v.Op, v.Count, textfmt.TruncPath(v.Dest, in-20))}}
@@ -92,7 +73,7 @@ func (f *Filer) drawConfirm(s *screen.Screen) {
 		keys = keymap.ConfirmConflictsGuide
 	}
 	lines = append(lines, line{}, line{text: keys.Render(), st: styleBold})
-	drawLines(s, w, msg.Op(v.Op), lines)
+	return msg.Op(v.Op), w, lines
 }
 
 // notRunnableLines は、実行されない項目の行（「! n 項目は実行しません」と、先頭の 3 件とその理由、残りの件数）。項目がなければ空。
@@ -117,12 +98,12 @@ const (
 	decisionW = 12 // 自動リネーム
 )
 
-// drawConflicts は、衝突の決定の画面を描く（画面全体。filer §8.3）。
-func (f *Filer) drawConflicts(s *screen.Screen) {
-	cols, rows := s.Size()
-	s.Fill(screen.Region{W: cols, H: rows}, screen.Style{})
-	v := f.app.Conflicts()
-	full := screen.Region{W: cols, H: rows}
+// drawConflicts は、衝突の決定の画面を、画面全体の領域 r に描く（filer §8.3）。
+func (f *Filer) drawConflicts(s *screen.Screen, r screen.Region, view app.View, fr *frame) {
+	cols, rows := r.W, r.H
+	s.Fill(r, screen.Style{})
+	v := view.(app.ConflictsView)
+	full := r
 	from, to := fitPaths(cols, msg.ConflictHeader(v.Op, "", ""), v.From, v.To)
 	s.Put(full, 1, 0, msg.ConflictHeader(v.Op, from, to), styleBold)
 	x := 1 + s.Put(full, 1, 1, msg.Conflicts(v.All, v.Top)+"  ", screen.Style{})
@@ -145,7 +126,7 @@ func (f *Filer) drawConflicts(s *screen.Screen) {
 	}
 	listY := header + 2
 	listH := rows - listY - 4
-	f.app.SetConflictRows(listH)
+	fr.rows = listH
 	top := max(min(v.Cursor-listH/2, len(v.Rows)-listH), 0)
 	now := f.app.Now()
 	var cur app.ConflictRow
@@ -231,10 +212,10 @@ func padRight(s string, w int) string {
 	return s
 }
 
-// drawProgress は、進捗の画面を描く（filer §8.4）。中止の確認は、その上に重ねる。
-func (f *Filer) drawProgress(s *screen.Screen) {
+// progressLines は、進捗の画面の題名・幅・行（filer §8.4）。中止の確認は、別の部品としてその上に重ねる。
+func (f *Filer) progressLines(s *screen.Screen, view app.View) (string, int, []line) {
 	cols, _ := s.Size()
-	p := f.app.Progress()
+	p := view.(app.ProgressView)
 	w := min(cols-4, 64)
 	in := w - 4
 	percent := 0
@@ -287,22 +268,25 @@ func (f *Filer) drawProgress(s *screen.Screen) {
 	default:
 		lines = append(lines, line{text: keymap.ProgressGuide.Render(), st: styleBold})
 	}
-	drawLines(s, w, msg.Stage(p.Stage), lines)
-	if p.AskCancel {
-		lines := []line{{}, {text: msg.CancelQuestion, st: styleBold}}
-		for _, l := range msg.CancelNotes(p.Op) {
-			lines = append(lines, line{text: l})
-		}
-		drawLines(s, 52, msg.CancelTitle, append(lines, line{}, line{text: keymap.CancelAskGuide.Render(), st: styleBold}))
-	}
+	return msg.Stage(p.Stage), w, lines
 }
 
-// drawResult は、結果の画面を描く（画面全体。filer §8.5）。
-func (f *Filer) drawResult(s *screen.Screen) {
-	cols, rows := s.Size()
-	s.Fill(screen.Region{W: cols, H: rows}, screen.Style{})
-	v := f.app.Result()
-	full := screen.Region{W: cols, H: rows}
+// cancelAskLines は、中止の確認の題名・幅・行（filer §8.4）。
+func (f *Filer) cancelAskLines(_ *screen.Screen, view app.View) (string, int, []line) {
+	v := view.(app.CancelAskView)
+	lines := []line{{}, {text: msg.CancelQuestion, st: styleBold}}
+	for _, l := range msg.CancelNotes(v.Op) {
+		lines = append(lines, line{text: l})
+	}
+	return msg.CancelTitle, 52, append(lines, line{}, line{text: keymap.CancelAskGuide.Render(), st: styleBold})
+}
+
+// drawResult は、結果の画面を、画面全体の領域 r に描く（filer §8.5）。
+func (f *Filer) drawResult(s *screen.Screen, r screen.Region, view app.View, fr *frame) {
+	cols, rows := r.W, r.H
+	s.Fill(r, screen.Style{})
+	v := view.(app.ResultView)
+	full := r
 	from, to := fitPaths(cols, msg.ResultTitle(v.Op, msg.Status(v.Status), "", ""), v.From, v.To)
 	titleSt := styleBold
 	if v.Status != fsops.StatusCompleted {
@@ -334,7 +318,7 @@ func (f *Filer) drawResult(s *screen.Screen) {
 		paneH = len(english) + 2 // 区切りと題名
 	}
 	listY, listH := 3, rows-5-paneH
-	f.app.SetResultRows(listH)
+	fr.rows = listH
 	top := max(min(v.Cursor-listH/2, len(v.Rows)-listH), 0)
 	for i := 0; i < listH && top+i < len(v.Rows); i++ {
 		r := v.Rows[top+i]
@@ -418,11 +402,11 @@ func englishLines(details []string, w, n int) []string {
 // 完全削除の確認に出す項目の数。多いときは、先頭のこの数だけと「ほか n 項目」を出す（filer §8.6）。
 const deleteShown = 5
 
-// drawDelete は、完全削除の確認を描く（filer §8.6）。確定は y だけ（U2）。
+// deleteLines は、完全削除の確認の題名・幅・行（filer §8.6）。確定は y だけ（U2）。
 // 項目は、場所（フォルダ）と名前で示す。fsops の計画に項目ごとの合計はないので、ファイルかフォルダかと、ファイルのサイズだけを出す（filer §11 の F5）。
-func (f *Filer) drawDelete(s *screen.Screen) {
+func (f *Filer) deleteLines(s *screen.Screen, view app.View) (string, int, []line) {
 	cols, _ := s.Size()
-	v := f.app.Delete()
+	v := view.(app.DeleteView)
 	w := min(cols-4, 68)
 	in := w - 4
 	lines := []line{{}}
@@ -471,5 +455,5 @@ func (f *Filer) drawDelete(s *screen.Screen) {
 		keys = keymap.DeleteNoneGuide
 	}
 	lines = append(lines, line{}, line{text: keys.Render(), st: styleBold})
-	drawLines(s, w, msg.DeleteTitle, lines)
+	return msg.DeleteTitle, w, lines
 }
